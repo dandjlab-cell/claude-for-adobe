@@ -17,7 +17,8 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--ink); height: 100vh; }
-    main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+    footer { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; }
     .view { display: none; min-height: 0; }
     .view.active { display: grid; grid-template-columns: minmax(0, 1fr); }
     #view-chat.active { grid-template-rows: auto minmax(0, 1fr) auto; }
@@ -186,13 +187,11 @@
         <h2>File checkpoints</h2>
         <div id="checkpoints"></div>
 
-        <h2>Updates</h2>
-        <div id="version-row" class="row mono">v… <button id="check-updates" type="button" class="utility">Check for updates</button></div>
-
         <h2>Log</h2>
         <pre id="log"></pre>
       </div>
     </section>
+    <footer id="version-row" class="mono muted">v… <button id="check-updates" type="button" class="utility">Check for updates</button></footer>
   </main>
   <script src="panel.js"></script>
 </body>
