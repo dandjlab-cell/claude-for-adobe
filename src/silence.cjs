@@ -54,10 +54,12 @@ const MIN_KEEP_S = 0.4;
 // No padding against the range edges (sequence head/tail): silence that touches the edge is removed whole.
 function planCuts(silences, { minLen = 1.0, pad = 0.2, minKeep = MIN_KEEP_S, rangeStart = -Infinity, rangeEnd = Infinity } = {}) {
   const eps = 1e-3;
-  const padded = silences.map((s) => ({ start: s.start <= rangeStart + eps ? s.start : s.start + pad, end: s.end >= rangeEnd - eps ? s.end : s.end - pad })).filter((s) => s.end > s.start).sort((a, b) => a.start - b.start);
+  // The minimum applies to the real silence, before padding: a 0.4 s gap with 0.05 s pad is cut to 0.1 s of air,
+  // not kept whole. (Previously min was checked after padding, which silently raised it by 2 x pad.)
+  const padded = silences.filter((s) => s.end - s.start >= minLen).map((s) => ({ start: s.start <= rangeStart + eps ? s.start : s.start + pad, end: s.end >= rangeEnd - eps ? s.end : s.end - pad })).filter((s) => s.end > s.start).sort((a, b) => a.start - b.start);
   const merged = [];
   padded.forEach((s) => { const last = merged[merged.length - 1]; if (last && s.start - last.end < minKeep) last.end = s.end; else merged.push({ ...s }); });
-  return merged.filter((s) => s.end - s.start >= minLen).sort((a, b) => b.start - a.start);
+  return merged.filter((s) => s.end > s.start).sort((a, b) => b.start - a.start);
 }
 
 module.exports = { MIN_KEEP_S, MIN_LOUD_S, loudIntervals, peakThreshold, planCuts, silencesFrom, union };

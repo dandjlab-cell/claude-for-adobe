@@ -14,8 +14,8 @@ const VAD_MODEL = process.env.PCX_VAD_MODEL || path.join(__dirname, "..", "asset
 const CACHE_DIR = path.join(os.homedir(), "Library", "Caches", "claude-for-adobe", "vad");
 const ENV = { ...process.env, PATH: ["/opt/homebrew/bin", "/usr/local/bin", process.env.PATH || ""].join(":") };
 // Silero knobs (whisper.cpp defaults): probability threshold, shortest speech kept, shortest gap that splits, padding.
-const DEFAULTS = { threshold: 0.5, minSpeechMs: 250, minSilenceMs: 100, padMs: 30 };
-const VERSION = "v1";
+const DEFAULTS = { threshold: 0.5, minSpeechMs: 200, minSilenceMs: 80, padMs: 20 };
+const VERSION = "v2";
 
 // 16 kHz mono PCM WAV for the VAD/Whisper binaries. macOS's built-in afconvert handles mp3/wav/aac/mov/mp4;
 // ffmpeg (if installed) covers the rest (MXF, BRAW audio, ...).

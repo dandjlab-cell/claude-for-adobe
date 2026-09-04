@@ -18,7 +18,7 @@ test("silencesFrom cuts only where audio exists and nothing is loud; planCuts pa
   const s = silencesFrom(coverage, loud, 0, 15);
   assert.deepEqual(rr(s), [[0, 2], [4, 7], [8, 9], [11, 12]]);
   const cuts = planCuts(s, { minLen: 1, pad: 0.2 });
-  assert.deepEqual(rr(cuts), [[4.2, 6.8], [0.2, 1.8]]); // 8-9 and 11-12 are under 1 s after padding; descending order
+  assert.deepEqual(rr(cuts), [[11.2, 11.8], [8.2, 8.8], [4.2, 6.8], [0.2, 1.8]]); // the 1 s gaps meet the minimum and are cut down to 0.4 s of air; descending order
   assert.deepEqual(rr(union([{ start: 3, end: 5 }, { start: 1, end: 3.5 }, { start: 7, end: 8 }])), [[1, 5], [7, 8]]);
 });
 
@@ -39,4 +39,12 @@ test("a lone click does not break a silence; blip islands between cuts are absor
 test("no padding at the range edges: head and tail silence is removed whole", () => {
   const cuts = planCuts([{ start: 0, end: 3.4 }, { start: 10, end: 12 }, { start: 20, end: 30 }], { minLen: 0.5, pad: 0.1, rangeStart: 0, rangeEnd: 30 });
   assert.deepEqual(cuts.map((c) => [c.start, c.end]), [[20.1, 30], [10.1, 11.9], [0, 3.3]]);
+});
+
+test("planCuts applies the minimum to the real gap, then pads", () => {
+  const { planCuts } = require("../src/silence.cjs");
+  // a 0.4 s gap with min 0.3 and pad 0.05 is cut down to 0.1 s of air, not kept
+  assert.deepEqual(planCuts([{ start: 10, end: 10.4 }], { minLen: 0.3, pad: 0.05, minKeep: 0.4 }), [{ start: 10.05, end: 10.35 }]);
+  // a 0.2 s gap is below the minimum and stays
+  assert.deepEqual(planCuts([{ start: 10, end: 10.2 }], { minLen: 0.3, pad: 0.05, minKeep: 0.4 }), []);
 });

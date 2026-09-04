@@ -464,8 +464,8 @@ async function applyCuts(card, cuts, dryRun, summary) {
 
 // Silence removal. method "vad" (default): Silero VAD finds speech on every audio clip; everything outside
 // speech is a candidate cut. method "db": Premiere's peak-file waveform vs each clip's noise floor.
-const CUT_PRESETS = { social: { min_silence_s: 0.35, pad_s: 0.05 }, natural: { min_silence_s: 0.6, pad_s: 0.15 } };
-async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 0.5, pad_s = 0.1, threshold_db, method = "vad", preset, dry_run = true }) {
+const CUT_PRESETS = { social: { min_silence_s: 0.3, pad_s: 0.04 }, natural: { min_silence_s: 0.6, pad_s: 0.15 } };
+async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 0.3, pad_s = 0.04, threshold_db, method = "vad", preset, dry_run = true }) {
   if (preset && CUT_PRESETS[preset]) ({ min_silence_s, pad_s } = CUT_PRESETS[preset]);
   const useVad = method !== "db" && vad.available();
   const card = addTool((dry_run ? "plan" : "remove") + "_silences (" + (useVad ? "voice: Silero VAD" : "dB") + ")", "");
