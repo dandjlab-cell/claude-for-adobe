@@ -2,7 +2,7 @@
 
 Claude Code, inside Premiere Pro. Talk to it about your timeline, let it make the cuts, remove silences, ask what was said. Free, open source, runs on your Mac with your own Claude account.
 
-**Install:** [download the latest zip](https://github.com/dandjlab-cell/claude-for-adobe/releases/latest), unzip, right-click `Install.command` > Open, restart Premiere, then **Window > Extensions > Claude for Premiere**. You need the Claude desktop app signed in (open Claude Code in it once) or the Claude Code CLI. Updates come through a button in the panel.
+**Install:** [download ClaudeForAdobe.zip](https://github.com/dandjlab-cell/claude-for-adobe/releases/latest/download/ClaudeForAdobe.zip), double-click it to unzip, right-click `Install.command` > Open, restart Premiere, then **Window > Extensions > Claude for Premiere**. You need the Claude desktop app signed in (open Claude Code in it once) or the Claude Code CLI. Updates come through a button in the panel.
 
 Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
 

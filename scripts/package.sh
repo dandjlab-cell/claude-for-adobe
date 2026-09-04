@@ -11,4 +11,5 @@ OUT="$ROOT/dist/ClaudeForAdobe-$VERSION.zip"
 rm -f "$OUT"
 (cd "$(dirname "$STAGE")" && zip -qr "$OUT" "Claude for Adobe")
 rm -rf "$(dirname "$STAGE")"
+cp "$OUT" "$ROOT/dist/ClaudeForAdobe.zip"   # constant name: releases/latest/download/ClaudeForAdobe.zip always gets the newest
 echo "$OUT ($(du -h "$OUT" | cut -f1))"
