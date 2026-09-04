@@ -93,6 +93,7 @@ function setStatus(text, cls) { ui.status.textContent = text; ui.status.classNam
 function setBusy(busy) { ui.send.disabled = busy || !session; ui.stop.disabled = !busy; if (!busy) ui.input.focus(); }
 
 function addMessage(cls, text) {
+  if (quietCard && !/error/.test(cls)) return document.createElement("div"); // a button run keeps notes inside its card
   const el = document.createElement("div");
   el.className = "message " + cls;
   el.textContent = text;
@@ -101,16 +102,23 @@ function addMessage(cls, text) {
   return el;
 }
 
+// While a button runs, everything the tools would normally post (cards, muted notes) goes into this one card instead.
+let quietCard = null;
 function addTool(summary, code) {
+  if (quietCard) return quietCard;
   const el = document.createElement("details");
   el.className = "tool";
-  el.innerHTML = "<summary></summary><pre class=\"code\"></pre><pre class=\"result muted\">Running…</pre>";
+  el.innerHTML = "<summary></summary><pre class=\"code\"></pre><div class=\"bar\" hidden><i></i><span></span></div><pre class=\"result muted\">Running…</pre>";
   el.querySelector("summary").textContent = "▸ " + summary;
   el.querySelector(".code").textContent = code;
   ui.messages.appendChild(el);
   ui.messages.scrollTop = ui.messages.scrollHeight;
+  const bar = el.querySelector(".bar");
   return {
-    done(text, ok) { const r = el.querySelector(".result"); r.textContent = text; r.className = "result " + (ok ? "ok" : "error"); },
+    el,
+    open() { el.open = true; },
+    progress(done, total, label) { bar.hidden = false; bar.querySelector("i").style.width = Math.round(100 * done / total) + "%"; bar.querySelector("span").textContent = (label || "") + done + " / " + total; },
+    done(text, ok) { bar.hidden = true; const r = el.querySelector(".result"); r.textContent = text; r.className = "result " + (ok ? "ok" : "error"); },
   };
 }
 
@@ -430,9 +438,21 @@ async function applyCuts(card, cuts, dryRun, summary) {
   }
   let copyNote = "";
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
-  setStatus("Extracting " + cuts.length + " range(s)…");
-  const raw = await host("extractRanges", JSON.stringify(cuts.map((c) => [c.start, c.end])));
-  const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error.";
+  // Batches of 8, latest ranges first (earlier cuts must not shift later ones), with progress between batches.
+  const ordered = cuts.slice().sort((a, b) => b.start - a.start);
+  const BATCH = 8;
+  let doneRanges = 0, ok = true, raw = "";
+  const t0 = Date.now();
+  for (let i = 0; i < ordered.length && ok; i += BATCH) {
+    const batch = ordered.slice(i, i + BATCH);
+    setStatus("Cutting " + Math.min(i + batch.length, ordered.length) + " / " + ordered.length + " ranges…");
+    card.progress(i, ordered.length, "cutting ");
+    raw = await host("extractRanges", JSON.stringify(batch.map((c) => [c.start, c.end])));
+    ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error.";
+    if (ok) doneRanges += batch.length;
+  }
+  const secs = ((Date.now() - t0) / 1000).toFixed(0);
+  raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
   card.done(raw, ok);
   setStatus("Thinking…");
   timeline = await readSnapshot();
@@ -716,21 +736,29 @@ async function boot() {
 }
 
 // Buttons: the same scripts the tools run, with no model in the loop. Plan, confirm, apply.
-async function runCutButton(tool, params) {
+async function runCutButton(tool, params, label) {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
   ui.btnCut.disabled = true;
+  const card = addTool(label, "");
+  card.open();
+  quietCard = card;
   try {
+    card.progress(0, 1, "finding silences ");
     const plan = await tool({ ...params, dry_run: true });
-    if (plan.isError) { addMessage("assistant error", plan.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "")); return; }
+    if (plan.isError) { card.done(plan.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, ""), false); return; }
     const summary = plan.text.split("\n")[0].replace(/^PLAN \(nothing changed\): /, "");
-    if (/^0 /.test(summary)) { addMessage("assistant muted", "Nothing to cut: " + summary); return; }
-    addMessage("assistant muted", summary + "\nApplying on a duplicate sequence; each range is one Cmd+Z step.");
+    const m = /^(\d+) [^,]+, ([\d.]+)s total, sequence ([\d.]+)s -> ([\d.]+)s/.exec(summary);
+    if (!m || m[1] === "0") { card.done("Nothing to cut. " + summary, true); return; }
     const result = await tool({ ...params, dry_run: false });
-    addMessage(result.isError ? "assistant error" : "assistant muted", result.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, ""));
+    const p = await readProject().catch(() => ({}));
+    const where = p.sequence ? " on \"" + p.sequence + "\"" : "";
+    card.done(result.isError
+      ? result.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "")
+      : m[1] + " silences removed, " + m[2] + "s cut, " + m[3] + "s -> " + m[4] + "s" + where + ". Cmd+Z undoes one range at a time.", !result.isError);
     setStatus("Ready");
-  } finally { ui.btnCut.disabled = false; }
+  } finally { quietCard = null; ui.btnCut.disabled = false; }
 }
-ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) });
+ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 
