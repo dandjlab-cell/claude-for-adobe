@@ -425,6 +425,52 @@ var PCX = (function () {
     return out.join("\n");
   }
 
+  // Change the active sequence's frame size (and optionally rate), then reframe every video clip: "fill" scales
+  // each clip up to cover the new frame and centres it; "fit" scales to fit; "none" leaves clips alone.
+  // Scale is multiplied (unit-agnostic), position is set to centre. Not undoable: the panel checkpoints first.
+  function resizeSequence(width, height, fps, mode) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var w = Number(width), h = Number(height), f = Number(fps);
+    var st = s.getSettings();
+    var oldW = num(st.videoFrameWidth), oldH = num(st.videoFrameHeight);
+    if (!(w && h)) { w = oldW; h = oldH; }
+    try {
+      st.videoFrameWidth = w; st.videoFrameHeight = h;
+      if (f) { if (st.videoFrameRate && typeof st.videoFrameRate === "object") st.videoFrameRate.seconds = 1 / f; else st.videoFrameRate = 1 / f; }
+      s.setSettings(st);
+    } catch (e) { return "ERR:setSettings " + e; }
+    if (w === oldW && h === oldH) mode = "none";
+    var done = 0, skipped = 0;
+    if (mode === "fill" || mode === "fit") {
+      for (var t = 0; t < s.videoTracks.numTracks; t++) {
+        var tr = s.videoTracks[t];
+        for (var c = 0; c < tr.clips.numItems; c++) {
+          var cl = tr.clips[c];
+          try {
+            var motion = null;
+            for (var k = 0; k < cl.components.numItems; k++) { var comp = cl.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") { motion = comp; break; } }
+            if (!motion) { skipped++; continue; }
+            var pos = motion.properties[0], scale = motion.properties[1];
+            // Source frame from the clip's metadata: "1920 x 1080 (1.0)"; fall back to the old sequence size.
+            var srcW = oldW, srcH = oldH;
+            try { var vi = String(cl.projectItem.getProjectColumnsMetadata()); var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); } } catch (e0) {}
+            var fx = w / srcW, fy = h / srcH;
+            var factor = mode === "fill" ? Math.max(fx, fy) : Math.min(fx, fy);
+            var cur = num(scale.getValue());
+            scale.setValue(cur * factor / Math.max(oldW / srcW, oldH / srcH), true);
+            var p = pos.getValue();
+            var normalized = p && p.length === 2 && p[0] <= 1.5 && p[1] <= 1.5;
+            pos.setValue(normalized ? [0.5, 0.5] : [w / 2, h / 2], true);
+            done++;
+          } catch (e1) { skipped++; }
+        }
+      }
+    }
+    var fin = s.getSettings();
+    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (" + mode + ", centred)" + (skipped ? ", " + skipped + " skipped" : "") : "");
+  }
+
   function findItemByMedia(mediaPath) {
     function walk(b) { for (var k = 0; k < b.children.numItems; k++) { var c = b.children[k]; if (c.type === 2) { var r = walk(c); if (r) return r; } else { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp === mediaPath) return c; } } return null; }
     return walk(app.project.rootItem);
