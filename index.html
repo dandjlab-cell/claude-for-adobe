@@ -23,6 +23,7 @@
     .view.active { display: grid; grid-template-columns: minmax(0, 1fr); }
     #view-chat.active { grid-template-rows: auto minmax(0, 1fr) auto; }
     #view-settings.active { overflow-y: auto; }
+    .pulse { outline: 2px solid var(--accent); outline-offset: 2px; }
     .tabs { display: flex; border: 1px solid var(--line); }
     .tabs button { border: 0; padding: 4px 12px; font-size: 12px; color: var(--ink-60); background: transparent; }
     .tabs button:hover:not(.active) { background: var(--line-soft); color: var(--ink); }
@@ -158,12 +159,11 @@
         <p>Click the folder you want to work on, then ask Claude to edit it.</p>
         <p class="muted">Tip: keep b-roll in a separate folder from the talking head. It helps Claude a lot.</p>
         <div class="chips">
-          <button type="button" data-prompt="What's said in this sequence, with timestamps?">What's said in this sequence?</button>
-          <button type="button" data-prompt="Remove every pause longer than 1 second.">Remove pauses longer than 1 s</button>
-          <button type="button" data-prompt="Find where they say “” and cut everything before it.">Cut to the moment they say…</button>
-          <button type="button" data-prompt="Edit what I have selected in the Project panel.">Edit what I've selected</button>
-          <button type="button" data-prompt="Give me an overview of every clip on the timeline.">Overview of every clip</button>
+          <button type="button" data-prompt="Edit what I have selected.">Edit this</button>
+          <button type="button" data-prompt="Organize my project.">Organize my project</button>
+          <button type="button" data-action="cut">Remove silences</button>
         </div>
+        <p class="muted" style="margin-top:14px;font-size:12px">Remove silences uses the Cut silences button at the top. It runs without Claude.</p>
       </div>
       <div class="composer">
         <div id="selection-line" class="mono muted" hidden></div>

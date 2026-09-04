@@ -956,7 +956,8 @@ ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.va
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 
-document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { ui.input.value = b.dataset.prompt; ui.input.focus(); const i = ui.input.value.indexOf("\u201c\u201d"); if (i >= 0) ui.input.setSelectionRange(i + 1, i + 1); }; });
+document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { ui.input.value = b.dataset.prompt; ui.input.focus(); }; });
+document.querySelectorAll("#starter [data-action=cut]").forEach((b) => { b.onclick = () => { ui.btnCut.classList.add("pulse"); setTimeout(() => ui.btnCut.classList.remove("pulse"), 1200); ui.btnCut.click(); }; });
 // Whisper model row: the one big download, visible and under the user's control. Also tells Claude what is available.
 function whisperState() { const inst = installedModels(); return (modelReady() ? "ready (" + currentModel() + ")" : "not downloaded (" + currentModel() + " chosen)") + (inst.length && !modelReady() ? "; installed: " + inst.join(", ") : ""); }
 function renderModelRow() {
