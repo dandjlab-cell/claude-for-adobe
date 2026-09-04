@@ -377,9 +377,9 @@ async function frameMismatchNote(snap) {
     if (!snap || !snap.width || !snap.height) return "";
     const paths = new Set(snap.clips.filter((c) => c.mediaPath && c.track[0] === "V").map((c) => c.mediaPath));
     if (!paths.size) return "";
-    const raw = await host("binMedia", "");
+    const raw = await host("mediaFrames", JSON.stringify([...paths]));
     const sizes = new Map();
-    (raw && raw.indexOf("ERR:") !== 0 ? raw.split("\u0003") : []).forEach((r) => { const [, mp, , vi] = r.split("\u0002"); const m = /(\d+)\s*x\s*(\d+)/.exec(vi || ""); if (paths.has(mp) && m) sizes.set(m[1] + "x" + m[2], (sizes.get(m[1] + "x" + m[2]) || 0) + 1); });
+    (raw && raw.indexOf("ERR:") !== 0 && raw ? raw.split("\u0003") : []).forEach((r) => { const [, vi] = r.split("\u0002"); const m = /(\d+)\s*x\s*(\d+)/.exec(vi || ""); if (m) sizes.set(m[1] + "x" + m[2], (sizes.get(m[1] + "x" + m[2]) || 0) + 1); });
     if (!sizes.size) return "";
     const seqPortrait = snap.height > snap.width;
     const parts = [...sizes].map(([k, n]) => { const [w, h] = k.split("x").map(Number); return n + " x " + k + (h > w ? " (portrait)" : w === h ? " (square)" : " (landscape)"); });
@@ -577,6 +577,9 @@ async function removePauses({ start_seconds = 0, end_seconds, min_pause_s = DEFA
 // Whisper large-v3-turbo on every audio clip's source in the active sequence. Cached per media file.
 // Also writes Premiere-format transcript JSON files for Text panel > Import transcript.
 // Premiere's transcript for the clips in range, as timestamped lines in sequence seconds. Read from the saved .prproj.
+// "duration|clipCount|firstStarts": enough to tell whether an analysis file still describes this timeline.
+function timelineFingerprint(snap) { return snap && !snap.error ? snap.duration.toFixed(2) + "|" + snap.clips.length + "|" + snap.clips.slice(0, 12).map((c) => c.start.toFixed(2)).join(",") : "?"; }
+
 async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" } = {}) {
   const card = addTool("read_transcript", "");
   let snap, clips;
@@ -589,13 +592,16 @@ async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" 
     try { const r = wordsForClip(c, source, transcripts); words = r.words; used.add(r.from); }
     catch (error) { skipped.push(c.track + " " + c.name + " (" + error.message + ")"); return; }
     const lines = linesFromWords(words, c.start - c.inPoint).filter((l) => l.end > c.s0 && l.start < c.s1);
-    out.push("## " + c.track + " " + c.name + " (" + tc(c.s0) + " - " + tc(c.s1) + ")");
+    const span = words.length ? " [source words " + tc(Math.min(...words.map((w) => w.start))) + "-" + tc(Math.max(...words.map((w) => w.end))) + ", clip uses " + tc(c.inPoint) + "-" + tc(c.inPoint + (c.s1 - c.s0)) + "]" : "";
+    if (!lines.length && words.length) out.push("## " + c.track + " " + c.name + " (" + tc(c.s0) + " - " + tc(c.s1) + ") NO WORDS IN RANGE" + span);
+    else out.push("## " + c.track + " " + c.name + " (" + tc(c.s0) + " - " + tc(c.s1) + ")" + span);
     lines.forEach((l) => out.push("[" + tc(l.start) + "] " + l.text));
   });
   if (!out.length) return err(card, "No transcript available. In Premiere: Text panel > Transcribe, then Cmd+S (the transcript is read from the saved project file). Or run transcribe_whisper.");
   const stale = used.has("premiere") && project.path ? " (project saved " + ((Date.now() - fs.statSync(project.path).mtimeMs) / 60000).toFixed(0) + " min ago; edits since then are not visible until Cmd+S)" : "";
   const full = out.join("\n") + (skipped.length ? "\n(no transcript yet for: " + skipped.join(", ") + ". Only these need transcribing: transcribe_whisper skips clips already done, or Text panel > Transcribe on them, then Cmd+S.)" : "") + "\n(source: " + [...used].join("+") + "; timestamps are sequence seconds" + stale + ")";
-  const file = writeAnalysis((project.sequence || "sequence") + ".transcript.md", "# Transcript of \"" + (project.sequence || "sequence") + "\"\n\n" + full + "\n");
+  const fp = timelineFingerprint(snap);
+  const file = writeAnalysis((project.sequence || "sequence") + ".transcript.md", "# Transcript of \"" + (project.sequence || "sequence") + "\"\n<!-- timeline " + fp + " -->\nSnapshot of the timeline at " + new Date().toISOString().slice(0, 16).replace("T", " ") + " (" + snap.duration.toFixed(1) + "s, " + snap.clips.length + " clips). After any cut, call read_transcript again; it is instant.\n\n" + full + "\n");
   card.done(full.split("\n").slice(0, 8).join("\n") + (out.length > 8 ? "\n…" : ""), true);
   if (out.length <= 40) return { text: full + "\n(also written to " + file + ")" };
   return { text: out.length + " lines of transcript written to " + file + ". First lines:\n" + out.slice(0, 6).join("\n") + "\n…\nFor questions about it (find a phrase, what is said at a time), give a subagent the question and that path." };
@@ -707,7 +713,7 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
 async function projectBins({ bin = "" } = {}) {
   if (!bin) bin = await selectedBin();
   const card = addTool("project_bins" + (bin ? " (" + bin + ")" : ""), "");
-  const text = bin ? (await host("binMedia", bin)).split("\u0003").filter(Boolean).map((r) => { const [name, , , vi, tb] = r.split("\u0002"); return name + (vi ? "  " + vi.replace(/\s*\(.*$/, "") : "") + (tb ? " @ " + tb : ""); }).join("\n") : await host("listBins");
+  const text = bin ? (await host("binMedia", bin, "true")).split("\u0003").filter(Boolean).map((r) => { const [name, , , vi, tb] = r.split("\u0002"); return name + (vi ? "  " + vi.replace(/\s*\(.*$/, "") : "") + (tb ? " @ " + tb : ""); }).join("\n") : await host("listBins");
   card.done(text.split("\n").slice(0, 25).join("\n") + (text.split("\n").length > 25 ? "\n…" : ""), true);
   return { text: text || "(empty project)" };
 }
@@ -885,7 +891,8 @@ async function listAnalysis() {
   const card = addTool("list_analysis", "");
   const dir = analysisDir();
   let rows = [];
-  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " "); }); } catch (_) {}
+  const fp = timelineFingerprint(timeline || (await readSnapshot().catch(() => null)));
+  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); let stale = ""; if (f.endsWith(".transcript.md")) { const head = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400); const m = /<!-- timeline ([^>]*) -->/.exec(head); if (m && m[1] !== fp) stale = "  STALE (timeline changed since; call read_transcript again)"; } return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " ") + stale; }); } catch (_) {}
   const text = rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir;
   card.done(text, true);
   return { text: text + (rows.length ? "\n(read any of these with a subagent; prosody / diarization / notes may come from other tools)" : "") };
@@ -1244,7 +1251,7 @@ async function refreshSelectionLine() {
   bar.append(b, document.createTextNode(parts.join(" · ")));
 }
 function showAttachmentsRow() { ui.attachments.style.display = attachments.length ? "flex" : "none"; }
-setInterval(refreshSelectionLine, 800);
+setInterval(() => { if (!(session && session.busy)) refreshSelectionLine(); }, 2000);
 ["mouseenter", "focus"].forEach((ev) => window.addEventListener(ev, refreshSelectionLine, true));
 
 // Drops and pastes. Without this, dropping a file makes the embedded browser navigate to it and the panel is gone.

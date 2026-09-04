@@ -297,10 +297,11 @@ var PCX = (function () {
   }
 
   // Media inside a bin (nested bins included): name, path, video info, timebase, per item.
-  function binMedia(binPath) {
+  function binMedia(binPath, withMeta) {
     var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
     if (!bin) return "ERR:no bin " + binPath;
     var rows = [];
+    var meta0 = withMeta === "false" ? function () { return ""; } : null;
     function meta(item, key) {
       try {
         var xml = String(item.getProjectColumnsMetadata());
@@ -314,7 +315,7 @@ var PCX = (function () {
         if (c.type === 2) { walk(c); continue; }
         var mp = ""; try { mp = c.getMediaPath(); } catch (e) {}
         if (!mp) continue;
-        rows.push([c.name, mp, c.nodeId, meta(c, "Column.Intrinsic.VideoInfo"), meta(c, "Column.Intrinsic.MediaTimebase"), meta(c, "Column.Intrinsic.MediaDuration")].join(COL));
+        rows.push([c.name, mp, c.nodeId, meta0 ? "" : meta(c, "Column.Intrinsic.VideoInfo"), meta0 ? "" : meta(c, "Column.Intrinsic.MediaTimebase"), meta0 ? "" : meta(c, "Column.Intrinsic.MediaDuration")].join(COL));
         if (rows.length > 400) return;
       }
     }
@@ -519,8 +520,18 @@ var PCX = (function () {
     return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (removed ? " (its audio removed)" : "") + (notes.length ? " [" + notes.join("; ") + "]" : "") + sync;
   }
 
+  // Frame sizes and start timecodes for just the given media paths (json array). Cheap: metadata only for matches.
+  function mediaFrames(json) {
+    var want = parse(json), set = {}, rows = [];
+    for (var i = 0; i < want.length; i++) set[want[i]] = true;
+    function meta(item, key) { try { var xml = String(item.getProjectColumnsMetadata()); var m = new RegExp("<" + key + ">([^<]*)</" + key + ">").exec(xml); return m ? m[1] : ""; } catch (e) { return ""; } }
+    function walk(b) { for (var k = 0; k < b.children.numItems; k++) { var c = b.children[k]; if (c.type === 2) { walk(c); continue; } var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp && set[mp]) { rows.push([mp, meta(c, "Column.Intrinsic.VideoInfo"), meta(c, "Column.Intrinsic.MediaTimebase"), meta(c, "Column.Intrinsic.MediaStart"), meta(c, "Column.Intrinsic.MediaDuration")].join(COL)); delete set[mp]; } } }
+    walk(app.project.rootItem);
+    return rows.join(ROW);
+  }
+
   return {
-    resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
