@@ -558,8 +558,36 @@ var PCX = (function () {
     return made ? "caption track created from " + item.name : "ERR:createCaptionTrack returned false";
   }
 
+  // Move a clip's picture inside the frame: the video clip under `atSec` on track V(trackIndex+1) (or the first
+  // video track that has a clip there). dx/dy are fractions of the frame (+x right, +y down); scale is a multiplier
+  // (1 = keep). Uses the Motion component; position units are detected (0-1 or pixels). Undo: Cmd+Z.
+  function nudgeClip(atSec, trackIndex, dx, dy, scaleMul) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var at = Number(atSec), idx = Number(trackIndex);
+    var st = s.getSettings(); var W = num(st.videoFrameWidth), H = num(st.videoFrameHeight);
+    var found = null, tIdx = -1;
+    var order = [];
+    if (!isNaN(idx) && idx >= 0) order.push(idx);
+    for (var t = 0; t < s.videoTracks.numTracks; t++) if (t !== idx) order.push(t);
+    for (var o = 0; o < order.length && !found; o++) { var tr = s.videoTracks[order[o]]; for (var c = 0; c < tr.clips.numItems; c++) { var cl = tr.clips[c]; var a = num(cl.start.ticks) / T, b = num(cl.end.ticks) / T; if (at >= a - 0.001 && at < b) { found = cl; tIdx = order[o]; break; } } }
+    if (!found) return "ERR:no video clip at " + at.toFixed(2) + "s";
+    var motion = null;
+    for (var k = 0; k < found.components.numItems; k++) { var comp = found.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") { motion = comp; break; } }
+    if (!motion) return "ERR:no Motion component on " + found.name;
+    var pos = motion.properties[0], scale = motion.properties[1];
+    var p = pos.getValue();
+    var normalized = p && p.length === 2 && p[0] <= 1.5 && p[1] <= 1.5;
+    var nx = normalized ? p[0] + Number(dx || 0) : p[0] + Number(dx || 0) * W;
+    var ny = normalized ? p[1] + Number(dy || 0) : p[1] + Number(dy || 0) * H;
+    try { pos.setValue([nx, ny], true); } catch (e) { return "ERR:position " + e; }
+    var sm = Number(scaleMul);
+    if (sm && sm !== 1) { try { scale.setValue(num(scale.getValue()) * sm, true); } catch (e2) { return "ERR:scale " + e2; } }
+    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position " + (normalized ? nx.toFixed(3) + "," + ny.toFixed(3) + " (fraction)" : Math.round(nx) + "," + Math.round(ny) + " px") + (sm && sm !== 1 ? ", scale x" + sm : "");
+  }
+
   return {
-    importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    nudgeClip: nudgeClip, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

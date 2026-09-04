@@ -1059,6 +1059,18 @@ async function createCaptions({ max_words, max_chars = 32, max_lines, max_second
   return { text: (ok ? cues.length + " captions added as a caption track (from " + (tl ? "the exact timeline transcript" : "per-clip transcripts") + "). SRT: " + srt + "." : "CLAUDE_FOR_ADOBE_ERROR:" + raw) + cp, isError: !ok };
 }
 
+// Reframe check-and-fix: move a clip's picture by a fraction of the frame, optionally scale. Verify with preview_frames.
+async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1 } = {}) {
+  const card = addTool("nudge_clip @" + Number(at_seconds).toFixed(2) + "s dx " + dx + " dy " + dy + (scale !== 1 ? " scale x" + scale : ""), "");
+  if (!Number.isFinite(Number(at_seconds))) return err(card, "at_seconds is required");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const raw = await host("nudgeClip", String(at_seconds), String(track ? Number(track) - 1 : -1), String(dx), String(dy), String(scale));
+  const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
+  card.done(raw, ok);
+  return { text: copyNote + raw + (ok ? "\nLook at preview_frames at this time to confirm before moving on." : ""), isError: !ok };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -1066,7 +1078,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1091,7 +1103,9 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
-  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked; report the result in one line and offer a nudge left/right if framing matters.",
+  { name: "nudge_clip", description: "After a reframe: move the picture of the video clip at a sequence time by a fraction of the frame (dx right, dy down; e.g. dx -0.1 pushes it left by 10% of the width) and optionally scale it (1.1 = 10% bigger). Use with preview_frames: look, nudge, look again.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track; omit to find the clip on any track" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" } }, required: ["at_seconds"] } },
+  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked. THEN VERIFY: preview_frames at the start of each distinct clip (up to 6 moments), check that the subject and any titles sit inside the new frame; nudge_clip where they do not, and look again. Report in a line.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
