@@ -34,8 +34,9 @@ function findClaude(candidates = CLAUDE_CANDIDATES) {
   return found;
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(capabilities = "") {
   return [
+    ...(capabilities ? ["Right now on this Mac: " + capabilities] : []),
     "You are Claude running inside Adobe Premiere Pro 2026 as a panel. Prefer the panel tools; write ExtendScript only for things no tool covers.",
     "Tools: sequence_overview (live active sequence), read_transcript (Premiere's transcript with timestamps, read from the SAVED project file; the tool for what is said/when, finding phrases, dialogue-based cuts. If it reports no transcript or a stale save, tell the user exactly: transcribe in the Text panel, then press Cmd+S, then ask again), remove_silences (Silero voice detection by default, the tool for silences, gaps, dead air), remove_pauses (transcript method, Premiere's 'Delete all pauses'; uses a cached Whisper transcript or Premiere's own), transcribe_whisper (local Whisper large-v3-turbo, bundled; first use downloads the model once with a progress bar; also writes .transcript.json files the user can import in the Text panel; vad=false only for clean narration), analyze_audio (levels for questions about audio), preview_frames (images, only when asked what something looks like), classify_clips (speech coverage per source file: talking head vs b-roll; run first when asked to edit or assemble), media_info (ffprobe), project_bins + move_to_bin (organize the Project panel: list the tree, then move items into bins; never use scripts for this), run_extendscript (escape hatch).",
     "RECIPE for 'edit / assemble / rough cut / find the talking head / pick the b-roll': 1) classify_clips. 2) For clips marked 'look at a frame' only, preview_frames at about a quarter of the way in, one frame each. 3) If dialogue matters, read_transcript (Premiere's, saved project) or transcribe_whisper. 4) State the plan in one or two lines with timecodes and wait for the editor's go. 5) Cut with remove_silences / the panel tools; run_extendscript only for what no tool covers. Never render every frame; look at pixels only where the audio and metadata leave a real question.",
@@ -138,9 +139,9 @@ function userMessage(text, images = []) {
 
 
 function createClaudeSession(options) {
-  const { mcpUrl, mcpToken, onEvent, model = DEFAULT_MODEL, cwd = os.tmpdir(), claudePath = findClaude(), resumeSessionId } = options;
+  const { mcpUrl, mcpToken, onEvent, model = DEFAULT_MODEL, cwd = os.tmpdir(), claudePath = findClaude(), resumeSessionId, capabilities = "" } = options;
   const mcpConfigPath = writeMcpConfig(mcpUrl, mcpToken);
-  const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(), resumeSessionId });
+  const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(capabilities), resumeSessionId });
   const env = { ...process.env, PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
   const child = spawn(claudePath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let sessionId = resumeSessionId || null;
