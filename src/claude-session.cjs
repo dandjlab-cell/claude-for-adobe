@@ -142,7 +142,7 @@ function createClaudeSession(options) {
   const mcpConfigPath = writeMcpConfig(mcpUrl, mcpToken);
   const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(capabilities), resumeSessionId });
   const env = { ...process.env, PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
-  const child = spawn(claudePath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(claudePath, args, { env: { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000" }, cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let sessionId = resumeSessionId || null;
   let busy = false;
   let stderr = "";

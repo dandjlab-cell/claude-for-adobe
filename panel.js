@@ -572,11 +572,18 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
   const media = [...new Set(snap.clips.filter((c) => c.track[0] === "A" && c.mediaPath).map((c) => c.mediaPath))];
   if (!media.length) return err(card, "no audio clips with source media in the active sequence");
   if (!modelReady()) {
-    // The one big download is the user's call: ask, then use the same download the panel row uses.
-    const go = await askInline("Transcribing needs the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one-time download stored in your Library; change the choice at the bottom of the panel). Download it now?", "Download", "Not now");
+    // The one big download is the user's call. It runs outside this tool call (which has a time limit): start it,
+    // return now, and when it lands, nudge Claude to continue on its own.
+    const go = await askInline("Transcribing needs the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one-time download stored in your Library; change the choice in Settings). Download it now?", "Download", "Not now");
     if (!go) return err(card, "The user chose not to download the Whisper model now. Suggest Premiere's own transcription (Text panel > Transcribe, then Cmd+S) instead.");
     setStatus("Downloading the Whisper model (one time)…");
-    if (!await downloadWhisperModel()) return err(card, "Whisper model download failed.");
+    downloadWhisperModel().then((ok) => {
+      if (!ok || !session || session.busy) return;
+      setBusy(true); setStatus("Thinking…");
+      try { session.send("[The Whisper model finished installing. Continue with the transcription the user asked for.]"); } catch (_) { setBusy(false); }
+    });
+    card.done("download started", true);
+    return { text: "Whisper model download started (" + WHISPER_MODELS[currentModel()].mb + " MB). Tell the user in one line that it is downloading in the Settings tab and that you will continue automatically when it is installed. Then stop; do not call transcribe_whisper again until then." };
   }
   const outDir = project.path ? path.join(path.dirname(project.path), "_claude-for-adobe_transcripts") : os.tmpdir();
   const lines = [];
