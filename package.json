@@ -1,6 +1,6 @@
 {
   "name": "claude-for-adobe",
-  "version": "0.1.57",
+  "version": "0.1.58",
   "private": true,
   "type": "commonjs",
   "scripts": {
