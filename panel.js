@@ -1043,11 +1043,12 @@ async function refreshSelectionLine() {
   lastSelection = sel;
   if (!sel || sel.indexOf("ERR:") === 0) { ui.selectionLine.hidden = true; return; }
   ui.selectionLine.innerHTML = "";
-  const b = document.createElement("b"); b.textContent = "Selected in Premiere: ";
-  ui.selectionLine.append(b, document.createTextNode(sel.split("\u0003").join(" · ") + "  (say \"this\" or \"these\")"));
+  const b = document.createElement("b"); b.textContent = "Selected: ";
+  ui.selectionLine.append(b, document.createTextNode(sel.split("\u0003").join(" · ").replace(/^Project panel: /, "").replace(/; Timeline: /, " · ")));
   ui.selectionLine.hidden = false;
 }
-setInterval(refreshSelectionLine, 2000);
+setInterval(refreshSelectionLine, 800);
+["mouseenter", "focus"].forEach((ev) => window.addEventListener(ev, refreshSelectionLine, true));
 
 // Drops and pastes. Without this, dropping a file makes the embedded browser navigate to it and the panel is gone.
 const attachments = []; // [{ name, mediaType, data }]
