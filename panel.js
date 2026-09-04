@@ -583,6 +583,22 @@ function timelineFingerprint(snap) { return snap && !snap.error ? snap.duration.
 
 // Exact transcript of the CURRENT cut: render the sequence audio (Premiere's 16 kHz mono preset), transcribe it.
 // Words are already in timeline time. Cached by timeline fingerprint next to the project.
+// Premiere ships a 16 kHz mono WAV export preset; find it inside the installed app (any version) from the Node side.
+function wavPreset() {
+  const roots = ["/Applications"];
+  for (const root of roots) {
+    let apps = []; try { apps = fs.readdirSync(root).filter((d) => /^Adobe Premiere Pro/i.test(d)); } catch (_) {}
+    for (const d of apps.sort().reverse()) {
+      let bundles = []; try { bundles = fs.readdirSync(path.join(root, d)).filter((b) => b.endsWith(".app")); } catch (_) {}
+      for (const b of bundles) {
+        const p = path.join(root, d, b, "Contents", "Settings", "EncoderPresets", "WAV_Mono_16bit_16kHz.epr");
+        if (fs.existsSync(p)) return p;
+      }
+    }
+  }
+  return "";
+}
+
 function timelineTranscriptPath() { return path.join(analysisDir(), (project.sequence || "sequence") + ".timeline.json"); }
 function freshTimelineWords(snap) {
   try { const j = JSON.parse(fs.readFileSync(timelineTranscriptPath(), "utf8")); return j.fingerprint === timelineFingerprint(snap) ? j : null; } catch (_) { return null; }
@@ -614,7 +630,9 @@ async function transcribeTimeline({ language = "en" } = {}) {
   fs.mkdirSync(analysisDir(), { recursive: true });
   card.progress(0, 3, "rendering timeline audio ");
   setStatus("Rendering timeline audio…");
-  const out = await host("exportSequenceAudio", wav);
+  const preset = wavPreset();
+  if (!preset) return err(card, "could not find Premiere's WAV export preset (WAV_Mono_16bit_16kHz.epr) under /Applications");
+  const out = await host("exportSequenceAudio", wav, preset);
   if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return err(card, "audio render failed: " + out.replace(/^ERR:/, ""));
   card.progress(1, 3, "transcribing ");
   setStatus("Whisper: timeline…");
@@ -1255,7 +1273,9 @@ async function runCaptionsButton() {
       card.progress(0, 3, "rendering timeline audio ");
       const wav = path.join(analysisDir(), (project.sequence || "sequence") + ".mix.wav");
       fs.mkdirSync(analysisDir(), { recursive: true });
-      const out = await host("exportSequenceAudio", wav);
+      const preset = wavPreset();
+      if (!preset) { card.done("could not find Premiere's WAV export preset under /Applications", false); return; }
+      const out = await host("exportSequenceAudio", wav, preset);
       if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) { card.done("audio render failed: " + out.replace(/^ERR:/, ""), false); return; }
       card.progress(1, 3, "transcribing (" + currentModel() + ") ");
       await transcribeRenderedTimeline(wav, snap, "en");

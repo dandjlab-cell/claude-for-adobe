@@ -532,13 +532,10 @@ var PCX = (function () {
 
   // Render the active sequence's audio mix to a 16 kHz mono WAV using Premiere's own preset (in-app export).
   // Returns the output path. This is a read of the timeline, not an edit.
-  function exportSequenceAudio(outPath) {
+  function exportSequenceAudio(outPath, preset) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
-    var appDir = "";
-    try { appDir = String(app.path); } catch (e) {}
-    if (!appDir) return "ERR:cannot find the Premiere application folder";
-    var preset = appDir.replace(/\/$/, "") + "/Settings/EncoderPresets/WAV_Mono_16bit_16kHz.epr";
+    if (!preset) return "ERR:no export preset path given";
     var r = null;
     try { r = s.exportAsMediaDirect(outPath, preset, 0); } catch (e2) { return "ERR:exportAsMediaDirect " + e2; }
     return String(r) === "No Error" || String(r) === "" || String(r) === "0" ? outPath : "ERR:" + r;
