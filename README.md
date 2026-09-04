@@ -6,6 +6,8 @@ Claude Code, inside Premiere Pro. Talk to it about your timeline, let it make th
 
 Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
 
+Coming next: After Effects, and Codex as an alternative to Claude.
+
 
 A personal CEP panel that runs **Claude Code inside Adobe Premiere Pro 2026**. Claude gets four
 tools; the panel executes them, shows each call and result, and checkpoints the `.prproj` before
