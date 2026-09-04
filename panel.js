@@ -915,12 +915,14 @@ async function checkUpdates(announce) {
   ui.checkUpdates.disabled = false;
   if (!update) {
     pendingUpdate = null;
+    tabSettings.textContent = "Settings"; tabSettings.classList.remove("attention");
     setVersionRow("v" + currentVersion(extensionRoot) + " · up to date");
     ui.checkUpdates.textContent = "Check for updates"; ui.checkUpdates.className = "utility";
     log("up to date (" + currentVersion(extensionRoot) + ")");
     return;
   }
   pendingUpdate = update;
+  tabSettings.textContent = "Settings · update"; tabSettings.classList.add("attention");
   setVersionRow("v" + currentVersion(extensionRoot) + " · " + update.version + " available");
   ui.checkUpdates.textContent = "Update to " + update.version; ui.checkUpdates.className = "accent";
   ui.checkUpdates.title = "Downloads the release from GitHub, verifies its checksum, and installs it. " + update.notesUrl;
