@@ -765,9 +765,12 @@ async function installPending() {
   try {
     const v = await installUpdate(update, extensionRoot);
     pendingUpdate = null;
-    setVersionRow("v" + v + " installed");
-    ui.checkUpdates.textContent = "Reopen the panel to finish"; ui.checkUpdates.className = "accent"; ui.checkUpdates.disabled = true;
-    addMessage("assistant muted", "Updated to " + v + ". Close this panel and open it again (Window > Extensions > Claude for Premiere) to finish.");
+    setVersionRow("v" + v + " installed, restarting");
+    ui.checkUpdates.textContent = "Restarting…"; ui.checkUpdates.className = "accent"; ui.checkUpdates.disabled = true;
+    // Reload the panel in place: stop the Claude process and the local server first so nothing is orphaned.
+    try { if (session) await session.stop(); } catch (_) {}
+    try { if (mcp) mcp.close(); } catch (_) {}
+    setTimeout(() => location.reload(), 400);
   } catch (error) {
     ui.checkUpdates.disabled = false; ui.checkUpdates.textContent = "Update to " + update.version;
     addMessage("assistant error", "Update failed: " + error.message);
