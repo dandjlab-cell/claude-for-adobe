@@ -425,8 +425,39 @@ var PCX = (function () {
     return out.join("\n");
   }
 
+  function findItemByMedia(mediaPath) {
+    function walk(b) { for (var k = 0; k < b.children.numItems; k++) { var c = b.children[k]; if (c.type === 2) { var r = walk(c); if (r) return r; } else { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp === mediaPath) return c; } } return null; }
+    return walk(app.project.rootItem);
+  }
+
+  // Lay a clip on a video track at a time for a duration (overwrite), sound off. trackIndex 0-based (1 = V2).
+  // Returns "placed <name> V<n> start-end". Undo: Cmd+Z (overwrite + trim + mute are separate steps).
+  function overlayClip(mediaPath, atSec, durSec, trackIndex, inSec) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var item = findItemByMedia(mediaPath);
+    if (!item) return "ERR:no project item for " + mediaPath;
+    var idx = Number(trackIndex); if (isNaN(idx)) idx = 1;
+    while (s.videoTracks.numTracks <= idx) { try { s.videoTracks.addTrack ? s.videoTracks.addTrack() : null; } catch (e) {} if (s.videoTracks.numTracks <= idx) break; }
+    if (s.videoTracks.numTracks <= idx) return "ERR:video track V" + (idx + 1) + " does not exist (add it in the timeline)";
+    var track = s.videoTracks[idx];
+    var at = Number(atSec), dur = Number(durSec), inPt = Number(inSec) || 0;
+    try { if (inPt > 0) { item.setInPoint(inPt, 4); } } catch (e) {}
+    var ok = false;
+    try { ok = track.overwriteClip(item, at); } catch (e) { return "ERR:overwriteClip " + e; }
+    try { if (inPt > 0) item.clearInPoint(4); } catch (e) {}
+    if (!ok) return "ERR:overwriteClip refused";
+    var placed = null;
+    for (var c = 0; c < track.clips.numItems; c++) { var cl = track.clips[c]; if (Math.abs(num(cl.start.ticks) / T - at) < 0.02) { placed = cl; } }
+    if (!placed) return "ERR:placed clip not found on V" + (idx + 1);
+    if (dur > 0) { try { var tm = new Time(); tm.seconds = at + dur; placed.end = tm; } catch (e) { return "placed " + placed.name + " V" + (idx + 1) + " at " + at.toFixed(2) + "s (could not trim: " + e + ")"; } }
+    var muted = 0;
+    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tr = s.audioTracks[a]; for (var k = 0; k < tr.clips.numItems; k++) { var ac = tr.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.02) { try { ac.disabled = true; muted++; } catch (e2) {} } } }
+    return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (muted ? " (audio off)" : "");
+  }
+
   return {
-    selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

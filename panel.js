@@ -824,6 +824,40 @@ async function keepOnly({ ranges = [], dry_run = true } = {}) {
   return applyCuts(card, cuts, dry_run, "keep " + keep.length + " range(s): remove " + cuts.length + " gap(s), " + total.toFixed(1) + "s, " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s");
 }
 
+// B-roll over the talking head: one clip, one time, one duration, sound off. Deterministic; Cmd+Z per step.
+async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, in_seconds = 0, track = 2 } = {}) {
+  const card = addTool("place_broll " + path.basename(media_path) + " @" + Number(at_seconds).toFixed(2) + "s", "");
+  if (!media_path || !Number.isFinite(Number(at_seconds))) return err(card, "media_path and at_seconds are required");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const raw = await host("overlayClip", media_path, String(at_seconds), String(duration_seconds), String(Math.max(0, Number(track) - 1)), String(in_seconds));
+  const ok = raw.indexOf("ERR:") !== 0;
+  card.done(raw, ok);
+  timeline = await readSnapshot().catch(() => timeline);
+  return { text: copyNote + raw, isError: !ok };
+}
+
+// What analysis already exists for this project, from this panel or from anything else that wrote there.
+async function listAnalysis() {
+  const card = addTool("list_analysis", "");
+  const dir = analysisDir();
+  let rows = [];
+  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " "); }); } catch (_) {}
+  const text = rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir;
+  card.done(text, true);
+  return { text: text + (rows.length ? "\n(read any of these with a subagent; prosody / diarization / notes may come from other tools)" : "") };
+}
+
+// Claude's own notes (shot descriptions, decisions) saved next to the project so later turns and sessions reuse them.
+async function saveNotes({ name = "notes.md", text = "" } = {}) {
+  const card = addTool("save_notes " + name, "");
+  if (!text.trim()) return err(card, "text is required");
+  const safe = String(name).replace(/[^\w.\- ]/g, "_").replace(/\.md$/i, "") + ".md";
+  const f = writeAnalysis(safe, text.endsWith("\n") ? text : text + "\n");
+  card.done("saved " + f, true);
+  return { text: "saved " + f };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -831,7 +865,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -856,6 +890,12 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
+  { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration, sound off. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
+    inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "list_analysis", description: "Lists the analysis files next to this project (transcripts, classifications, notes, and anything extracted elsewhere such as prosody or diarization). Check it first; read files with a subagent.",
+    inputSchema: { type: "object", properties: {} } },
+  { name: "save_notes", description: "Save your notes (shot descriptions per b-roll clip, decisions, selects) as a markdown file next to the project, so later turns and sessions reuse them instead of looking again.",
+    inputSchema: { type: "object", properties: { name: { type: "string", description: "file name, e.g. broll-notes" }, text: { type: "string" } }, required: ["text"] } },
   { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",
     inputSchema: { type: "object", properties: { media_paths: { type: "array", items: { type: "string" } } }, required: ["media_paths"] } },
   { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
@@ -922,7 +962,7 @@ function restartSession(resumeSessionId) {
     if (old) await old.stop();
     try {
       const next = createClaudeSession({
-        mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot, readPaths: [analysisDir()],
+        mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot, readPaths: [analysisDir(), path.join(extensionRoot, ".claude", "skills")],
         capabilities: "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
         onEvent: (event) => { if (gen === sessionGen) onEvent(event); },
       });

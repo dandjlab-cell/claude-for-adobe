@@ -1,19 +1,21 @@
 ---
 name: edit-footage
-description: Use when the editor asks to edit, assemble, rough-cut, or "do something with" footage, a bin, or a set of clips, including finding the talking head or picking b-roll. Repeatable inspect-ask-create-diagnose-propose flow.
+description: Use when the editor asks to edit, assemble, rough-cut, or "do something with" footage, a bin, or clips. The core workflow: transcript, decisions, silences, understand the shots, lay b-roll.
 ---
 
 # Edit footage
 
-Work like an editor sitting at the timeline. Short sentences, timecodes as m:ss, one question at a time.
+Work like an editor at the timeline. Short sentences, timecodes as m:ss, one question at a time. Prefer the tools; scripts only for what they don't cover.
 
-1. **Inspect.** If a bin is selected in Premiere, work on that bin only; the tools default to it. `classify_clips` (no arguments needed) reports its files (or without a bin if a sequence is already active). This reports footage sizes and frame rates, which files carry speech, and a talking head / b-roll / mixed / silent guess with confidence.
-2. **Ask once.** If no sequence exists yet, or the editor did not name one, ask ONE short question with concrete choices: sequence settings (match the footage as reported in step 1, or 9:16 1080x1920, or something else) and a name. Do not create anything before the answer.
-3. **Create.** `create_sequence` with the chosen settings; `insert_clips` true gives a starting assembly in bin order.
-4. **Diagnose.** `transcribe_whisper` (or `read_transcript` when Premiere already has one, saved with Cmd+S). `preview_frames` only on clips marked "look at a frame", one frame each, about a quarter of the way in. `analyze_audio` only if levels matter.
-5. **Mute the b-roll.** Every clip classify_clips called "b-roll / little dialogue" or "silent / music": `mute_clip_audio` with those source files, on the working copy. Tell the editor in one line that you muted the b-roll audio and why: keeping the talking head's sound alone makes silence cuts, pauses, and transcript work accurate. Recommend keeping b-roll apart from the talking head, on its own track (V2 with muted audio) or in its own bin, because every later step gets easier.
-6. **Propose.** Two or three lines: what the footage is, what you would keep, the cut points with timecodes. Wait for the go.
-7. **Cut, deterministically.** Known timecodes: `keep_only` or `extract_ranges`. A phrase: `find_in_transcript` first, then the range tools. Air: `remove_silences` with `preset: "social"`.
-8. **Cut, social-tight by default.** Unless the editor asks for a looser feel, cut like a social edit: almost no air. `remove_silences` with `method: "vad"`, `min_silence_s: 0.3`, `pad_s: 0.04` (the same engine as the Cut silences button, just tighter). Dry run, one line, go, apply. Then the panel tools for moves; `run_extendscript` only for what no tool covers. Say what changed, the new duration, and how to undo it.
+1. **What's already known.** `list_analysis`. If transcripts, notes, prosody, or diarization files exist (from this panel or anything else), read them with a subagent before doing new work.
+2. **Inspect.** The selected bin is the scope. `classify_clips` (no arguments) reports footage sizes and rates, speech coverage, and talking head vs b-roll.
+3. **Ask once.** If no sequence exists or none was named: ONE question with concrete choices for settings (match the footage, `vertical`, `hd`) and a name. Then `create_sequence` with `insert_clips` true.
+4. **Transcript.** `read_transcript` if Premiere has one (saved), else `transcribe_whisper`. Long transcripts: a subagent reads the file and returns what you ask for (the story beats, the best takes, where a phrase is). `find_in_transcript` for exact moments.
+5. **Mute the b-roll.** `mute_clip_audio` on every file classify_clips called b-roll or silent. Say so in one line.
+6. **Decide the story.** From the transcript: what to keep, in what order. This is the judgment step; write it down with `save_notes` (name: selects). Propose it in a few lines with timecodes and wait for the go.
+7. **Cut the talking head.** `keep_only` with the chosen ranges, then `remove_silences` with `preset: "social"` (looser only if asked). Report the new duration.
+8. **Understand the b-roll.** For each b-roll clip, `preview_frames` at one moment (a quarter in) and write one line per clip: what it shows, motion, mood. `save_notes` (name: broll-notes). Reuse these notes next time instead of looking again.
+9. **Lay the b-roll.** Where the words call for a picture, `place_broll` on V2, 3-6 s each, sound off, matching the shot to the sentence. Don't cover the first sentence or the last. Say what went where.
+10. **Report.** Two or three lines: what the piece is now, duration, and how to undo (Cmd+Z per step; the original sequence is untouched).
 
-Never look at every frame. Pixels are for questions the audio and metadata could not answer.
+Never look at every frame. Pixels only where the words and the classification leave a question.
