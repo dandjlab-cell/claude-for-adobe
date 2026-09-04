@@ -739,8 +739,9 @@ let pendingUpdate = null;
 function setVersionRow(text) { ui.versionRow.firstChild.textContent = text + " "; }
 async function checkUpdates(announce) {
   ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Checking…";
+  log("checking for updates (installed " + currentVersion(extensionRoot) + ")");
   let update = null;
-  try { update = await checkForUpdate(extensionRoot); }
+  try { update = await Promise.race([checkForUpdate(extensionRoot), new Promise((_, rej) => setTimeout(() => rej(new Error("no answer from GitHub within 30 s")), 30000))]); }
   catch (error) { log("update check skipped: " + error.message); ui.checkUpdates.textContent = "Check for updates"; ui.checkUpdates.disabled = false; if (announce) addMessage("assistant muted", "Could not check for updates: " + error.message); return; }
   ui.checkUpdates.disabled = false;
   if (!update) {

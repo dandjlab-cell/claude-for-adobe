@@ -31,13 +31,29 @@ function pickAsset(release) {
 }
 
 const ALLOWED_HOSTS = /^(?:api\.github\.com|github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)$/;
-function get(url, { json = false, dest = null, hops = 0 } = {}) {
+const hostOf = (url) => { try { return new URL(url).host; } catch (_) { return ""; } };
+
+// GET over the page's fetch (Chromium's network stack; CEP's Node https was seen to hang inside Premiere).
+// Falls back to Node https when fetch is not present. Only https to GitHub hosts, redirects included.
+async function get(url, { json = false, dest = null } = {}) {
+  if (!url.startsWith("https://") || !ALLOWED_HOSTS.test(hostOf(url))) throw new Error("refusing non-GitHub download: " + url);
+  if (typeof fetch !== "function") return getNode(url, { json, dest, hops: 0 });
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 30000);
+  try {
+    const res = await fetch(url, { headers: { Accept: json ? "application/vnd.github+json" : "*/*" }, signal: ctl.signal, redirect: "follow", cache: "no-store" });
+    if (!ALLOWED_HOSTS.test(hostOf(res.url || url))) throw new Error("refusing redirect off GitHub: " + res.url);
+    if (res.status !== 200) throw new Error("HTTP " + res.status + " for " + url);
+    if (dest) { fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer())); return dest; }
+    return json ? res.json() : res.text();
+  } finally { clearTimeout(timer); }
+}
+
+function getNode(url, { json = false, dest = null, hops = 0 } = {}) {
   return new Promise((resolve, reject) => {
-    const host = (() => { try { return new URL(url).host; } catch (_) { return ""; } })();
-    if (!url.startsWith("https://") || !ALLOWED_HOSTS.test(host)) return reject(new Error("refusing non-GitHub download: " + url));
+    if (!url.startsWith("https://") || !ALLOWED_HOSTS.test(hostOf(url))) return reject(new Error("refusing non-GitHub download: " + url));
     if (hops > 5) return reject(new Error("too many redirects"));
-    const req = https.get(url, { headers: { "User-Agent": "premiere-claude-panel", Accept: json ? "application/vnd.github+json" : "*/*" } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { res.resume(); return get(res.headers.location, { json, dest, hops: hops + 1 }).then(resolve, reject); }
+    const req = https.get(url, { headers: { "User-Agent": "claude-for-adobe-panel", Accept: json ? "application/vnd.github+json" : "*/*" } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { res.resume(); return getNode(res.headers.location, { json, dest, hops: hops + 1 }).then(resolve, reject); }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error("HTTP " + res.statusCode + " for " + url)); }
       if (dest) { const out = fs.createWriteStream(dest); res.pipe(out); out.on("finish", () => resolve(dest)); out.on("error", reject); return; }
       let body = ""; res.setEncoding("utf8"); res.on("data", (c) => { body += c; }); res.on("end", () => { try { resolve(json ? JSON.parse(body) : body); } catch (e) { reject(e); } });
