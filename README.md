@@ -21,7 +21,7 @@ anything mutating runs.
 | `media_info` | resolution, fps, duration, channels of a clip's source file | `ffprobe`; the path must belong to a project item |
 | `remove_silences` | plan, then remove silent ranges (dB method, default) | silence from Premiere's peak-file waveform; Premiere's own Extract per range via QE, linked video+audio together, one History step per range |
 | `remove_pauses` | plan, then remove pauses (transcript method, Premiere's "Delete all pauses") | word gaps >= 0.75 s from the transcript in the saved `.prproj` (decoded by `src/transcript-blob.cjs`), optional waveform veto; same Extract apply |
-| `transcribe_whisper` | Whisper large-v3-turbo transcript of every clip's source audio, cached; writes `.transcript.json` files for Text panel > Import transcript | `mlx_whisper` locally, word timestamps; converter to Premiere's transcript JSON shape |
+| `transcribe_whisper` | Whisper large-v3-turbo transcript of every clip's source audio, cached; writes `.transcript.json` files for Text panel > Import transcript | bundled whisper.cpp large-v3-turbo with Silero VAD in front, word timestamps; converter to Premiere's transcript JSON shape |
 | `sequence_overview` | the live active sequence: every clip per track with times, in point, media path | one ExtendScript walk of the DOM |
 
 ## Deterministic tools, small models
@@ -95,7 +95,7 @@ Restart Premiere, then **Window > Extensions > Claude for Premiere**. Chrome Dev
 `http://localhost:9295`.
 
 Requires Claude Code, logged in: the Claude desktop app is enough (the panel finds its bundled CLI under `~/Library/Application Support/Claude/claude-code/`), or the CLI at `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, or `$CLAUDE_PATH`.
-Apple Silicon only for the voice silence cutter: `bin/` ships whisper.cpp's VAD binary with its ggml libraries; audio is extracted with macOS `afconvert` (ffmpeg only as a fallback for formats CoreAudio can't open).
+Apple Silicon only for the voice silence cutter and Whisper: `bin/` ships whisper.cpp (VAD + transcription) with its ggml libraries; the Whisper large-v3-turbo model (~570 MB) downloads once on first use into `~/Library/Caches/claude-for-adobe/models`; audio is extracted with macOS `afconvert` (ffmpeg only as a fallback for formats CoreAudio can't open).
 Default model is Opus 5; the dropdown lists Fable 5.1, Opus 5, Sonnet 5, Haiku 4.5. If the chosen model isn't available on the account, the panel falls back to Sonnet 5 and says so.
 
 ## Use

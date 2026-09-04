@@ -14,7 +14,7 @@ const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extension
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, decodeWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
-const { MODEL: WHISPER_MODEL, cachedWords, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
+const { MODEL: WHISPER_MODEL, cachedWords, ensureModel, modelReady, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
 const vad = require(path.join(extensionRoot, "src", "vad.cjs"));
 
 // VAD from Premiere's own waveform: speech regions of a whole media file (source seconds), padded.
@@ -562,32 +562,40 @@ async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" 
   return { text };
 }
 
-async function transcribeWhisper({ language = "", write_transcript_json = true, vad = true } = {}) {
-  const card = addTool("transcribe_whisper (" + WHISPER_MODEL.split("/").pop() + ")", "");
+async function transcribeWhisper({ language = "en", write_transcript_json = true, vad = true } = {}) {
+  const card = addTool("transcribe_whisper (" + WHISPER_MODEL + ")", "");
+  card.open();
   let snap;
   try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
   const media = [...new Set(snap.clips.filter((c) => c.track[0] === "A" && c.mediaPath).map((c) => c.mediaPath))];
   if (!media.length) return err(card, "no audio clips with source media in the active sequence");
+  if (!modelReady()) {
+    // First use: fetch the model once (~570 MB) with progress; cached in ~/Library/Caches/claude-for-adobe/models.
+    setStatus("Downloading the Whisper model (one time)…");
+    try { await ensureModel((got, total) => card.progress(got, total || got, "downloading Whisper model (" + Math.round(got / 1048576) + " MB) ")); }
+    catch (error) { return err(card, "Whisper model download failed: " + error.message + ". Check your internet connection and try again."); }
+  }
   const outDir = project.path ? path.join(path.dirname(project.path), "_claude-for-adobe_transcripts") : os.tmpdir();
   const lines = [];
-  for (const m of media) {
+  for (let i = 0; i < media.length; i++) {
+    const m = media[i];
     if (!fs.existsSync(m)) { lines.push(path.basename(m) + ": media offline"); continue; }
     setStatus("Whisper: " + path.basename(m) + "…");
+    card.progress(i, media.length, "transcribing " + path.basename(m) + " ");
     const t0 = Date.now();
     try {
-      const speechRegions = vad ? speechRegionsFor(m) : null;
-      const r = transcribe(m, { language, speechRegions, onLog: log });
-      let note = path.basename(m) + ": " + r.words.length + " words" + (r.cached ? " (cached)" : " (" + ((Date.now() - t0) / 1000).toFixed(0) + "s, VAD " + (speechRegions ? speechRegions.length + " speech regions from Premiere's waveform" : "off, no peak file") + ")");
+      const r = await transcribe(m, { language, vad, onLog: log });
+      let note = path.basename(m) + ": " + r.words.length + " words" + (r.cached ? " (cached)" : " (" + ((Date.now() - t0) / 1000).toFixed(0) + "s)");
       if (write_transcript_json) {
         fs.mkdirSync(outDir, { recursive: true });
-        const f = path.join(outDir, path.basename(m) + ".transcript.json"); // must be .json: Premiere routes .json through TextSegments.importFromJSON (this schema); .prtranscript is Adobe's own format
+        const f = path.join(outDir, path.basename(m) + ".transcript.json"); // .json: Premiere routes it through TextSegments.importFromJSON
         fs.writeFileSync(f, JSON.stringify(toPremiereTranscript(r.words, r.language), null, 2));
         note += " -> " + f;
       }
       lines.push(note);
     } catch (error) { lines.push(path.basename(m) + ": " + error.message); }
   }
-  const text = lines.join("\n") + (write_transcript_json ? "\nTo make it Premiere's own transcript: in the Text panel select the sequence or clip, open the ... menu > Import > Import transcript..., and pick the .transcript.json file for that clip. remove_pauses can already use the Whisper words directly (source=whisper)." : "");
+  const text = lines.join("\n") + (write_transcript_json ? "\nTo make it Premiere's own transcript: Text panel > ... menu > Import > Import transcript, pick the .transcript.json for the clip. read_transcript and remove_pauses can use these words directly (source=whisper)." : "");
   card.done(text, true);
   setStatus("Thinking…");
   return { text };

@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { KNOBS, clipTimestamps, flattenWhisper, premiereLanguage, toPremiereTranscript } = require("../src/whisper.cjs");
+const { KNOBS, MODEL, premiereLanguage, toPremiereTranscript, wordsFromWhisperCpp } = require("../src/whisper.cjs");
 // Adobe's transcript JSON schema is not redistributed; fetch it once into a gitignored cache, skip offline.
 const specPath = path.join(__dirname, "..", ".cache", "transcript_format_spec.json");
 let spec = null;
@@ -38,34 +38,38 @@ const whisperJson = { language: "en", segments: [
   { words: [{ word: " Next", start: 2.5, end: 2.9, probability: 0.95 }, { word: "  ", start: 2.9, end: 3.0 }] },
 ] };
 
-test("flattenWhisper trims words, drops blanks, keeps segment index", () => {
-  const w = flattenWhisper(whisperJson);
-  assert.deepEqual(w.map((x) => [x.text, x.start, x.end, x.segment]), [["Hello", 0.2, 0.5, 0], ["there.", 0.6, 1.0, 0], ["Next", 2.5, 2.9, 1]]);
-  assert.deepEqual(pausesFromWords(w, 0.75), [{ start: 1.0, end: 2.5 }]);
+test("wordsFromWhisperCpp: one word per segment, sentence and gap boundaries, fill rule", () => {
+  const json = { transcription: [
+    { text: " Hi", offsets: { from: 500, to: 700 } }, { text: " there.", offsets: { from: 700, to: 1000 } },
+    { text: " Next", offsets: { from: 1200, to: 1400 } }, { text: "  ", offsets: { from: 1400, to: 1500 } },
+    { text: " later", offsets: { from: 3000, to: 3200 } }, { text: " glitch", offsets: { from: 3100, to: 3000 } },
+  ] };
+  const w = wordsFromWhisperCpp(json);
+  assert.deepEqual(w.map((x) => [x.text, x.start, x.end, x.segment]), [["Hi", 0.5, 0.7, 0], ["there.", 0.7, 1.0, 0], ["Next", 1.2, 1.4, 1], ["later", 3.0, 3.2, 2], ["glitch", 3.2, 3.2, 2]]);
 });
 
 test("toPremiereTranscript matches Premiere's export shape", () => {
-  const t = toPremiereTranscript(flattenWhisper(whisperJson), "en");
+  const t = toPremiereTranscript(wordsFromWhisperCpp({ transcription: [{ text: " Hello", offsets: { from: 0, to: 400 } }, { text: " world.", offsets: { from: 450, to: 900 } }] }), "en");
   assert.equal(t.language, "en-us");
   assert.equal(t.speakers.length, 1);
   assert.match(t.speakers[0].id, /^[0-9a-f-]{36}$/);
-  assert.equal(t.segments.length, 2);
+  assert.equal(t.segments.length, 1);
   const s = t.segments[0];
   assert.deepEqual(Object.keys(s).sort(), ["duration", "language", "speaker", "start", "words"]);
   assert.equal(s.speaker, t.speakers[0].id);
-  assert.equal(s.start, 0.2); assert.equal(s.duration, 0.8);
+  assert.equal(s.start, 0); assert.equal(s.duration, 0.9);
   assert.deepEqual(Object.keys(s.words[0]).sort(), ["confidence", "duration", "eos", "start", "tags", "text", "type"]);
   assert.equal(s.words[0].eos, false); assert.equal(s.words[1].eos, true); assert.equal(s.words[0].type, "word");
-  assert.equal(s.words[0].confidence, 0.9);
+  assert.equal(s.words[0].confidence, 1);
 });
 
-test("decoding knobs and clip timestamps", () => {
-  assert.ok(KNOBS.includes("--condition-on-previous-text") && KNOBS[KNOBS.indexOf("--temperature") + 1] === "0");
-  assert.equal(clipTimestamps([{ start: 0.5, end: 3 }, { start: 10.123, end: 12 }]), "0.50,3.00,10.12,12.00");
+test("decoding knobs: deterministic, no fallback, no context carry-over", () => {
+  assert.ok(KNOBS.includes("-nf") && KNOBS[KNOBS.indexOf("-tp") + 1] === "0" && KNOBS[KNOBS.indexOf("-mc") + 1] === "0");
+  assert.equal(MODEL, "large-v3-turbo-q5_0");
 });
 
 test("generated transcript validates against Adobe's transcript format spec", { skip: !spec && "schema not reachable" }, () => {
-  const t = toPremiereTranscript(flattenWhisper(whisperJson), "en");
+  const t = toPremiereTranscript(wordsFromWhisperCpp({ transcription: [{ text: " Hello", offsets: { from: 0, to: 400 } }, { text: " world.", offsets: { from: 450, to: 900 } }] }), "en");
   const errors = [];
   validate(t, spec, "root", errors);
   assert.deepEqual(errors, []);
