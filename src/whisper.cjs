@@ -25,9 +25,10 @@ const modelPath = (key = current) => path.join(MODEL_DIR, MODELS[key].file);
 const modelUrl = (key = current) => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + MODELS[key].file;
 const VAD_MODEL = path.join(__dirname, "..", "assets", "silero-vad-v6.2.0-ggml.bin");
 const CACHE_DIR = path.join(os.homedir(), "Library", "Caches", "claude-for-adobe", "whisper");
-const CACHE_VERSION = "v3-whispercpp"; // bump when decoding knobs change
+const CACHE_VERSION = "v4-whispercpp-fillers"; // bump when decoding knobs change
 // Decoding knobs: deterministic, no fallback sweep, no context carry-over, Whisper's own guards.
-const KNOBS = ["-tp", "0", "-nf", "-mc", "0", "-nth", "0.6", "-et", "2.4", "-lpt", "-1.0", "-bo", "5"];
+// The prompt nudges Whisper to keep fillers ("um", "uh") instead of cleaning them out, so remove_fillers can find them.
+const KNOBS = ["-tp", "0", "-nf", "-mc", "0", "-nth", "0.6", "-et", "2.4", "-lpt", "-1.0", "-bo", "5", "--prompt", "Um, so, uh, I I think, hmm, we were, we were there.", "--carry-initial-prompt"];
 
 function modelReady(key = current) { return fs.existsSync(modelPath(key)); }
 function installedModels() { return Object.keys(MODELS).filter((k) => fs.existsSync(modelPath(k))); }

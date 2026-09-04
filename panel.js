@@ -15,7 +15,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = 
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
-const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
+const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, fillerRanges, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
 const { MODELS: WHISPER_MODELS, cachedWords, currentModel, ensureModel, installedModels, modelReady, setModel, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
 const vad = require(path.join(extensionRoot, "src", "vad.cjs"));
 
@@ -919,6 +919,28 @@ async function setSequenceSize({ preset, aspect, width, height, fps, reframe = "
   return { text: copyNote + raw + cp, isError: !ok };
 }
 
+// Basic audio clean-up from the transcript: ums, uhs, stutters, repeated words. Plan, then cut with the range engine.
+async function removeFillers({ start_seconds = 0, end_seconds, repeats = true, source = "auto", dry_run = true } = {}) {
+  const card = addTool((dry_run ? "plan" : "remove") + "_fillers", "");
+  let snap, clips;
+  try { ({ snap, clips } = await audioClipsIn(Math.max(0, Number(start_seconds)), end_seconds ? Number(end_seconds) : Infinity)); } catch (error) { return err(card, error.message); }
+  let transcripts = [];
+  if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
+  const found = [], skipped = [];
+  clips.forEach((c) => {
+    let words; try { words = wordsForClip(c, source, transcripts).words; } catch (error) { skipped.push(c.name); return; }
+    fillerRanges(words, { repeats, offset: c.start - c.inPoint }).filter((r) => r.end > c.s0 && r.start < c.s1).forEach((r) => found.push(r));
+  });
+  if (!found.length) { card.done("nothing to clean" + (skipped.length ? " (no transcript for " + skipped.join(", ") + ")" : ""), true); return { text: "No fillers or repeats found" + (skipped.length ? "; no transcript for " + skipped.join(", ") + " (transcribe first)" : "") + "." }; }
+  const cuts = union(found.map((r) => ({ start: r.start, end: r.end }))).sort((a, b) => b.start - a.start);
+  const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
+  const byReason = found.reduce((m, r) => { m[r.reason] = (m[r.reason] || 0) + 1; return m; }, {});
+  const summary = found.length + " flub(s) (" + Object.entries(byReason).map(([k, v]) => v + " " + k).join(", ") + "), " + total.toFixed(1) + "s, sequence " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s";
+  const list = found.slice(0, 30).map((r) => "[" + tc(r.start) + "] " + r.reason + ": " + r.text).join("\n") + (found.length > 30 ? "\n…" : "");
+  const res = await applyCuts(card, cuts, dry_run, summary);
+  return { ...res, text: res.text + "\n" + list };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -926,7 +948,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -959,6 +981,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: {} } },
   { name: "save_notes", description: "Save your notes (shot descriptions per b-roll clip, decisions, selects) as a markdown file next to the project, so later turns and sessions reuse them instead of looking again.",
     inputSchema: { type: "object", properties: { name: { type: "string", description: "file name, e.g. broll-notes" }, text: { type: "string" } }, required: ["text"] } },
+  { name: "remove_fillers", description: "Basic audio clean-up from the transcript: cuts 'um', 'uh', 'hmm' and immediate repeats or stutters ('I I', 'we were we were'). Plan with dry_run=true (default), show the count in one line, then apply. Needs a transcript (Premiere's saved one, or transcribe_whisper).",
+    inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, repeats: { type: "boolean", description: "also cut repeated words, default true" }, source: { type: "string", enum: ["auto", "premiere", "whisper"] }, dry_run: { type: "boolean" } } } },
   { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",
     inputSchema: { type: "object", properties: { media_paths: { type: "array", items: { type: "string" } } }, required: ["media_paths"] } },
   { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",

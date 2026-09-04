@@ -40,3 +40,12 @@ test("findInWords matches phrases ignoring case and punctuation; complementRange
   assert.deepEqual(complementRanges([{ start: 2, end: 4 }, { start: 6, end: 7 }], 10), [{ start: 0, end: 2 }, { start: 4, end: 6 }, { start: 7, end: 10 }]);
   assert.deepEqual(complementRanges([], 5), [{ start: 0, end: 5 }]);
 });
+
+test("fillerRanges finds ums and immediate repeats, cutting the first copy", () => {
+  const { fillerRanges } = require("../src/transcript.cjs");
+  const w = (text, start, end) => ({ text, start, end });
+  const words = [w("So", 0, 0.2), w("um", 0.3, 0.5), w("I", 0.6, 0.7), w("I", 0.75, 0.85), w("think", 0.9, 1.2), w("we", 1.3, 1.4), w("were", 1.4, 1.6), w("we", 1.7, 1.8), w("were", 1.8, 2.0), w("there.", 2.1, 2.4), w("The", 5, 5.2), w("the", 9, 9.2)];
+  const r = fillerRanges(words, { pad: 0 });
+  assert.deepEqual(r.map((x) => [x.reason, x.text, x.start, x.end]), [["filler", "um", 0.3, 0.5], ["repeat", "I", 0.6, 0.7], ["repeat", "we were", 1.3, 1.6]]);
+  assert.equal(fillerRanges(words, { repeats: false, pad: 0 }).length, 1);
+});

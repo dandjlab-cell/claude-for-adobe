@@ -129,4 +129,28 @@ function complementRanges(keep, total) {
   return out;
 }
 
-module.exports = { complementRanges, findInWords, linesFromWords, tc, DEFAULT_MIN_PAUSE, decodeWords, listTranscripts, pausesFromWords, transcriptForClip };
+// Fillers and stumbles from a word list: "um/uh/er/hmm", and immediate repeats ("I I", "the the", "we were we were").
+// Returns cut ranges in the words' time base, each with a reason; small pad so the cut lands inside the flub.
+const FILLERS = ["um", "umm", "uh", "uhh", "uhm", "er", "erm", "hmm", "mm", "ah", "eh"];
+function fillerRanges(words, { fillers = FILLERS, repeats = true, pad = 0.02, offset = 0 } = {}) {
+  const norm = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}']+/gu, "");
+  const sorted = [...words].filter((w) => Number.isFinite(w.start) && Number.isFinite(w.end)).sort((a, b) => a.start - b.start);
+  const toks = sorted.map((w) => norm(w.text));
+  const set = new Set(fillers.map(norm));
+  const out = [];
+  const cut = (i, j, reason) => out.push({ start: Math.max(0, sorted[i].start - pad) + offset, end: sorted[j].end + pad + offset, reason, text: sorted.slice(i, j + 1).map((w) => w.text).join(" ") });
+  for (let i = 0; i < sorted.length; i++) {
+    if (set.has(toks[i])) { cut(i, i, "filler"); continue; }
+    if (!repeats) continue;
+    // repeated phrase of length n (1..3): tokens i..i+n-1 equal tokens i+n..i+2n-1, within 1.5 s -> cut the first copy
+    for (let n = 3; n >= 1; n--) {
+      if (i + 2 * n > sorted.length) continue;
+      let same = true;
+      for (let k = 0; k < n; k++) if (!toks[i + k] || toks[i + k] !== toks[i + n + k]) { same = false; break; }
+      if (same && sorted[i + n].start - sorted[i + n - 1].end < 1.5) { cut(i, i + n - 1, "repeat"); i += n - 1; break; }
+    }
+  }
+  return out;
+}
+
+module.exports = { FILLERS, fillerRanges, complementRanges, findInWords, linesFromWords, tc, DEFAULT_MIN_PAUSE, decodeWords, listTranscripts, pausesFromWords, transcriptForClip };
