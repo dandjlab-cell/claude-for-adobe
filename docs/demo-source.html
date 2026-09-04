@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  body{margin:0;position:relative;background:#141310;font:13px -apple-system,Helvetica,sans-serif;color:#edeae2;width:720px;height:400px;overflow:hidden}
+  .app{display:grid;grid-template-columns:300px 1fr;gap:14px;padding:16px;height:368px}
+  .pane{border:1px solid rgba(237,234,226,.18);background:#1c1a16;padding:10px;position:relative}
+  .title{font:11px "SF Mono",Menlo,monospace;color:rgba(237,234,226,.5);margin-bottom:10px}
+  .folder{display:flex;align-items:center;gap:8px;padding:7px 8px;margin:2px 0;border:1px solid transparent}
+  .folder i{display:inline-block;width:16px;height:12px;border:1px solid rgba(237,234,226,.5);border-radius:1px}
+  .folder.sel{background:rgba(232,72,27,.18);border-color:#e8481b}
+  .btn.sel{background:rgba(232,72,27,.18);border-color:#e8481b}
+  .cursor.r{left:auto}
+  .cursor{position:absolute;z-index:9;width:14px;height:20px;background:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 20"><path d="M1 1 L1 15 L5 11 L8 18 L10 17 L7 10 L12 10 Z" fill="white" stroke="black"/></svg>') no-repeat}
+  .tabs{display:inline-flex;border:1px solid rgba(237,234,226,.18);margin-left:auto}
+  .tabs span{padding:3px 10px;font-size:11px;color:rgba(237,234,226,.6)}.tabs span.on{background:#e8481b;color:#fff}
+  .hdr{display:flex;align-items:center;gap:8px;font:11px "SF Mono",Menlo,monospace;color:rgba(237,234,226,.5);margin-bottom:12px}
+  .sq{width:7px;height:7px;border:1px solid rgba(237,234,226,.4)}.sq.busy{background:#e8481b;border-color:#e8481b}
+  .msgs{height:200px;display:flex;flex-direction:column;gap:8px}
+  .user{background:#1c1a16;border-left:2px solid #e8481b;padding:7px 9px;margin-left:40px;background:#221f1a}
+  .ai{border-left:2px solid rgba(237,234,226,.18);padding:7px 9px;color:#edeae2}
+  .sel{font:11px "SF Mono",Menlo,monospace;color:rgba(237,234,226,.6);margin:6px 0 4px}.sel b{color:#e8481b;font-weight:500}
+  .box{border:1px solid rgba(237,234,226,.18);background:#0f0e0c;padding:8px 10px;min-height:34px;color:rgba(237,234,226,.45)}
+  .box.typed{color:#edeae2}
+  .row{display:flex;gap:6px;margin-top:8px}.send{background:#e8481b;color:#fff;padding:5px 11px;font-weight:600}.btn{border:1px solid rgba(237,234,226,.18);padding:5px 11px;color:rgba(237,234,226,.5)}
+  .cap{position:absolute;left:16px;right:16px;bottom:6px;text-align:center;font-size:12px;color:rgba(237,234,226,.55)}
+  .hide{visibility:hidden}
+</style></head><body>
+<div class="app">
+  <div class="pane"><div class="title">PROJECT</div>
+    <div class="folder" id="f0"><i></i>Kitchen shoot</div>
+    <div class="folder" id="f1" style="margin-left:22px"><i></i>Talking head</div>
+    <div class="folder" id="f2" style="margin-left:22px"><i></i>B-roll</div>
+    </div>
+  <div class="cursor" id="cur" style="left:246px;top:316px"></div>
+  <div class="pane"><div class="hdr"><span>interview.prproj</span><span class="sq" id="sq"></span><span id="st">Ready</span><span class="tabs"><span class="on">Chat</span><span>Settings</span></span></div>
+    <div class="msgs" id="msgs"><div id="chips" style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;margin-top:6px"><span class="btn" id="chip1" style="color:#edeae2">Edit this</span><span class="btn">Organize my project</span><span class="btn">Remove silences</span></div></div>
+    <div class="sel" id="sel"><b>Selected in Premiere:</b> bin "Kitchen shoot" (22 items)</div>
+    <div class="box" id="box">Ask Claude to inspect or edit the open project.</div>
+    <div class="row"><span class="send">Send</span><span class="btn">Stop</span></div>
+  </div>
+</div>
+<div class="cap" id="cap"></div>
+<script>
+const f = Number(new URLSearchParams(location.search).get("f") || 0);
+const $ = (i) => document.getElementById(i);
+const caps = ["Click the folder you want to work on.", "Click the folder you want to work on.", "Choose Edit this.", "Send it.", "Claude inspects the folder…", "…and asks one question before cutting.", "…and asks one question before cutting."];
+$("cap").textContent = caps[f] || "";
+const pos = [[246,316],[76,64],[380,86],[368,354],[368,354],[368,354],[368,354]];
+$("cur").style.left = pos[f][0] + "px"; $("cur").style.top = pos[f][1] + "px";
+if (f >= 1) $("f0").classList.add("sel");
+$("sel").classList.toggle("hide", f < 1);
+if (f >= 2) { $("chip1").classList.add("sel"); $("box").textContent = "Edit what I have selected."; $("box").classList.add("typed"); }
+if (f >= 3) { $("chips").style.display = "none"; }
+if (f >= 4) { $("box").textContent = "Ask Claude to inspect or edit the open project."; $("box").classList.remove("typed"); $("msgs").innerHTML = '<div class="user">Edit what I have selected.</div>'; $("sq").classList.add("busy"); $("st").textContent = "Running: classify_clips"; }
+if (f >= 5) { $("msgs").innerHTML += '<div class="ai">22 clips: 8 talking head, 14 b-roll, all 4K @ 23.976. New sequence matching the footage, or 9:16 for social?</div>'; $("sq").classList.remove("busy"); $("st").textContent = "Ready"; }
+</script></body></html>
