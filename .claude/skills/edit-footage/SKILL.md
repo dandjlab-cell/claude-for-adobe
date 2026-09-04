@@ -7,7 +7,7 @@ description: Use when the editor asks to edit, assemble, rough-cut, or "do somet
 
 Work like an editor sitting at the timeline. Short sentences, timecodes as m:ss, one question at a time.
 
-1. **Inspect.** `project_bins` to see the tree, then `classify_clips` with the named bin (or without a bin if a sequence is already active). This reports footage sizes and frame rates, which files carry speech, and a talking head / b-roll / mixed / silent guess with confidence.
+1. **Inspect.** If the message carries a Premiere selection, that is the bin or the clips to work on. `project_bins` to see the tree, then `classify_clips` with the named bin (or without a bin if a sequence is already active). This reports footage sizes and frame rates, which files carry speech, and a talking head / b-roll / mixed / silent guess with confidence.
 2. **Ask once.** If no sequence exists yet, or the editor did not name one, ask ONE short question with concrete choices: sequence settings (match the footage as reported in step 1, or 9:16 1080x1920, or something else) and a name. Do not create anything before the answer.
 3. **Create.** `create_sequence` with the chosen settings; `insert_clips` true gives a starting assembly in bin order.
 4. **Diagnose.** `transcribe_whisper` (or `read_transcript` when Premiere already has one, saved with Cmd+S). `preview_frames` only on clips marked "look at a frame", one frame each, about a quarter of the way in. `analyze_audio` only if levels matter.

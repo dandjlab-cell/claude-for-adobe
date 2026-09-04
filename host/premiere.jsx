@@ -351,8 +351,37 @@ var PCX = (function () {
     return s.sequenceID + "|" + s.name + "|" + fin.videoFrameWidth + "x" + fin.videoFrameHeight;
   }
 
+  // What the editor has highlighted right now: Project panel items (bins, clips) and timeline clips.
+  function selectionInfo() {
+    var out = [];
+    try {
+      var items = app.getCurrentProjectViewSelection();
+      if (items && items.length) {
+        var parts = [];
+        for (var i = 0; i < items.length && i < 12; i++) {
+          var it = items[i];
+          if (it.type === 2) parts.push("bin \"" + it.name + "\" (" + it.children.numItems + " items)");
+          else parts.push("\"" + it.name + "\"");
+        }
+        if (items.length > 12) parts.push("+" + (items.length - 12) + " more");
+        out.push("Project panel: " + parts.join(", "));
+      }
+    } catch (e) {}
+    try {
+      var s = seq();
+      var sel = s ? s.getSelection() : null;
+      if (sel && sel.length) {
+        var names = [];
+        for (var k = 0; k < sel.length && k < 8; k++) names.push("\"" + sel[k].name + "\" " + (num(sel[k].start.ticks) / T).toFixed(2) + "s");
+        if (sel.length > 8) names.push("+" + (sel.length - 8) + " more");
+        out.push("Timeline: " + sel.length + " clip(s) selected: " + names.join(", "));
+      }
+    } catch (e) {}
+    return out.join(ROW);
+  }
+
   return {
-    listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

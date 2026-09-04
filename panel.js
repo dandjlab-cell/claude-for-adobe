@@ -864,7 +864,7 @@ function restartSession(resumeSessionId) {
   return restarting;
 }
 
-function sendMessage() {
+async function sendMessage() {
   const text = ui.input.value.trim() || (attachments.length ? "(see the attached image" + (attachments.length > 1 ? "s" : "") + ")" : "");
   if (!text || !session || session.busy) return;
   addMessage("user", text + (attachments.length ? "\n[" + attachments.length + " image" + (attachments.length > 1 ? "s" : "") + " attached]" : ""));
@@ -882,6 +882,11 @@ function sendMessage() {
     payload = "[Timeline changes the user made in Premiere since your last turn, from Premiere's own sequence events; take them as current state and do not list them back:\n- " + grouped.join("\n- ") + "]\n\n" + text;
     pendingChanges = [];
   }
+  // Attach what is highlighted in Premiere, so "this bin" / "these clips" needs no typing.
+  try {
+    const sel = await host("selectionInfo");
+    if (sel && sel.indexOf("ERR:") !== 0) payload = "[Selected in Premiere right now: " + sel.split("\u0003").join("; ") + "]\n\n" + payload;
+  } catch (_) {}
   lastPayload = payload;
   const images = attachments.splice(0).map((a) => ({ mediaType: a.mediaType, data: a.data }));
   renderAttachments();
