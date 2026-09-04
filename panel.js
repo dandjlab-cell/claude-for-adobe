@@ -42,7 +42,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -1244,7 +1244,7 @@ async function boot() {
 // Buttons: the same scripts the tools run, with no model in the loop. Plan, confirm, apply.
 async function runCutButton(tool, params, label) {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
-  ui.btnCut.disabled = true;
+  ui.btnCut.disabled = ui.btnRunCut.disabled = true;
   const card = addTool(label, "");
   card.open();
   quietCard = card;
@@ -1262,11 +1262,13 @@ async function runCutButton(tool, params, label) {
       ? result.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "")
       : m[1] + " silences removed, " + m[2] + "s cut, " + m[3] + "s -> " + m[4] + "s" + where + ". Cmd+Z undoes one range at a time.", !result.isError);
     setStatus("Ready");
-  } finally { quietCard = null; ui.btnCut.disabled = false; }
+  } finally { quietCard = null; ui.btnCut.disabled = ui.btnRunCut.disabled = false; }
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
 // Captions button toggles the options strip under the toolbar; Make captions runs the job.
-function toggleCaptionOptions(show) { ui.captionOptions.hidden = show === undefined ? !ui.captionOptions.hidden : !show; document.getElementById("view-chat").classList.toggle("with-options", !ui.captionOptions.hidden); if (!ui.captionOptions.hidden) ui.capWords.focus(); }
+function syncStrips() { const open = [ui.cutOptions, ui.captionOptions].filter((e) => !e.hidden).length; const v = document.getElementById("view-chat"); v.classList.toggle("with-options", open >= 1); v.classList.toggle("with-options-2", open >= 2); }
+function toggleCaptionOptions(show) { ui.captionOptions.hidden = show === undefined ? !ui.captionOptions.hidden : !show; syncStrips(); if (!ui.captionOptions.hidden) ui.capWords.focus(); }
+function toggleCutOptions(show) { ui.cutOptions.hidden = show === undefined ? !ui.cutOptions.hidden : !show; syncStrips(); if (!ui.cutOptions.hidden) ui.minSilence.focus(); }
 async function runCaptionsButton() {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
   toggleCaptionOptions(false);
@@ -1301,7 +1303,10 @@ async function runCaptionsButton() {
 ui.btnCaptions.onclick = () => toggleCaptionOptions();
 ui.btnMakeCaptions.onclick = runCaptionsButton;
 ui.btnCancelCaptions.onclick = () => toggleCaptionOptions(false);
-ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
+ui.btnCut.onclick = () => toggleCutOptions();
+ui.btnCancelCut.onclick = () => toggleCutOptions(false);
+ui.btnRunCut.onclick = () => { toggleCutOptions(false); runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level")); };
+["cutMethod", "minSilence", "pad"].forEach((k) => { try { const v = localStorage.getItem("cut." + k); if (v) ui[k].value = v; } catch (_) {} ui[k].onchange = () => { try { localStorage.setItem("cut." + k, ui[k].value); } catch (_) {} }; });
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 

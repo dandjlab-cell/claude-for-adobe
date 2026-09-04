@@ -23,9 +23,10 @@
     .view.active { display: grid; grid-template-columns: minmax(0, 1fr); }
     #view-chat.active { grid-template-rows: auto auto minmax(0, 1fr) auto; }
     #view-chat.active.with-options { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
-    #caption-options { border-bottom: 1px solid var(--line); background: var(--raised); }
-    #caption-options[hidden] { display: none; }
-    #caption-options label { display: flex; align-items: center; gap: 4px; color: var(--ink-60); font-size: 12px; }
+    #view-chat.active.with-options.with-options-2 { grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; }
+    #caption-options, #cut-options { border-bottom: 1px solid var(--line); background: var(--raised); }
+    #caption-options[hidden], #cut-options[hidden] { display: none; }
+    #caption-options label, #cut-options label { display: flex; align-items: center; gap: 4px; color: var(--ink-60); font-size: 12px; }
     #selection-bar { font-size: 10.5px; color: var(--ink-40); padding: 4px 12px 0; letter-spacing: .01em; }
     #selection-bar:empty { padding: 0; height: 0; }
     #selection-bar b { color: var(--accent); font-weight: 500; }
@@ -155,16 +156,18 @@
     <section id="view-chat" class="view active">
       <div id="selection-bar" class="mono"></div>
       <div class="scripts">
-        <button id="btn-cut" type="button" title="Finds where people are speaking (a small voice model bundled with the panel, runs on your Mac) and removes the quiet stretches longer than min. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
+        <button id="btn-cut" type="button" title="Removes the quiet stretches. Voice: a bundled voice model finds speech (Apple Silicon). Level: Premiere's waveform. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
+        <button id="btn-captions" type="button" title="Transcribes the timeline (Whisper, on this Mac) and adds a native caption track. Editable in the Captions panel.">Captions</button>
+      </div>
+      <div id="cut-options" class="scripts" hidden>
         <select id="cut-method" title="Voice: a bundled voice model finds speech; the accurate method (Apple Silicon). Level: uses Premiere's waveform and cuts below the clip's noise floor; works on any Mac.">
           <option value="vad">by voice</option>
           <option value="db">by level (dB)</option>
         </select>
-        <span class="knobs">
-          <label>min <input id="min-silence" type="number" value="0.3" step="0.05" min="0.1"> s</label>
-          <label>pad <input id="pad" type="number" value="0.05" step="0.01" min="0"> s</label>
-        </span>
-        <button id="btn-captions" type="button" title="Transcribes the timeline (Whisper, on this Mac) and adds a native caption track. Editable in the Captions panel.">Captions</button>
+        <label>min <input id="min-silence" type="number" value="0.3" step="0.05" min="0.1"> s</label>
+        <label>pad <input id="pad" type="number" value="0.05" step="0.01" min="0"> s</label>
+        <button id="btn-run-cut" type="button" class="accent">Cut silences</button>
+        <button id="btn-cancel-cut" type="button" class="utility">Cancel</button>
       </div>
       <div id="caption-options" class="scripts" hidden>
         <label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label>
