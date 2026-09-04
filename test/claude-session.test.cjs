@@ -66,6 +66,6 @@ test("userMessage builds image blocks before the text", () => {
 test("the Claude process gets a long MCP tool timeout", () => {
   const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "claude-session.cjs"), "utf8");
   const envLine = src.split("\n").find((l) => l.includes("const env = {"));
-  assert.match(envLine, /MCP_TOOL_TIMEOUT: "3600000"/);
+  assert.match(envLine, /MCP_TOOL_TIMEOUT: "3600000"/); assert.match(envLine, /CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5"/); assert.equal(DISALLOWED_TOOLS.includes("Agent"), false); assert.equal(DISALLOWED_TOOLS.includes("Bash"), true);
   assert.match(src.split("\n").find((l) => l.includes("spawn(claudePath")), /\{ cwd, env, stdio/);
 });

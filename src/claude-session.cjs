@@ -7,7 +7,7 @@ const { createJsonLineParser } = require("./core.cjs");
 const MCP_SERVER_NAME = "premiere";
 const DEFAULT_MODEL = "claude-opus-5";
 // Everything except our MCP tool. Claude runs headless inside Premiere; it must not touch the filesystem or shell.
-const DISALLOWED_TOOLS = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Agent",
+const DISALLOWED_TOOLS = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
   "NotebookEdit", "EnterPlanMode", "ExitPlanMode", "AskUserQuestion", "TodoWrite", "TaskCreate", "TaskUpdate"]; // Skill stays: skills are the panel's repeatable recipes (.claude/skills)
 
 // The Claude desktop app keeps a native CLI per version under its support folder; newest version wins.
@@ -39,6 +39,7 @@ function buildSystemPrompt(capabilities = "") {
     ...(capabilities ? ["Right now on this Mac: " + capabilities] : []),
     "You are Claude running inside Adobe Premiere Pro 2026 as a panel. Prefer the panel tools; write ExtendScript only for things no tool covers.",
     "Tools: sequence_overview (live active sequence), read_transcript (Premiere's transcript with timestamps, read from the SAVED project file; the tool for what is said/when, finding phrases, dialogue-based cuts. If it reports no transcript or a stale save, tell the user exactly: transcribe in the Text panel, then press Cmd+S, then ask again), remove_silences (Silero voice detection by default, the tool for silences, gaps, dead air), remove_pauses (transcript method, Premiere's 'Delete all pauses'; uses a cached Whisper transcript or Premiere's own), transcribe_whisper (local Whisper large-v3-turbo, bundled; first use downloads the model once with a progress bar; also writes .transcript.json files the user can import in the Text panel; vad=false only for clean narration), analyze_audio (levels for questions about audio), preview_frames (images, only when asked what something looks like), classify_clips (speech coverage per source file, works on a bin or the active sequence; run first when asked to edit or assemble), create_sequence (new sequence from a bin, matching the footage or given size/fps; ask first), media_info (ffprobe), project_bins + move_to_bin (organize the Project panel: list the tree, then move items into bins; never use scripts for this), run_extendscript (escape hatch).",
+    "Token discipline: read-heavy steps go to a subagent (Agent tool) that returns a short summary, e.g. reading a long transcript to find a phrase, classifying many clips, summarising an overview. Subagents run on a cheaper model and have the same tools as you. Keep the main conversation to decisions and edits. Long jobs (a download, a transcription) return immediately with 'started'; the panel tells you when they finish, so do not poll or repeat the call.",
     "Repeatable workflows are skills shipped with the panel (edit-footage, cut-silences, organize-project). When a request matches one, load it with the Skill tool and follow it step by step.",
     "The panel duplicates the sequence as '<name> [Claude]' (same bin) before the first edit and makes the copy active; the original is untouched. The tool result says when this happened; mention it. Never edit the original yourself.",
     "If a tool returns an error, report it and stop. Never reimplement a tool with scripts, never rebuild a sequence by removing and re-inserting clips, never change a projectItem's in/out points. Edits go into Premiere's History; the user undoes with Cmd+Z, one step per API call or per extracted range. Say how many steps.",
@@ -142,7 +143,7 @@ function createClaudeSession(options) {
   const mcpConfigPath = writeMcpConfig(mcpUrl, mcpToken);
   const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(capabilities), resumeSessionId });
   // Tool calls may run long (a transcription, hundreds of extracts): give them up to an hour before the CLI gives up.
-  const env = { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000", PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
+  const env = { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000", CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5", PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
   const child = spawn(claudePath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let sessionId = resumeSessionId || null;
   let busy = false;

@@ -585,6 +585,26 @@ function waitForSavedTranscript() {
   }, 2000);
 }
 
+async function runTranscriptionJob(card, media, { language, vad, write_transcript_json, outDir }) {
+  const lines = [];
+  for (let i = 0; i < media.length; i++) {
+    const m = media[i];
+    if (!fs.existsSync(m)) { lines.push(path.basename(m) + ": media offline"); continue; }
+    setStatus("Whisper: " + path.basename(m) + "…");
+    card.progress(i, media.length, "transcribing " + path.basename(m) + " ");
+    const t0 = Date.now();
+    try {
+      const r = await transcribe(m, { language, vad, onLog: log });
+      let note = path.basename(m) + ": " + r.words.length + " words" + (r.cached ? " (cached)" : " (" + ((Date.now() - t0) / 1000).toFixed(0) + "s)");
+      if (write_transcript_json) { fs.mkdirSync(outDir, { recursive: true }); const f = path.join(outDir, path.basename(m) + ".transcript.json"); fs.writeFileSync(f, JSON.stringify(toPremiereTranscript(r.words, r.language), null, 2)); note += " -> " + f; }
+      lines.push(note);
+    } catch (error) { lines.push(path.basename(m) + ": " + error.message); }
+  }
+  card.done(lines.join("\n"), true);
+  setStatus("Ready");
+  if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[Transcription finished:\n" + lines.join("\n") + "\nContinue with the task; call transcribe_whisper again to read the cached results or use read_transcript with source=whisper.]"); } catch (_) { setBusy(false); } }
+}
+
 async function transcribeWhisper({ language = "en", write_transcript_json = true, vad = true } = {}) {
   const card = addTool("transcribe_whisper (" + currentModel() + ")", "");
   card.open();
@@ -612,6 +632,12 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
     return { text: "Whisper model download started (" + WHISPER_MODELS[currentModel()].mb + " MB). Tell the user in one line that it is downloading in the Settings tab and that you will continue automatically when it is installed. Then stop; do not call transcribe_whisper again until then." };
   }
   const outDir = project.path ? path.join(path.dirname(project.path), "_claude-for-adobe_transcripts") : os.tmpdir();
+  const allCached = media.every((m) => cachedWords(m));
+  if (!allCached) {
+    // Runs outside the tool call: start, return now, nudge Claude when every file is done.
+    runTranscriptionJob(card, media, { language, vad, write_transcript_json, outDir });
+    return { text: "Transcription started for " + media.length + " file(s) (" + currentModel() + "). Tell the user in one line that it is running with a progress bar in the chat and that you will continue automatically when it is done. Then stop; do not call transcribe_whisper again until then." };
+  }
   const lines = [];
   for (let i = 0; i < media.length; i++) {
     const m = media[i];
