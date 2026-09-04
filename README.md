@@ -175,7 +175,8 @@ src/pek.cjs             Premiere .pek peak-file decoder (68-byte header, int16 m
 src/timeline.cjs        sequence snapshot parser, diff, formatter
 src/silence.cjs         silence planning across tracks (coverage minus loud, padding, min length)
 src/transcript.cjs      .prproj transcript blobs -> clip ownership -> words (src/transcript-blob.cjs) -> lines/pauses
-src/whisper.cjs         mlx_whisper transcription (cached), Whisper JSON -> Premiere transcript JSON
+src/whisper.cjs         bundled whisper.cpp transcription (model on first use, cached), -> Premiere transcript JSON
+src/classify.cjs        speech coverage -> talking head / b-roll / mixed guess
 host/premiere.jsx       ALL ExtendScript, ES3, loaded once at boot (PCX.*); panel.js builds no scripts
 panel.js / index.html   chat UI, tool execution via evalScript
 CSXS/manifest.xml       CEP manifest (PPRO 25+, --enable-nodejs --mixed-context)

@@ -9,6 +9,8 @@ const { createCheckpoint, createHoldingCopy, listCheckpoints, revertCheckpoint }
 const { createMcpServer } = require(path.join(extensionRoot, "src", "mcp-http.cjs"));
 const { createClaudeSession, availableModels, readClaudeJson } = require(path.join(extensionRoot, "src", "claude-session.cjs"));
 const { checkForUpdate, currentVersion, installUpdate } = require(path.join(extensionRoot, "src", "update.cjs"));
+const { classifyMedia, formatClassification } = require(path.join(extensionRoot, "src", "classify.cjs"));
+const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges } = require(path.join(extensionRoot, "src", "timeline.cjs"));
@@ -620,6 +622,46 @@ async function moveToBin({ moves = [] } = {}) {
   return { text: text + "\nUndo: Cmd+Z once per move.", isError: false };
 }
 
+// Cheap pass over every source file in the sequence: speech coverage (Silero VAD; Premiere's waveform when the
+// codec cannot be decoded here, e.g. BRAW), duration, transcript presence, naming. Frames only where it says so.
+async function classifyClips() {
+  const card = addTool("classify_clips", "");
+  card.open();
+  let snap;
+  try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const byMedia = new Map();
+  snap.clips.filter((c) => c.mediaPath).forEach((c) => { const m = byMedia.get(c.mediaPath) || { name: c.name, clipSeconds: 0 }; m.clipSeconds += c.end - c.start; byMedia.set(c.mediaPath, m); });
+  if (!byMedia.size) return err(card, "no clips with source media in the active sequence");
+  let transcripts = [];
+  if (project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
+  const rows = [];
+  let i = 0;
+  for (const [mediaPath, m] of byMedia) {
+    card.progress(i++, byMedia.size, "listening ");
+    let speechSeconds = 0, duration = 0, method = "vad";
+    try {
+      const r = vadModule.speechSegments(mediaPath, {});
+      speechSeconds = r.segments.reduce((n, s) => n + (s.end - s.start), 0);
+      duration = Math.max(m.clipSeconds, r.segments.length ? r.segments[r.segments.length - 1].end : 0, mediaDurationFromPeak(mediaPath) || 0);
+    } catch (_) {
+      method = "waveform";
+      const regions = speechRegionsFor(mediaPath) || [];
+      speechSeconds = regions.reduce((n, s) => n + (s.end - s.start), 0);
+      duration = mediaDurationFromPeak(mediaPath) || m.clipSeconds;
+    }
+    const hasTranscript = !!transcriptForClip(transcripts, { mediaPath, name: m.name }) || !!cachedWords(mediaPath);
+    rows.push(classifyMedia({ name: path.basename(mediaPath), duration, speechSeconds, hasTranscript, method }));
+  }
+  rows.sort((a, b) => b.ratio - a.ratio);
+  const text = formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
+  card.done(text, true);
+  setStatus("Thinking…");
+  return { text };
+}
+function mediaDurationFromPeak(mediaPath) {
+  try { const rate = PEAK_RATES.find((r) => findPeakFile(mediaPath, r, project.path)); const pek = rate && findPeakFile(mediaPath, rate, project.path); if (!pek) return 0; const p = parsePeakFile(pek); return p.pairsPerChannel * p.samplesPerPair / rate; } catch (_) { return 0; }
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -627,7 +669,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -638,7 +680,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, source: { type: "string", enum: ["auto", "premiere", "whisper"], description: "auto = Whisper cache if present, else Premiere's transcript." } } } },
   { name: "remove_pauses", description: "Transcript method, what Premiere's Text panel 'Delete all pauses' does: a pause is a gap between transcript words >= min_pause_s (Premiere default 0.75). Transcript source: a cached Whisper transcript (run transcribe_whisper) or Premiere's own from the saved project (Text panel > Transcribe, then Cmd+S). With require_quiet the waveform vetoes gaps that have sound. Same Extract apply as remove_silences. Use when the user says pauses.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, min_pause_s: { type: "number", description: "Default 0.75, Premiere's Text panel default." }, pad_s: { type: "number", description: "Default 0." }, require_quiet: { type: "boolean", description: "Default true." }, source: { type: "string", enum: ["auto", "premiere", "whisper"], description: "auto = Whisper cache if present, else Premiere's transcript." }, dry_run: { type: "boolean", description: "true = plan only (default)." } } } },
-  { name: "transcribe_whisper", description: "Transcribe every audio clip's source media in the active sequence with Whisper large-v3-turbo locally (mlx_whisper, word timestamps), cached per media file. Writes Premiere-format .transcript.json files the user can import in the Text panel (... menu > Import > Import transcript) so Premiere's own transcript features work on it. Use when the user asks for a Whisper transcript, or before remove_pauses when there is no transcript.",
+  { name: "transcribe_whisper", description: "Transcribe every audio clip's source media in the active sequence with Whisper large-v3-turbo locally (bundled whisper.cpp, word timestamps; the model downloads once on first use), cached per media file. Writes Premiere-format .transcript.json files the user can import in the Text panel (... menu > Import > Import transcript) so Premiere's own transcript features work on it. Use when the user asks for a Whisper transcript, or before remove_pauses when there is no transcript.",
     inputSchema: { type: "object", properties: { language: { type: "string", description: "ISO code like en; default auto-detect." }, write_transcript_json: { type: "boolean", description: "Default true." }, vad: { type: "boolean", description: "Default true: only decode speech regions found in Premiere's waveform (avoids hallucinated text in silence)." } } } },
   { name: "run_extendscript", description: "Execute ExtendScript inside the open Premiere Pro project and return the value of the final expression. Escape hatch for anything the other tools do not cover. Mutating scripts run on a duplicate sequence.",
     inputSchema: { type: "object", properties: { summary: { type: "string", description: "One line, shown to the user." }, code: { type: "string", description: "ES3 ExtendScript. End with a result expression." } }, required: ["summary", "code"] } },
@@ -646,6 +688,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence at the given timeline positions and return them as images. Only when the user asks what something looks like; never to verify edits.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512." } }, required: ["seconds"] } },
+  { name: "classify_clips", description: "Cheap first pass over every source file in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
+    inputSchema: { type: "object", properties: {} } },
   { name: "project_bins", description: "The Project panel as a tree: bins (ending in /, with item counts) and the items inside them, including loose items at the root. Call before organizing.",
     inputSchema: { type: "object", properties: {} } },
   { name: "move_to_bin", description: "Move project items into bins, creating bins as needed. Use this for organizing the Project panel instead of scripts. Each move is one Cmd+Z step. item = name or bin/name path; bin = bin path like '_ASSETS' or 'Footage/Day 2'.",
