@@ -1122,6 +1122,15 @@ async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
   return { content };
 }
 
+// Look closer: N frames evenly across a time range (one clip, one graphic, one suspect moment). For the loop:
+// question -> frames -> answer -> fix -> check.
+async function framesAcross({ start_seconds, end_seconds, count = 4, max_px = 512 } = {}) {
+  const a = Number(start_seconds), b = Number(end_seconds), n = Math.min(6, Math.max(2, Number(count) || 4));
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return { text: "CLAUDE_FOR_ADOBE_ERROR:start_seconds and end_seconds (end > start) are required", isError: true };
+  const secs = Array.from({ length: n }, (_, i) => Number((a + (b - a) * (i + 0.5) / n).toFixed(3)));
+  return previewFrames({ seconds: secs, max_px });
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -1129,7 +1138,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, snapshot_moments: snapshotMoments };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, snapshot_moments: snapshotMoments, frames_across: framesAcross };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1156,6 +1165,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "snapshot_moments", description: "The check pass. The timeline picks the moments (first frame of every distinct clip on every video track, midpoints of long ones, graphics included), renders them, saves them as a contact sheet next to the project, and returns the images. Use after any reframe or b-roll placement; then fix with nudge_clip and run it again until every moment is right.",
     inputSchema: { type: "object", properties: { max: { type: "number", description: "moments to render, default 8, max 12" }, max_px: { type: "number" } } } },
+  { name: "frames_across", description: "Look closer: 2-6 frames evenly spaced across a time range (one clip, one graphic, the seconds around a suspect moment). Use when a snapshot leaves a question, e.g. is the head cropped for the whole clip or only at the start, does the graphic move, is the subject drifting. Answer the question from these frames before deciding.",
+    inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, count: { type: "number", description: "default 4, max 6" }, max_px: { type: "number" } }, required: ["start_seconds", "end_seconds"] } },
   { name: "nudge_clip", description: "After a reframe: move the picture of the video clip at a sequence time by a fraction of the frame (dx right, dy down; e.g. dx -0.1 pushes it left by 10% of the width) and optionally scale it (1.1 = 10% bigger). Use with preview_frames: look, nudge, look again.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track; omit to find the clip on any track" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" } }, required: ["at_seconds"] } },
   { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked. THEN LOOP: snapshot_moments (it picks the moments); nudge_clip anything off-centre, cropped or misplaced; snapshot_moments again; repeat until all moments are right. Do not stop at describing what needs repositioning.",
