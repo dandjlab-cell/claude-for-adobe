@@ -296,8 +296,63 @@ var PCX = (function () {
     return out.join("\n");
   }
 
+  // Media inside a bin (nested bins included): name, path, video info, timebase, per item.
+  function binMedia(binPath) {
+    var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
+    if (!bin) return "ERR:no bin " + binPath;
+    var rows = [];
+    function meta(item, key) {
+      try {
+        var xml = String(item.getProjectColumnsMetadata());
+        var m = new RegExp("<" + key + ">([^<]*)</" + key + ">").exec(xml);
+        return m ? m[1] : "";
+      } catch (e) { return ""; }
+    }
+    function walk(b) {
+      for (var i = 0; i < b.children.numItems; i++) {
+        var c = b.children[i];
+        if (c.type === 2) { walk(c); continue; }
+        var mp = ""; try { mp = c.getMediaPath(); } catch (e) {}
+        if (!mp) continue;
+        rows.push([c.name, mp, c.nodeId, meta(c, "Column.Intrinsic.VideoInfo"), meta(c, "Column.Intrinsic.MediaTimebase"), meta(c, "Column.Intrinsic.MediaDuration")].join(COL));
+        if (rows.length > 400) return;
+      }
+    }
+    walk(bin);
+    return rows.join(ROW);
+  }
+
+  // New sequence from a bin's clips (Premiere matches the first clip's settings), optional size/rate override.
+  // Returns id|name|WxH@fps. Undo: Cmd+Z (a project action).
+  function createSequenceFromBin(binPath, name, width, height, fps, insertClips) {
+    var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
+    if (!bin) return "ERR:no bin " + binPath;
+    var items = [];
+    for (var i = 0; i < bin.children.numItems; i++) { var c = bin.children[i]; if (c.type !== 2) { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp) items.push(c); } }
+    if (!items.length) return "ERR:no media in " + (binPath || "root");
+    var s = null;
+    try { s = app.project.createNewSequenceFromClips(name, items, bin); } catch (e) { return "ERR:" + e; }
+    if (!s) return "ERR:could not create the sequence";
+    if (insertClips === "false") {
+      try { for (var t = 0; t < s.videoTracks.numTracks; t++) { var tr = s.videoTracks[t]; for (var k = tr.clips.numItems - 1; k >= 0; k--) tr.clips[k].remove(false, false); }
+            for (var a = 0; a < s.audioTracks.numTracks; a++) { var ta = s.audioTracks[a]; for (var q = ta.clips.numItems - 1; q >= 0; q--) ta.clips[q].remove(false, false); } } catch (e) {}
+    }
+    var w = Number(width), h = Number(height), f = Number(fps);
+    if ((w && h) || f) {
+      try {
+        var st = s.getSettings();
+        if (w && h) { st.videoFrameWidth = w; st.videoFrameHeight = h; }
+        if (f) st.videoFrameRate = f;
+        s.setSettings(st);
+      } catch (e) { return s.sequenceID + "|" + s.name + "|settings-unchanged:" + e; }
+    }
+    var fin = s.getSettings();
+    try { app.project.openSequence(s.sequenceID); } catch (e) {}
+    return s.sequenceID + "|" + s.name + "|" + fin.videoFrameWidth + "x" + fin.videoFrameHeight;
+  }
+
   return {
-    listBins: listBins, moveToBin: moveToBin,
+    listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

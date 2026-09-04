@@ -625,14 +625,24 @@ async function moveToBin({ moves = [] } = {}) {
 
 // Cheap pass over every source file in the sequence: speech coverage (Silero VAD; Premiere's waveform when the
 // codec cannot be decoded here, e.g. BRAW), duration, transcript presence, naming. Frames only where it says so.
-async function classifyClips() {
-  const card = addTool("classify_clips", "");
+async function classifyClips({ bin = "" } = {}) {
+  const card = addTool("classify_clips" + (bin ? " (bin: " + bin + ")" : ""), "");
   card.open();
-  let snap;
-  try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
   const byMedia = new Map();
-  snap.clips.filter((c) => c.mediaPath).forEach((c) => { const m = byMedia.get(c.mediaPath) || { name: c.name, clipSeconds: 0 }; m.clipSeconds += c.end - c.start; byMedia.set(c.mediaPath, m); });
-  if (!byMedia.size) return err(card, "no clips with source media in the active sequence");
+  let footage = "";
+  if (bin) {
+    const raw = await host("binMedia", bin);
+    if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
+    const rows = raw ? raw.split("\u0003").map((r) => r.split("\u0002")) : [];
+    rows.forEach(([name, mediaPath, , videoInfo, timebase, dur]) => { byMedia.set(mediaPath, { name, clipSeconds: parseDuration(dur), videoInfo, timebase }); });
+    const kinds = new Map(); rows.forEach(([, , , vi, tb]) => { const k = (vi || "?").replace(/\s*\(.*$/, "") + " @ " + (tb || "?"); kinds.set(k, (kinds.get(k) || 0) + 1); });
+    footage = [...kinds].map(([k, n]) => n + " x " + k).join(", ");
+  } else {
+    let snap;
+    try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+    snap.clips.filter((c) => c.mediaPath).forEach((c) => { const m = byMedia.get(c.mediaPath) || { name: c.name, clipSeconds: 0 }; m.clipSeconds += c.end - c.start; byMedia.set(c.mediaPath, m); });
+  }
+  if (!byMedia.size) return err(card, bin ? "no media in bin " + bin : "no clips with source media in the active sequence");
   let transcripts = [];
   if (project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
   const rows = [];
@@ -654,13 +664,38 @@ async function classifyClips() {
     rows.push(classifyMedia({ name: path.basename(mediaPath), duration, speechSeconds, hasTranscript, method }));
   }
   rows.sort((a, b) => b.ratio - a.ratio);
-  const text = formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
+  const text = (footage ? "footage: " + footage + "\n" : "") + formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
   card.done(text, true);
   setStatus("Thinking…");
   return { text };
 }
 function mediaDurationFromPeak(mediaPath) {
   try { const rate = PEAK_RATES.find((r) => findPeakFile(mediaPath, r, project.path)); const pek = rate && findPeakFile(mediaPath, rate, project.path); if (!pek) return 0; const p = parsePeakFile(pek); return p.pairsPerChannel * p.samplesPerPair / rate; } catch (_) { return 0; }
+}
+
+// "00;01;23;12" / "00:01:23:12" / seconds -> seconds (approximate for drop-frame; only used for coverage ratios).
+function parseDuration(text) {
+  const t = String(text || "").trim();
+  if (!t) return 0;
+  if (/^[\d.]+$/.test(t)) return Number(t);
+  const p = t.split(/[:;]/).map(Number);
+  if (p.length === 4) return p[0] * 3600 + p[1] * 60 + p[2] + p[3] / 30;
+  if (p.length === 3) return p[0] * 60 + p[1] + p[2] / 30;
+  return 0;
+}
+
+// New sequence from a bin. Premiere matches the footage unless width/height/fps are given. Becomes the active sequence.
+async function createSequence({ name = "", bin = "", width, height, fps, insert_clips = true } = {}) {
+  const card = addTool("create_sequence " + (name || "(unnamed)"), "");
+  if (!name) return err(card, "name is required");
+  const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false");
+  if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
+  const [id, seqName, size] = raw.split("|");
+  await refreshProject();
+  timeline = await readSnapshot().catch(() => timeline);
+  const text = "created sequence \"" + seqName + "\" (" + size + ")" + (insert_clips ? " with the bin's clips laid in order" : " empty") + "; it is now the active sequence. Undo: Cmd+Z.";
+  card.done(text, true);
+  return { text };
 }
 
 async function mediaInfoTool({ media_path = "" }) {
@@ -670,7 +705,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -689,8 +724,10 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence at the given timeline positions and return them as images. Only when the user asks what something looks like; never to verify edits.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512." } }, required: ["seconds"] } },
-  { name: "classify_clips", description: "Cheap first pass over every source file in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
-    inputSchema: { type: "object", properties: {} } },
+  { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
+    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
+  { name: "classify_clips", description: "Cheap first pass over every source file in a bin (give bin) or in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
+    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path like 'Footage/Day 2'; omit for the active sequence" } } } },
   { name: "project_bins", description: "The Project panel as a tree: bins (ending in /, with item counts) and the items inside them, including loose items at the root. Call before organizing.",
     inputSchema: { type: "object", properties: {} } },
   { name: "move_to_bin", description: "Move project items into bins, creating bins as needed. Use this for organizing the Project panel instead of scripts. Each move is one Cmd+Z step. item = name or bin/name path; bin = bin path like '_ASSETS' or 'Footage/Day 2'.",
