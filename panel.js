@@ -11,7 +11,7 @@ const { createClaudeSession, availableModels, readClaudeJson } = require(path.jo
 const { checkForUpdate, currentVersion, installUpdate } = require(path.join(extensionRoot, "src", "update.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
-const { diffSnapshots, formatSnapshot, parseSnapshot } = require(path.join(extensionRoot, "src", "timeline.cjs"));
+const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, decodeWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
 const { MODEL: WHISPER_MODEL, cachedWords, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
@@ -653,9 +653,14 @@ function sendMessage() {
   liveMessage = null;
   let payload = text;
   if (pendingChanges.length) {
-    const note = "Timeline changes in Premiere since your last turn (from Premiere's own sequence events):\n- " + pendingChanges.join("\n- ");
-    addMessage("assistant muted", note);
-    payload = "[" + note + "]\n\n" + text;
+    // Collapsed card in the panel, grouped summary for Claude; the raw list stays inside the card.
+    const grouped = summarizeChanges(pendingChanges);
+    const card = document.createElement("details"); card.className = "tool";
+    card.innerHTML = "<summary></summary><pre class=\"result muted\"></pre>";
+    card.querySelector("summary").textContent = "▸ " + pendingChanges.length + " timeline change" + (pendingChanges.length === 1 ? "" : "s") + " in Premiere since your last message";
+    card.querySelector("pre").textContent = grouped.join("\n") + (grouped.length < pendingChanges.length ? "\n\nAll " + pendingChanges.length + ":\n" + pendingChanges.join("\n") : "");
+    ui.messages.appendChild(card);
+    payload = "[Timeline changes the user made in Premiere since your last turn, from Premiere's own sequence events; take them as current state and do not list them back:\n- " + grouped.join("\n- ") + "]\n\n" + text;
     pendingChanges = [];
   }
   lastPayload = payload;

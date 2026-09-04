@@ -55,4 +55,22 @@ function formatSnapshot(s, limit = 300) {
   return lines.join("\n");
 }
 
-module.exports = { COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot };
+// Folds a list of change lines into a few grouped lines for Claude and for the panel card:
+// 17 x `removed A1 "clip" 374.92s-433.60s` -> `removed 17 ranges of A1 "clip" (374.92s-712.47s)`.
+function summarizeChanges(lines) {
+  const groups = new Map();
+  const rest = [];
+  lines.forEach((line) => {
+    const m = /^(added|removed) (\S+) "(.*)" ([\d.]+)s-([\d.]+)s$/.exec(line);
+    if (!m) { rest.push(line); return; }
+    const key = m[1] + "|" + m[2] + "|" + m[3];
+    const g = groups.get(key) || { verb: m[1], track: m[2], name: m[3], n: 0, lo: Infinity, hi: -Infinity };
+    g.n++; g.lo = Math.min(g.lo, Number(m[4])); g.hi = Math.max(g.hi, Number(m[5])); groups.set(key, g);
+  });
+  const out = [...groups.values()].map((g) => g.n === 1
+    ? g.verb + " " + g.track + " \"" + g.name + "\" " + g.lo.toFixed(2) + "s-" + g.hi.toFixed(2) + "s"
+    : g.verb + " " + g.n + " ranges of " + g.track + " \"" + g.name + "\" (" + g.lo.toFixed(2) + "s-" + g.hi.toFixed(2) + "s)");
+  return out.concat(rest);
+}
+
+module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot };

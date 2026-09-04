@@ -22,3 +22,9 @@ test("diff reports add, remove, move, trim, sequence switch", () => {
   assert.deepEqual(diffSnapshots(a, a), []);
   assert.deepEqual(diffSnapshots(a, snap([], ["Seq B", "id2", 1920, 1080, 10])), ['active sequence is now "Seq B" (1920x1080, 10.00s)']);
 });
+
+test("summarizeChanges folds repeated clip ranges into one line", () => {
+  const { summarizeChanges } = require("../src/timeline.cjs");
+  const lines = ['removed A1 "clip.braw" 374.92s-433.60s', 'removed A1 "clip.braw" 433.60s-466.59s', 'removed A1 "clip.braw" 700.00s-712.47s', 'added V2 "title" 1.00s-2.00s', 'sequence duration 800.00s -> 710.00s'];
+  assert.deepEqual(summarizeChanges(lines), ['removed 3 ranges of A1 "clip.braw" (374.92s-712.47s)', 'added V2 "title" 1.00s-2.00s', 'sequence duration 800.00s -> 710.00s']);
+});
