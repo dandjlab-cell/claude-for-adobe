@@ -404,8 +404,29 @@ var PCX = (function () {
     return "muted " + n + " audio clip(s)" + (names.length ? ": " + names.join(", ") : "");
   }
 
+  // Paths ("A/B") of the bins selected in the Project panel, newline-separated. Empty when none.
+  function selectedBinPaths() {
+    var items = null;
+    try { if (typeof app.getCurrentProjectViewSelection === "function") items = app.getCurrentProjectViewSelection(); } catch (e) {}
+    if (!items || !items.length) { try { var ids = app.getProjectViewIDs(); for (var v = 0; ids && v < ids.length; v++) { var s0 = app.getProjectViewSelection(ids[v]); if (s0 && s0.length) { items = s0; break; } } } catch (e2) {} }
+    if (!items || !items.length) return "";
+    var want = {}; for (var i = 0; i < items.length; i++) if (items[i].type === 2) want[items[i].nodeId] = true;
+    var out = [];
+    function walk(bin, prefix) {
+      for (var k = 0; k < bin.children.numItems; k++) {
+        var c = bin.children[k];
+        if (c.type !== 2) continue;
+        var p = prefix ? prefix + "/" + c.name : c.name;
+        if (want[c.nodeId]) out.push(p);
+        walk(c, p);
+      }
+    }
+    walk(app.project.rootItem, "");
+    return out.join("\n");
+  }
+
   return {
-    muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

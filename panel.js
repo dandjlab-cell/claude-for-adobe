@@ -672,9 +672,10 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
 
 // ffprobe on a clip's source file. The path must belong to a project item.
 // Project panel housekeeping without the script hatch. Moves are Premiere project actions (Cmd+Z undoes each).
-async function projectBins() {
-  const card = addTool("project_bins", "");
-  const text = await host("listBins");
+async function projectBins({ bin = "" } = {}) {
+  if (!bin) bin = await selectedBin();
+  const card = addTool("project_bins" + (bin ? " (" + bin + ")" : ""), "");
+  const text = bin ? (await host("binMedia", bin)).split("\u0003").filter(Boolean).map((r) => { const [name, , , vi, tb] = r.split("\u0002"); return name + (vi ? "  " + vi.replace(/\s*\(.*$/, "") : "") + (tb ? " @ " + tb : ""); }).join("\n") : await host("listBins");
   card.done(text.split("\n").slice(0, 25).join("\n") + (text.split("\n").length > 25 ? "\n…" : ""), true);
   return { text: text || "(empty project)" };
 }
@@ -691,7 +692,11 @@ async function moveToBin({ moves = [] } = {}) {
 
 // Cheap pass over every source file in the sequence: speech coverage (Silero VAD; Premiere's waveform when the
 // codec cannot be decoded here, e.g. BRAW), duration, transcript presence, naming. Frames only where it says so.
+// The bin the editor has selected in the Project panel (first one), as a path like "Footage/Day 2". "" when none.
+async function selectedBin() { try { const r = await host("selectedBinPaths"); return r && r.indexOf("ERR:") !== 0 ? r.split("\n")[0] : ""; } catch (_) { return ""; } }
+
 async function classifyClips({ bin = "" } = {}) {
+  if (!bin) bin = await selectedBin(); // the selected bin is the default; no need for Claude to name it
   const card = addTool("classify_clips" + (bin ? " (bin: " + bin + ")" : ""), "");
   card.open();
   const byMedia = new Map();
@@ -754,6 +759,7 @@ function parseDuration(text) {
 // New sequence from a bin. Premiere matches the footage unless width/height/fps are given. Becomes the active sequence.
 const SEQUENCE_PRESETS = { match: {}, vertical: { width: 1080, height: 1920 }, hd: { width: 1920, height: 1080 }, uhd: { width: 3840, height: 2160 } };
 async function createSequence({ name = "", bin = "", width, height, fps, preset, insert_clips = true } = {}) {
+  if (!bin) bin = await selectedBin();
   if (preset && SEQUENCE_PRESETS[preset]) ({ width = width, height = height } = SEQUENCE_PRESETS[preset]);
   const card = addTool("create_sequence " + (name || "(unnamed)"), "");
   if (!name) return err(card, "name is required");
@@ -856,8 +862,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, preset: { type: "string", enum: ["match", "vertical", "hd", "uhd"], description: "match = the footage; vertical = 1080x1920; hd = 1920x1080; uhd = 3840x2160" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
   { name: "classify_clips", description: "Cheap first pass over every source file in a bin (give bin) or in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path like 'Footage/Day 2'; omit for the active sequence" } } } },
-  { name: "project_bins", description: "The Project panel as a tree: bins (ending in /, with item counts) and the items inside them, including loose items at the root. Call before organizing.",
-    inputSchema: { type: "object", properties: {} } },
+  { name: "project_bins", description: "With a bin selected in Premiere (or given), lists just that bin's media with sizes and frame rates. Otherwise the whole Project panel tree: bins (ending in /, with item counts) and items, including loose items at the root.",
+    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path; defaults to the bin selected in Premiere" } } } },
   { name: "move_to_bin", description: "Move project items into bins, creating bins as needed. Use this for organizing the Project panel instead of scripts. Each move is one Cmd+Z step. item = name or bin/name path; bin = bin path like '_ASSETS' or 'Footage/Day 2'.",
     inputSchema: { type: "object", properties: { moves: { type: "array", items: { type: "object", properties: { item: { type: "string" }, bin: { type: "string" } }, required: ["item", "bin"] } } }, required: ["moves"] } },
   { name: "media_info", description: "ffprobe a clip's source file (media path from sequence_overview): container, duration, video resolution/fps, audio sample rate/channels.",
@@ -954,8 +960,9 @@ async function sendMessage() {
   // Attach what is highlighted in Premiere, so "this bin" / "these clips" needs no typing.
   try {
     const sel = await host("selectionInfo");
-    log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)"));
-    if (sel && sel.indexOf("ERR:") !== 0) payload = "[Selected in Premiere right now: " + sel.split("\u0003").join("; ") + "]\n\n" + payload;
+    const binPath = await selectedBin();
+    log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)") + (binPath ? " [bin path " + binPath + "]" : ""));
+    if (sel && sel.indexOf("ERR:") !== 0) payload = "[Selected in Premiere right now: " + sel.split("\u0003").join("; ") + (binPath ? ". Work on bin \"" + binPath + "\" only: classify_clips, project_bins and create_sequence already default to it; do not list or scan other bins." : "") + "]\n\n" + payload;
   } catch (_) {}
   lastPayload = payload;
   const images = attachments.splice(0).map((a) => ({ mediaType: a.mediaType, data: a.data }));
