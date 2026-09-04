@@ -457,7 +457,10 @@ var PCX = (function () {
             var srcW = oldW, srcH = oldH;
             try { var vi = String(cl.projectItem.getProjectColumnsMetadata()); var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); } } catch (e0) {}
             var fx = w / srcW, fy = h / srcH;
-            var factor = mode === "fill" ? Math.max(fx, fy) : Math.min(fx, fy);
+            // Footage fills the new frame; graphics, stills and titles FIT it (never blown up past the edges).
+            var isGraphicClip = false;
+            try { var mpath = cl.projectItem ? String(cl.projectItem.getMediaPath()) : ""; isGraphicClip = !mpath || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(mpath); } catch (eg) { isGraphicClip = true; }
+            var factor = (mode === "fill" && !isGraphicClip) ? Math.max(fx, fy) : Math.min(fx, fy);
             var cur = num(scale.getValue());
             scale.setValue(cur * factor / Math.max(oldW / srcW, oldH / srcH), true);
             var p = pos.getValue();
@@ -469,7 +472,7 @@ var PCX = (function () {
       }
     }
     var fin = s.getSettings();
-    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (" + mode + ", centred)" + (skipped ? ", " + skipped + " skipped" : "") : "");
+    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + ", graphics fit, all centred)" + (skipped ? ", " + skipped + " skipped" : "") : "");
   }
 
   function findItemByMedia(mediaPath) {

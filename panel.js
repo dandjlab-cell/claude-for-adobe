@@ -1562,6 +1562,13 @@ function showView(which) {
   if (which === "chat") ui.input.focus();
 }
 tabChat.onclick = () => showView("chat"); tabSettings.onclick = () => showView("settings");
+// Copy the log for support: system clipboard via pbcopy (reliable inside CEP), with the browser API as fallback.
+document.getElementById("copy-log").onclick = () => {
+  const text = ui.log.textContent || "";
+  try { const p = require("node:child_process").spawn("pbcopy"); p.stdin.end(text); addMessage("assistant muted", "Log copied (" + text.split("\n").length + " lines)."); }
+  catch (_) { try { navigator.clipboard.writeText(text); addMessage("assistant muted", "Log copied."); } catch (e) { addMessage("assistant error", "Could not copy: " + e.message); } }
+};
+document.getElementById("clear-log").onclick = () => { ui.log.textContent = ""; };
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => restartSession(session && session.sessionId);
