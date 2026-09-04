@@ -87,6 +87,7 @@ const MODEL_FALLBACK = "claude-sonnet-5";
 })();
 const modelLabel = (id) => { const o = [...ui.model.options].find((x) => x.value === id); return o ? o.text : id; };
 let lastPayload = "";
+let allowScriptsThisSession = false; // set by "Run all this session"; cleared on New
 function setStatus(text, cls) { ui.status.textContent = text; ui.status.className = cls || (/^(Ready|Starting)/.test(text) ? "" : "busy"); }
 function setBusy(busy) { ui.send.disabled = busy || !session; ui.stop.disabled = !busy; if (!busy) ui.input.focus(); }
 
@@ -115,16 +116,19 @@ function addTool(summary, code) {
 const err = (card, text) => { card.done(text, false); return { text: "CLAUDE_FOR_ADOBE_ERROR:" + text, isError: true }; };
 
 // In-panel yes/no card (no system dialog). Used only for destructive actions: Revert, Discard copy.
-function askInline(text, yesLabel = "Yes", noLabel = "Cancel") {
+// Resolves true / false, or the string "all" when an `allLabel` third button is offered and chosen.
+function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "") {
   return new Promise((resolve) => {
     const el = addMessage("assistant muted", text + "\n");
     const row = document.createElement("div");
     row.className = "row";
     const yes = document.createElement("button"); yes.textContent = yesLabel;
     const no = document.createElement("button"); no.textContent = noLabel; no.className = "utility";
-    const finish = (v) => { row.remove(); el.textContent += (v ? yesLabel : noLabel) + "."; resolve(v); };
+    const finish = (v) => { row.remove(); el.textContent += (v === "all" ? allLabel : v ? yesLabel : noLabel) + "."; resolve(v); };
     yes.onclick = () => finish(true); no.onclick = () => finish(false);
-    row.append(yes, no); el.appendChild(row);
+    row.append(yes, no);
+    if (allLabel) { const all = document.createElement("button"); all.textContent = allLabel; all.className = "utility"; all.onclick = () => finish("all"); row.append(all); }
+    el.appendChild(row);
     ui.messages.scrollTop = ui.messages.scrollHeight;
   });
 }
@@ -283,11 +287,13 @@ async function runExtendScript({ summary = "", code = "" }) {
   setStatus("Running: " + (summary || "script"));
   const inspection = inspectExtendScript(code);
   if (inspection.rejection) return err(card, inspection.rejection);
-  if (!inspection.readOnly) {
-    // Enforced human approval: the guard cannot prove ExtendScript safe, so anything that is not a plain read waits for a click.
+  // Enforced human approval: the guard cannot prove ExtendScript safe, so anything that is not a plain read waits for a
+  // click. "Run all this session" skips the click for undoable scripts until New is pressed; non-undoable ones always ask.
+  if (!inspection.readOnly && (inspection.notUndoable.length || !allowScriptsThisSession)) {
     const what = inspection.notUndoable.length ? "This cannot be undone with Cmd+Z (" + inspection.notUndoable.join(", ") + ")." : (inspection.mutating ? "This edits the project (Cmd+Z undoes it)." : "The guard could not prove this script is read-only.");
-    const okToRun = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run");
-    if (!okToRun) return err(card, "The user declined to run this script. Ask before trying a different approach.");
+    const answer = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run", inspection.notUndoable.length ? "" : "Run all this session");
+    if (!answer) return err(card, "The user declined to run this script. Ask before trying a different approach.");
+    if (answer === "all") { allowScriptsThisSession = true; addMessage("assistant muted", "Scripts run without asking until you press New. Actions Cmd+Z can't undo will still ask."); }
   }
   let note = inspection.warnings.map((w) => "[warning] " + w).join("\n");
   let copyNote = "";
@@ -725,7 +731,7 @@ setTimeout(async () => {
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => restartSession(session && session.sessionId);
-ui.restart.onclick = () => { ui.messages.innerHTML = ""; restartSession(); };
+ui.restart.onclick = () => { ui.messages.innerHTML = ""; allowScriptsThisSession = false; restartSession(); };
 ui.model.onchange = () => restartSession(session && session.sessionId);
 
 boot();
