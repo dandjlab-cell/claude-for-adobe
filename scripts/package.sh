@@ -1,0 +1,14 @@
+#!/bin/sh
+# Builds dist/PremiereClaude-<version>.zip: the runtime files only (no tests, docs, git).
+set -e
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION=$(sed -n 's/.*ExtensionBundleVersion="\([^"]*\)".*/\1/p' "$ROOT/CSXS/manifest.xml" | head -1)
+STAGE="$(mktemp -d)/Claude for Adobe"
+mkdir -p "$STAGE" "$ROOT/dist"
+for f in CSXS assets bin host src licenses index.html panel.js package.json README.md LICENSE THIRD_PARTY.md Install.command; do cp -R "$ROOT/$f" "$STAGE/"; done
+find "$STAGE" -name '.DS_Store' -delete
+OUT="$ROOT/dist/ClaudeForAdobe-$VERSION.zip"
+rm -f "$OUT"
+(cd "$(dirname "$STAGE")" && zip -qr "$OUT" "Claude for Adobe")
+rm -rf "$(dirname "$STAGE")"
+echo "$OUT ($(du -h "$OUT" | cut -f1))"

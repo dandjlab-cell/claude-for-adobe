@@ -1,0 +1,58 @@
+// Live timeline model: snapshot text from ExtendScript -> objects, and a diff between snapshots.
+// Pure Node; the ExtendScript that produces the snapshot lives in panel.js.
+const TICKS = 254016000000;
+const COL = "", ROW = "";
+
+// Snapshot wire format (one row per clip): id|track|name|start|end|inPoint|mediaPath ; first row is the sequence header.
+function parseSnapshot(raw) {
+  const rows = String(raw || "").split(ROW).filter(Boolean);
+  if (!rows.length || rows[0].indexOf("ERR:") === 0) return { error: rows[0] || "empty snapshot", clips: [] };
+  const [name, id, width, height, endTicks] = rows[0].split(COL);
+  const clips = rows.slice(1).map((r) => {
+    const [nodeId, track, clipName, start, end, inPoint, mediaPath] = r.split(COL);
+    return { id: nodeId, track, name: clipName, start: Number(start) / TICKS, end: Number(end) / TICKS, inPoint: Number(inPoint) / TICKS, mediaPath };
+  });
+  return { name, id, width: Number(width), height: Number(height), duration: Number(endTicks) / TICKS, clips };
+}
+
+const f = (n) => n.toFixed(2) + "s";
+
+function describeClip(c) { return `${c.track} "${c.name}" ${f(c.start)}-${f(c.end)}`; }
+
+// Human-readable list of changes between two snapshots (for Claude). Empty array = no change.
+function diffSnapshots(prev, next) {
+  if (!prev || prev.error || next.error) return [];
+  const out = [];
+  if (prev.id !== next.id) { out.push(`active sequence is now "${next.name}" (${next.width}x${next.height}, ${f(next.duration)})`); return out; }
+  if (prev.width !== next.width || prev.height !== next.height) out.push(`frame size ${prev.width}x${prev.height} -> ${next.width}x${next.height}`);
+  const before = new Map(prev.clips.map((c) => [c.id, c]));
+  const after = new Map(next.clips.map((c) => [c.id, c]));
+  next.clips.forEach((c) => {
+    const p = before.get(c.id);
+    if (!p) { out.push("added " + describeClip(c)); return; }
+    const moved = Math.abs(p.start - c.start) > 1e-4, trimmed = Math.abs((p.end - p.start) - (c.end - c.start)) > 1e-4 || Math.abs(p.inPoint - c.inPoint) > 1e-4;
+    if (p.track !== c.track) out.push(`moved ${describeClip(p)} -> ${c.track} ${f(c.start)}`);
+    else if (moved && !trimmed) out.push(`moved ${describeClip(p)} -> ${f(c.start)}-${f(c.end)}`);
+    else if (trimmed) out.push(`trimmed ${describeClip(p)} -> ${f(c.start)}-${f(c.end)} (in ${f(c.inPoint)})`);
+    if (p.name !== c.name) out.push(`renamed "${p.name}" -> "${c.name}"`);
+  });
+  prev.clips.forEach((c) => { if (!after.has(c.id)) out.push("removed " + describeClip(c)); });
+  if (out.length && Math.abs(prev.duration - next.duration) > 1e-4) out.push(`sequence duration ${f(prev.duration)} -> ${f(next.duration)}`);
+  return out;
+}
+
+function formatSnapshot(s, limit = 300) {
+  if (s.error) return s.error;
+  const lines = [`Sequence "${s.name}" ${s.width}x${s.height}, duration ${f(s.duration)}, ${s.clips.length} clips`];
+  const byTrack = new Map();
+  s.clips.forEach((c) => { if (!byTrack.has(c.track)) byTrack.set(c.track, []); byTrack.get(c.track).push(c); });
+  let n = 0;
+  byTrack.forEach((clips, track) => {
+    lines.push(track + ":");
+    clips.forEach((c) => { if (n++ < limit) lines.push(`  ${f(c.start)}-${f(c.end)} "${c.name}" in ${f(c.inPoint)}${c.mediaPath ? " <" + c.mediaPath + ">" : ""}`); });
+  });
+  if (n > limit) lines.push(`  ... ${n - limit} more clips`);
+  return lines.join("\n");
+}
+
+module.exports = { COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot };
