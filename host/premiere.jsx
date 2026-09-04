@@ -387,8 +387,25 @@ var PCX = (function () {
     return out.join(ROW);
   }
 
+  // Mute (disable) the audio track items whose source media is in the list. json: [mediaPath, ...]. Cmd+Z undoes.
+  function muteAudioFor(json) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var want = parse(json), set = {}, n = 0, names = [];
+    for (var i = 0; i < want.length; i++) set[want[i]] = true;
+    for (var t = 0; t < s.audioTracks.numTracks; t++) {
+      var tr = s.audioTracks[t];
+      for (var c = 0; c < tr.clips.numItems; c++) {
+        var cl = tr.clips[c];
+        var mp = ""; try { mp = cl.projectItem ? cl.projectItem.getMediaPath() : ""; } catch (e) {}
+        if (mp && set[mp] && !cl.disabled) { try { cl.disabled = true; n++; if (names.length < 12) names.push(cl.name); } catch (e2) {} }
+      }
+    }
+    return "muted " + n + " audio clip(s)" + (names.length ? ": " + names.join(", ") : "");
+  }
+
   return {
-    selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

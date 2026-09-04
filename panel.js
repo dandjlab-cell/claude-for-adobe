@@ -757,6 +757,20 @@ async function createSequence({ name = "", bin = "", width, height, fps, insert_
   return { text };
 }
 
+// Mute the audio of clips by source file (typically everything classify_clips called b-roll). Works on the duplicate.
+async function muteClipAudio({ media_paths = [] } = {}) {
+  const list = (Array.isArray(media_paths) ? media_paths : []).map(String).filter(Boolean);
+  const card = addTool("mute_clip_audio (" + list.length + " file(s))", list.map((p) => path.basename(p)).join("\n"));
+  if (!list.length) return err(card, "media_paths must list the source files whose audio to mute (from classify_clips / sequence_overview)");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const raw = await host("muteAudioFor", JSON.stringify(list));
+  const ok = raw.indexOf("ERR:") !== 0;
+  card.done(raw, ok);
+  timeline = await readSnapshot().catch(() => timeline);
+  return { text: copyNote + raw + (ok ? "\nUndo: Cmd+Z once per clip." : ""), isError: !ok };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -764,7 +778,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -783,6 +797,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence at the given timeline positions and return them as images. Only when the user asks what something looks like; never to verify edits.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512." } }, required: ["seconds"] } },
+  { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",
+    inputSchema: { type: "object", properties: { media_paths: { type: "array", items: { type: "string" } } }, required: ["media_paths"] } },
   { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
     inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
   { name: "classify_clips", description: "Cheap first pass over every source file in a bin (give bin) or in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
