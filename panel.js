@@ -885,7 +885,7 @@ function renderModelRow() {
     ui.whisperModel.value = currentModel();
   }
   const ready = modelReady();
-  ui.modelState.textContent = "Whisper: " + (ready ? "installed" : "not installed") + " ·";
+  ui.modelState.textContent = "Whisper: " + (ready ? "installed" : "not installed");
   ui.btnWhisperModel.hidden = ready;
   ui.btnWhisperModel.textContent = "Download (" + WHISPER_MODELS[currentModel()].mb + " MB)";
 }
@@ -982,6 +982,15 @@ function addFiles(files) {
 ["dragleave", "dragend"].forEach((ev) => document.addEventListener(ev, () => document.body.classList.remove("dropping")));
 document.addEventListener("drop", (e) => { e.preventDefault(); document.body.classList.remove("dropping"); if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); else { const t = e.dataTransfer && e.dataTransfer.getData("text"); if (t) ui.input.value += (ui.input.value ? "\n" : "") + t; } ui.input.focus(); });
 ui.input.addEventListener("paste", (e) => { const files = e.clipboardData && [...e.clipboardData.files]; if (files && files.length) { e.preventDefault(); addFiles(files); } });
+// Chat / Settings tabs.
+const tabChat = document.getElementById("tab-chat"), tabSettings = document.getElementById("tab-settings");
+function showView(which) {
+  document.getElementById("view-chat").classList.toggle("active", which === "chat");
+  document.getElementById("view-settings").classList.toggle("active", which === "settings");
+  tabChat.classList.toggle("active", which === "chat"); tabSettings.classList.toggle("active", which === "settings");
+  if (which === "chat") ui.input.focus();
+}
+tabChat.onclick = () => showView("chat"); tabSettings.onclick = () => showView("settings");
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => restartSession(session && session.sessionId);
