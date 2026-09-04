@@ -744,7 +744,7 @@ async function checkUpdates(announce) {
   log("checking for updates (installed " + currentVersion(extensionRoot) + ")");
   let update = null;
   try { update = await Promise.race([checkForUpdate(extensionRoot), new Promise((_, rej) => setTimeout(() => rej(new Error("no answer from GitHub within 30 s")), 30000))]); }
-  catch (error) { log("update check skipped: " + error.message); ui.checkUpdates.textContent = "Check for updates"; ui.checkUpdates.disabled = false; if (announce) addMessage("assistant muted", "Could not check for updates: " + error.message); return; }
+  catch (error) { const why = /abort|no answer|ENOTFOUND|EAI_AGAIN|Failed to fetch|timeout/i.test(error.message) ? "no answer from GitHub. Check your internet connection or VPN, then try again." : error.message; log("update check skipped: " + error.message); ui.checkUpdates.textContent = "Check for updates"; ui.checkUpdates.disabled = false; if (announce) addMessage("assistant muted", "Could not check for updates: " + why); return; }
   ui.checkUpdates.disabled = false;
   if (!update) {
     pendingUpdate = null;
