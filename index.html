@@ -21,7 +21,10 @@
     footer { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; }
     .view { display: none; min-height: 0; }
     .view.active { display: grid; grid-template-columns: minmax(0, 1fr); }
-    #view-chat.active { grid-template-rows: auto minmax(0, 1fr) auto; }
+    #view-chat.active { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    #selection-bar { font-size: 10.5px; color: var(--ink-40); padding: 4px 12px 0; letter-spacing: .01em; }
+    #selection-bar[hidden] { display: none; }
+    #selection-bar b { color: var(--accent); font-weight: 500; }
     #view-settings.active { overflow-y: auto; }
     .pulse { outline: 2px solid var(--accent); outline-offset: 2px; }
     .tabs { display: flex; border: 1px solid var(--line); }
@@ -105,8 +108,6 @@
     textarea::placeholder { color: var(--ink-40); }
     .composer .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .composer .row .options { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; color: var(--ink-60); font-size: 12px; }
-    .chip.sel { border-color: var(--accent); color: var(--ink); padding: 3px 8px; }
-    .chip.sel b { color: var(--accent); font-weight: 500; margin-right: 4px; }
     #attachments { display: flex; gap: 6px; flex-wrap: wrap; }
     .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); padding: 3px 6px 3px 3px; font-family: var(--mono); font-size: 11px; color: var(--ink-60); }
     .chip img { height: 28px; width: auto; display: block; }
@@ -142,6 +143,7 @@
       <button id="restart" type="button" title="Start a new conversation">New</button>
     </header>
     <section id="view-chat" class="view active">
+      <div id="selection-bar" class="mono" hidden></div>
       <div class="scripts">
         <button id="btn-cut" type="button" title="Finds where people are speaking (a small voice model bundled with the panel, runs on your Mac) and removes the quiet stretches longer than min. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
         <select id="cut-method" title="Voice: a bundled voice model finds speech; the accurate method (Apple Silicon). Level: uses Premiere's waveform and cuts below the clip's noise floor; works on any Mac.">
@@ -166,7 +168,7 @@
         </div>
       </div>
       <div class="composer">
-        <div id="attachments" style="display:none"><span id="selection-chip" class="chip sel" hidden></span></div>
+        <div id="attachments" style="display:none"></div>
         <textarea id="input" placeholder="Ask Claude to inspect or edit the open project. Enter sends, Shift+Enter for a new line. Drop or paste a screenshot to include it."></textarea>
         <div class="row">
           <button id="send" type="button" class="accent">Send</button>

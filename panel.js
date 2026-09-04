@@ -41,7 +41,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionChip: $("selection-chip"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -1100,22 +1100,26 @@ async function refreshSelectionLine() {
   try { sel = await host("selectionInfo"); } catch (_) {}
   if (sel === lastSelection) return;
   lastSelection = sel;
-  const chip = ui.selectionChip;
-  if (!sel || sel.indexOf("ERR:") === 0) { chip.hidden = true; showAttachmentsRow(); return; }
-  chip.innerHTML = "";
-  const b = document.createElement("b"); b.textContent = "Selected";
-  chip.append(b, document.createTextNode(sel.split("\u0003").join(" · ").replace(/^Project panel: /, "").replace(/; Timeline: /, " · ")));
-  chip.hidden = false;
-  showAttachmentsRow();
+  const bar = ui.selectionBar;
+  if (!sel || sel.indexOf("ERR:") === 0) { bar.hidden = true; return; }
+  // Compact: the bin name and item count, then a clip count for the timeline. Details travel with the message.
+  const parts = [];
+  const bin = /bin "([^"]+)" \((\d+) items?\)/.exec(sel); if (bin) parts.push(bin[1] + " (" + bin[2] + ")");
+  const items = sel.split("\u0003").find((p) => p.startsWith("Project panel:")); if (!bin && items) parts.push(items.replace("Project panel: ", ""));
+  const tl = /Timeline: (\d+) clip/.exec(sel); if (tl) parts.push(tl[1] + " clip" + (tl[1] === "1" ? "" : "s") + " on the timeline");
+  bar.innerHTML = "";
+  const b = document.createElement("b"); b.textContent = "Selected ";
+  bar.append(b, document.createTextNode(parts.join(" · ")));
+  bar.hidden = false;
 }
-function showAttachmentsRow() { ui.attachments.style.display = (!ui.selectionChip.hidden || attachments.length) ? "flex" : "none"; }
+function showAttachmentsRow() { ui.attachments.style.display = attachments.length ? "flex" : "none"; }
 setInterval(refreshSelectionLine, 800);
 ["mouseenter", "focus"].forEach((ev) => window.addEventListener(ev, refreshSelectionLine, true));
 
 // Drops and pastes. Without this, dropping a file makes the embedded browser navigate to it and the panel is gone.
 const attachments = []; // [{ name, mediaType, data }]
 function renderAttachments() {
-  [...ui.attachments.querySelectorAll(".chip:not(.sel)")].forEach((c) => c.remove());
+  ui.attachments.innerHTML = "";
   attachments.forEach((a, i) => {
     const chip = document.createElement("span"); chip.className = "chip";
     const img = document.createElement("img"); img.src = "data:" + a.mediaType + ";base64," + a.data; img.alt = a.name;
