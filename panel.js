@@ -10,6 +10,7 @@ const { createMcpServer } = require(path.join(extensionRoot, "src", "mcp-http.cj
 const { createClaudeSession, availableModels, readClaudeJson } = require(path.join(extensionRoot, "src", "claude-session.cjs"));
 const { checkForUpdate, currentVersion, installUpdate } = require(path.join(extensionRoot, "src", "update.cjs"));
 const { classifyMedia, formatClassification } = require(path.join(extensionRoot, "src", "classify.cjs"));
+const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captions.cjs"));
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
@@ -999,6 +1000,33 @@ async function removeFillers({ start_seconds = 0, end_seconds, repeats = true, s
   return { ...res, text: res.text + "\n" + list };
 }
 
+// Plain native captions from the transcript: cues -> SRT next to the project -> import -> caption track.
+async function createCaptions({ max_chars = 32, max_lines = 2, max_seconds = 5, source = "auto" } = {}) {
+  const card = addTool("create_captions", "");
+  let snap, clips;
+  try { ({ snap, clips } = await audioClipsIn(0, Infinity)); } catch (error) { return err(card, error.message); }
+  let words = [];
+  const tl = source === "auto" || source === "timeline" ? freshTimelineWords(snap) : null;
+  if (tl) words = tl.words;
+  else {
+    let transcripts = []; if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
+    const missing = [];
+    clips.forEach((c) => { try { const w = wordsForClip(c, source, transcripts).words; const off = c.start - c.inPoint; w.forEach((x) => { const st = x.start + off, en = x.end + off; if (en > c.s0 && st < c.s1) words.push({ text: x.text, start: st, end: en }); }); } catch (_) { missing.push(c.name); } });
+    if (missing.length) return err(card, "no transcript for " + missing.join(", ") + ". Run transcribe_timeline for an exact transcript of this cut, then create_captions again.");
+  }
+  if (!words.length) return err(card, "no words to caption; run transcribe_timeline first");
+  const cues = cuesFromWords(words, { maxChars: Number(max_chars), maxLines: Number(max_lines), maxSeconds: Number(max_seconds) });
+  const srt = writeAnalysis((project.sequence || "sequence") + ".srt", toSRT(cues));
+  let cp = "";
+  try { await saveProject(); const entry = createCheckpoint(project.path, "before caption import"); renderCheckpoints(); cp = " Checkpoint " + entry.id + " saved first (import is not undoable)."; }
+  catch (error) { return err(card, "Caption import blocked: it cannot be undone and a checkpoint was not possible: " + error.message); }
+  const raw = await host("importCaptions", srt);
+  const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
+  card.done((ok ? cues.length + " captions, " : "") + raw + cp, ok);
+  timeline = await readSnapshot().catch(() => timeline);
+  return { text: (ok ? cues.length + " captions added as a caption track (from " + (tl ? "the exact timeline transcript" : "per-clip transcripts") + "). SRT: " + srt + "." : "CLAUDE_FOR_ADOBE_ERROR:" + raw) + cp, isError: !ok };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -1006,7 +1034,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1039,6 +1067,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: {} } },
   { name: "save_notes", description: "Save your notes (shot descriptions per b-roll clip, decisions, selects) as a markdown file next to the project, so later turns and sessions reuse them instead of looking again.",
     inputSchema: { type: "object", properties: { name: { type: "string", description: "file name, e.g. broll-notes" }, text: { type: "string" } }, required: ["text"] } },
+  { name: "create_captions", description: "Plain native captions on the active sequence: builds cues from the transcript (the exact timeline transcript when it exists for this cut, else per-clip), writes an SRT next to the project, imports it and creates a caption track. Editable in Premiere's Captions panel. Not undoable (import), so the panel checkpoints first. Defaults: 32 characters per line, 2 lines, 5 s max.",
+    inputSchema: { type: "object", properties: { max_chars: { type: "number" }, max_lines: { type: "number" }, max_seconds: { type: "number" }, source: { type: "string", enum: ["auto", "timeline", "premiere", "whisper"] } } } },
   { name: "transcribe_timeline", description: "Exact transcript of the current cut: renders the sequence's audio mix with Premiere's own 16 kHz preset into the analysis folder and transcribes it (Whisper, local). Words come out in timeline time, so it is right after any edit and covers clips that were never transcribed. Runs in the background; you are told when it is done. Then read_transcript, find_in_transcript and remove_fillers use it automatically for this exact cut. Use before captions or anything that needs exact timing on a cut timeline.",
     inputSchema: { type: "object", properties: { language: { type: "string", description: "default en; 'auto' to detect" } } } },
   { name: "remove_fillers", description: "Basic audio clean-up from the transcript: cuts 'um', 'uh', 'hmm' and immediate repeats or stutters ('I I', 'we were we were'). Plan with dry_run=true (default), show the count in one line, then apply. Needs a transcript (Premiere's saved one, or transcribe_whisper).",

@@ -544,8 +544,25 @@ var PCX = (function () {
     return String(r) === "No Error" || String(r) === "" || String(r) === "0" ? outPath : "ERR:" + r;
   }
 
+  // Import an SRT and add it as a caption track on the active sequence. importFiles is not undoable (checkpoint first).
+  function importCaptions(srtPath) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var root = app.project.rootItem;
+    var before = root.children.numItems;
+    var ok = false;
+    try { ok = app.project.importFiles([srtPath], true, root, false); } catch (e) { return "ERR:importFiles " + e; }
+    if (!ok) return "ERR:importFiles refused " + srtPath;
+    var item = null;
+    for (var i = root.children.numItems - 1; i >= 0; i--) { var c = root.children[i]; var mp = ""; try { mp = c.getMediaPath(); } catch (e2) {} if (mp === srtPath || (i >= before && c.type !== 2)) { item = c; break; } }
+    if (!item) return "ERR:imported item not found";
+    var made = false;
+    try { made = s.createCaptionTrack(item, 0, Sequence.CAPTION_FORMAT_SUBTITLE); } catch (e3) { return "ERR:createCaptionTrack " + e3; }
+    return made ? "caption track created from " + item.name : "ERR:createCaptionTrack returned false";
+  }
+
   return {
-    exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
