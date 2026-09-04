@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION=$(sed -n 's/.*ExtensionBundleVersion="\([^"]*\)".*/\1/p' "$ROOT/CSXS/manifest.xml" | head -1)
 STAGE="$(mktemp -d)/Claude for Adobe"
 mkdir -p "$STAGE" "$ROOT/dist"
-for f in CSXS assets bin host src licenses .claude index.html panel.js package.json README.md LICENSE THIRD_PARTY.md Install.command; do cp -R "$ROOT/$f" "$STAGE/"; done
+for f in CSXS assets bin host src licenses .claude docs index.html panel.js package.json README.md LICENSE THIRD_PARTY.md Install.command; do cp -R "$ROOT/$f" "$STAGE/"; done
 find "$STAGE" -name '.DS_Store' -delete
 OUT="$ROOT/dist/ClaudeForAdobe-$VERSION.zip"
 rm -f "$OUT"
