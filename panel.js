@@ -564,6 +564,27 @@ async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" 
   return { text };
 }
 
+// Watches the project file; when it is saved and now carries a transcript, nudges Claude to continue (up to 30 min).
+let saveWatcher = null;
+function waitForSavedTranscript() {
+  if (saveWatcher) clearInterval(saveWatcher);
+  const p = project.path; if (!p) return;
+  let last = 0; try { last = fs.statSync(p).mtimeMs; } catch (_) {}
+  const started = Date.now();
+  setStatus("Waiting for Text panel > Transcribe, then Cmd+S…");
+  saveWatcher = setInterval(() => {
+    if (Date.now() - started > 30 * 60 * 1000) { clearInterval(saveWatcher); saveWatcher = null; setStatus("Ready"); return; }
+    let m = 0; try { m = fs.statSync(p).mtimeMs; } catch (_) { return; }
+    if (m === last) return;
+    last = m;
+    let n = 0; try { n = listTranscripts(p).length; } catch (_) {}
+    if (!n) return;
+    clearInterval(saveWatcher); saveWatcher = null;
+    addMessage("assistant muted", "Project saved with " + n + " transcript" + (n === 1 ? "" : "s") + ". Continuing.");
+    if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[The user transcribed in Premiere and saved the project. Continue with the task using read_transcript.]"); } catch (_) { setBusy(false); } }
+  }, 2000);
+}
+
 async function transcribeWhisper({ language = "en", write_transcript_json = true, vad = true } = {}) {
   const card = addTool("transcribe_whisper (" + currentModel() + ")", "");
   card.open();
@@ -574,8 +595,13 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
   if (!modelReady()) {
     // The one big download is the user's call. It runs outside this tool call (which has a time limit): start it,
     // return now, and when it lands, nudge Claude to continue on its own.
-    const go = await askInline("Transcribing needs the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one-time download stored in your Library; change the choice in Settings). Download it now?", "Download", "Not now");
-    if (!go) return err(card, "The user chose not to download the Whisper model now. Suggest Premiere's own transcription (Text panel > Transcribe, then Cmd+S) instead.");
+    const go = await askInline("This needs a transcript. Either download Whisper (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one time, runs on this Mac; change the model in Settings), or transcribe in Premiere's Text panel and press Cmd+S, and the panel will continue when the save lands.", "Download Whisper", "Not now", "Use Premiere's transcription");
+    if (!go) return err(card, "The user chose neither for now. Do not transcribe; ask what they would like to do.");
+    if (go === "all") {
+      waitForSavedTranscript();
+      card.done("waiting for Premiere's transcript", true);
+      return { text: "The user will transcribe in Premiere's Text panel and press Cmd+S. Tell them in one line: Text panel > Transcribe, then Cmd+S, and that you will continue automatically once the save lands. Then stop." };
+    }
     setStatus("Downloading the Whisper model (one time)…");
     downloadWhisperModel().then((ok) => {
       if (!ok || !session || session.busy) return;

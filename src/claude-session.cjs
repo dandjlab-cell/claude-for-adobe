@@ -141,8 +141,9 @@ function createClaudeSession(options) {
   const { mcpUrl, mcpToken, onEvent, model = DEFAULT_MODEL, cwd = os.tmpdir(), claudePath = findClaude(), resumeSessionId, capabilities = "" } = options;
   const mcpConfigPath = writeMcpConfig(mcpUrl, mcpToken);
   const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(capabilities), resumeSessionId });
-  const env = { ...process.env, PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
-  const child = spawn(claudePath, args, { env: { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000" }, cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  // Tool calls may run long (a transcription, hundreds of extracts): give them up to an hour before the CLI gives up.
+  const env = { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000", PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
+  const child = spawn(claudePath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let sessionId = resumeSessionId || null;
   let busy = false;
   let stderr = "";

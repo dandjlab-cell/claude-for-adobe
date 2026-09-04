@@ -62,3 +62,10 @@ test("userMessage builds image blocks before the text", () => {
   const m = userMessage("look", [{ mediaType: "image/png", data: "AAAA" }]);
   assert.deepEqual(m.message.content, [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }, { type: "text", text: "look" }]);
 });
+
+test("the Claude process gets a long MCP tool timeout", () => {
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "claude-session.cjs"), "utf8");
+  const envLine = src.split("\n").find((l) => l.includes("const env = {"));
+  assert.match(envLine, /MCP_TOOL_TIMEOUT: "3600000"/);
+  assert.match(src.split("\n").find((l) => l.includes("spawn(claudePath")), /\{ cwd, env, stdio/);
+});
