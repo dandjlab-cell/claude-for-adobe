@@ -75,3 +75,14 @@ Scope: the zip and installer as a first-time user receives them, the update path
 | M4 | MEDIUM | Duplicate-sequence protection is optional but stated unconditionally | When the option is off, Claude's instructions carry a warning and it must confirm before edits. |
 
 Status: fixes applied; Round 2 requested.
+
+## Release process and new tools review, Round 2 (2026-09-04)
+
+Verdict: NOT APPROVED, one HIGH partial (H2), all others RESOLVED, one new MEDIUM.
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| H2 | HIGH (partial) | overwriteClip given ticks while Adobe's sample passes seconds; project-item in/out restore used undocumented forms | overlayClip now mirrors the sample: overwriteClip(item, seconds), no project-item marks touched; the placed clip's inPoint/end are set afterwards (each in its own try, reported if it fails); linked audio trimmed and muted. |
+| NEW | MEDIUM | A failed update left the panel with no session and no server | On failure the panel reports and reloads itself on the restored version. |
+
+Status: fixes applied; Round 3 requested.

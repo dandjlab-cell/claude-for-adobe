@@ -1174,8 +1174,9 @@ async function installPending() {
     ui.checkUpdates.textContent = "Restarting…"; ui.checkUpdates.className = "accent"; ui.checkUpdates.disabled = true;
     setTimeout(() => location.reload(), 400);
   } catch (error) {
-    ui.checkUpdates.disabled = false; ui.checkUpdates.textContent = "Update to " + update.version;
-    addMessage("assistant error", "Update failed: " + error.message);
+    // The previous version was restored (or never touched); the session and server were stopped, so reload to come back whole.
+    addMessage("assistant error", "Update failed: " + error.message + " Restarting the panel on the current version.");
+    setTimeout(() => location.reload(), 1500);
   }
 }
 setVersionRow("v" + currentVersion(extensionRoot));

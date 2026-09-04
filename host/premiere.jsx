@@ -431,84 +431,30 @@ var PCX = (function () {
   }
 
   // Lay a clip on a video track at a time for a duration (overwrite), sound off. trackIndex 0-based (1 = V2).
-  // Returns "placed <name> V<n> start-end". Undo: Cmd+Z (overwrite + trim + mute are separate steps).
+  // Follows Adobe's PProPanel sample: overwriteClip(projectItem, seconds). The project item's own marks are not
+  // touched; the placed clip is trimmed afterwards (end, and inPoint when a source offset is asked for).
   function overlayClip(mediaPath, atSec, durSec, trackIndex, inSec) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var item = findItemByMedia(mediaPath);
     if (!item) return "ERR:no project item for " + mediaPath;
     var idx = Number(trackIndex); if (isNaN(idx)) idx = 1;
-    while (s.videoTracks.numTracks <= idx) { try { s.videoTracks.addTrack ? s.videoTracks.addTrack() : null; } catch (e) {} if (s.videoTracks.numTracks <= idx) break; }
     if (s.videoTracks.numTracks <= idx) return "ERR:video track V" + (idx + 1) + " does not exist (add it in the timeline)";
     var track = s.videoTracks[idx];
     var at = Number(atSec), dur = Number(durSec), inPt = Number(inSec) || 0;
-    var hadIn = null, hadOut = null;
-    try { hadIn = item.getInPoint(4); hadOut = item.getOutPoint(4); } catch (e) {}
-    var ok = false, err = "";
-    try {
-      if (inPt > 0) item.setInPoint(inPt, 4);
-      if (inPt > 0 && dur > 0) item.setOutPoint(inPt + dur, 4);
-      var tAt = new Time(); tAt.seconds = at;
-      ok = track.overwriteClip(item, tAt.ticks);
-    } catch (e) { err = String(e); }
-    // Restore the project item's own in/out whatever happened above.
-    try { if (hadIn && num(hadIn.ticks) > 0) item.setInPoint(num(hadIn.ticks) / T, 4); else item.clearInPoint(4); } catch (e) {}
-    try { if (hadOut && num(hadOut.ticks) > 0) item.setOutPoint(num(hadOut.ticks) / T, 4); else item.clearOutPoint(4); } catch (e) {}
-    if (err) return "ERR:overwriteClip " + err;
+    var before = track.clips.numItems;
+    var ok = false;
+    try { ok = track.overwriteClip(item, at); } catch (e) { return "ERR:overwriteClip " + e; }
     if (!ok) return "ERR:overwriteClip refused";
     var placed = null;
-    for (var c = 0; c < track.clips.numItems; c++) { var cl = track.clips[c]; if (Math.abs(num(cl.start.ticks) / T - at) < 0.02) { placed = cl; } }
-    if (!placed) return "ERR:placed clip not found on V" + (idx + 1);
-    if (dur > 0) { try { var tm = new Time(); tm.seconds = at + dur; placed.end = tm; } catch (e) { return "placed " + placed.name + " V" + (idx + 1) + " at " + at.toFixed(2) + "s (could not trim: " + e + ")"; } }
+    for (var c = 0; c < track.clips.numItems; c++) { var cl = track.clips[c]; if (Math.abs(num(cl.start.ticks) / T - at) < 0.05) { placed = cl; } }
+    if (!placed) return "ERR:clip was inserted but not found at " + at.toFixed(2) + "s on V" + (idx + 1) + " (" + before + " -> " + track.clips.numItems + " clips)";
+    var notes = [];
+    if (inPt > 0) { try { var ti = new Time(); ti.seconds = inPt; placed.inPoint = ti; } catch (e1) { notes.push("source offset not applied: " + e1); } }
+    if (dur > 0) { try { var te = new Time(); te.seconds = at + dur; placed.end = te; } catch (e2) { notes.push("could not trim: " + e2); } }
     var muted = 0;
-    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tr = s.audioTracks[a]; for (var k = 0; k < tr.clips.numItems; k++) { var ac = tr.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.02) { try { if (dur > 0) { var ta = new Time(); ta.seconds = at + dur; ac.end = ta; } } catch (e3) {} try { ac.disabled = true; muted++; } catch (e2) {} } } }
-    return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (muted ? " (audio off)" : "");
-  }
-
-  // Change the active sequence's frame size (and optionally rate), then reframe every video clip: "fill" scales
-  // each clip up to cover the new frame and centres it; "fit" scales to fit; "none" leaves clips alone.
-  // Scale is multiplied (unit-agnostic), position is set to centre. Not undoable: the panel checkpoints first.
-  function resizeSequence(width, height, fps, mode) {
-    var s = seq();
-    if (!s) return "ERR:no active sequence";
-    var w = Number(width), h = Number(height), f = Number(fps);
-    var st = s.getSettings();
-    var oldW = num(st.videoFrameWidth), oldH = num(st.videoFrameHeight);
-    if (!(w && h)) { w = oldW; h = oldH; }
-    try {
-      st.videoFrameWidth = w; st.videoFrameHeight = h;
-      if (f) { if (st.videoFrameRate && typeof st.videoFrameRate === "object") st.videoFrameRate.seconds = 1 / f; else st.videoFrameRate = 1 / f; }
-      s.setSettings(st);
-    } catch (e) { return "ERR:setSettings " + e; }
-    if (w === oldW && h === oldH) mode = "none";
-    var done = 0, skipped = 0;
-    if (mode === "fill" || mode === "fit") {
-      for (var t = 0; t < s.videoTracks.numTracks; t++) {
-        var tr = s.videoTracks[t];
-        for (var c = 0; c < tr.clips.numItems; c++) {
-          var cl = tr.clips[c];
-          try {
-            var motion = null;
-            for (var k = 0; k < cl.components.numItems; k++) { var comp = cl.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") { motion = comp; break; } }
-            if (!motion) { skipped++; continue; }
-            var pos = motion.properties[0], scale = motion.properties[1];
-            // Source frame from the clip's metadata: "1920 x 1080 (1.0)"; fall back to the old sequence size.
-            var srcW = oldW, srcH = oldH;
-            try { var vi = String(cl.projectItem.getProjectColumnsMetadata()); var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); } } catch (e0) {}
-            var fx = w / srcW, fy = h / srcH;
-            var factor = mode === "fill" ? Math.max(fx, fy) : Math.min(fx, fy);
-            var cur = num(scale.getValue());
-            scale.setValue(cur * factor / Math.max(oldW / srcW, oldH / srcH), true);
-            var p = pos.getValue();
-            var normalized = p && p.length === 2 && p[0] <= 1.5 && p[1] <= 1.5;
-            pos.setValue(normalized ? [0.5, 0.5] : [w / 2, h / 2], true);
-            done++;
-          } catch (e1) { skipped++; }
-        }
-      }
-    }
-    var fin = s.getSettings();
-    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (" + mode + ", centred)" + (skipped ? ", " + skipped + " skipped" : "") : "");
+    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tr = s.audioTracks[a]; for (var k = 0; k < tr.clips.numItems; k++) { var ac = tr.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.05) { try { if (dur > 0) { var ta = new Time(); ta.seconds = at + dur; ac.end = ta; } } catch (e3) {} try { ac.disabled = true; muted++; } catch (e4) {} } } }
+    return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (muted ? " (audio off)" : "") + (notes.length ? " [" + notes.join("; ") + "]" : "");
   }
 
   return {
