@@ -1214,7 +1214,9 @@ async function sendMessage() {
     const sel = await host("selectionInfo");
     const binPath = await selectedBin();
     log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)") + (binPath ? " [bin path " + binPath + "]" : ""));
-    if (sel && sel.indexOf("ERR:") !== 0) payload = "[Selected in Premiere right now: " + sel.split("\u0003").join("; ") + (binPath ? ". Work on bin \"" + binPath + "\" only: classify_clips, project_bins and create_sequence already default to it; do not list or scan other bins." : "") + "]\n\n" + payload;
+    const active = project.sequence ? "Open timeline (active sequence): \"" + project.sequence + "\". Anything about the timeline, the sequence, its frame size, cuts, silences or captions means THIS sequence; never switch to another one for those." : "No sequence is open.";
+    const selNote = sel && sel.indexOf("ERR:") !== 0 ? " Selected in Premiere: " + sel.split("\u0003").join("; ") + (binPath ? ". The selected bin \"" + binPath + "\" is the scope only for footage inspection and organizing (classify_clips, project_bins, create_sequence default to it)." : ".") : "";
+    payload = "[" + active + selNote + "]\n\n" + payload;
   } catch (_) {}
   lastPayload = payload;
   const images = attachments.splice(0).map((a) => ({ mediaType: a.mediaType, data: a.data }));
