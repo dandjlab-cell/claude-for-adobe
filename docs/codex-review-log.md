@@ -86,3 +86,13 @@ Verdict: NOT APPROVED, one HIGH partial (H2), all others RESOLVED, one new MEDIU
 | NEW | MEDIUM | A failed update left the panel with no session and no server | On failure the panel reports and reloads itself on the restored version. |
 
 Status: fixes applied; Round 3 requested.
+
+## Release process and new tools review, Round 3 (2026-09-04)
+
+Verdict: NOT APPROVED. H2 and the update-failure MEDIUM RESOLVED; one NEW HIGH: the Round 2 fix accidentally removed the `resizeSequence` function while its export remained, so the host script failed to load in 0.1.45 (all tools broken).
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| H6 | HIGH | resizeSequence deleted but still exported; host script throws at load | Function restored from the previous commit. New test (test/host.test.cjs) parses the host script, checks every exported name is defined, and checks every host call from panel.js has an export. 0.1.45 superseded by 0.1.46. |
+
+Status: fix applied with a regression test; Round 4 (final) requested.
