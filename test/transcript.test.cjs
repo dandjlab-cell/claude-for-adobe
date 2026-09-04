@@ -30,3 +30,13 @@ test("linesFromWords breaks at gaps and sentence ends, shifts to timeline second
   assert.deepEqual(linesFromWords(words, 10), [{ start: 10.0, end: 10.6, text: "Hi there." }, { start: 10.7, end: 10.9, text: "Next" }, { start: 12.0, end: 12.3, text: "line" }]);
   assert.equal(tc(75.25), "1:15.3");
 });
+
+test("findInWords matches phrases ignoring case and punctuation; complementRanges inverts keeps", () => {
+  const { complementRanges, findInWords } = require("../src/transcript.cjs");
+  const words = [{ text: "Welcome", start: 0, end: 0.4 }, { text: "to", start: 0.4, end: 0.5 }, { text: "Four", start: 0.6, end: 0.9 }, { text: "extraordinary", start: 0.9, end: 1.5 }, { text: "homes.", start: 1.5, end: 1.9 }, { text: "Welcome", start: 9, end: 9.4 }, { text: "to", start: 9.4, end: 9.5 }, { text: "four", start: 9.6, end: 9.9 }];
+  const hits = findInWords(words, "welcome to four", 10);
+  assert.deepEqual(hits.map((h) => [h.start, h.end]), [[10, 10.9], [19, 19.9]]);
+  assert.equal(findInWords(words, "nope").length, 0);
+  assert.deepEqual(complementRanges([{ start: 2, end: 4 }, { start: 6, end: 7 }], 10), [{ start: 0, end: 2 }, { start: 4, end: 6 }, { start: 7, end: 10 }]);
+  assert.deepEqual(complementRanges([], 5), [{ start: 0, end: 5 }]);
+});

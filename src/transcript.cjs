@@ -103,4 +103,30 @@ function linesFromWords(words, offset = 0, maxGap = 0.6, maxWords = 14) {
 
 const tc = (s) => { const m = Math.floor(s / 60), r = s - m * 60; return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1); };
 
-module.exports = { linesFromWords, tc, DEFAULT_MIN_PAUSE, decodeWords, listTranscripts, pausesFromWords, transcriptForClip };
+// Phrase search over words: case-insensitive, punctuation-insensitive, matches consecutive words.
+// Returns [{start, end, text}] in the words' own time base (offset applied by the caller).
+function findInWords(words, query, offset = 0, limit = 10) {
+  const norm = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}']+/gu, " ").trim();
+  const q = norm(query).split(" ").filter(Boolean);
+  if (!q.length) return [];
+  const sorted = [...words].filter((w) => Number.isFinite(w.start)).sort((a, b) => a.start - b.start);
+  const toks = sorted.map((w) => norm(w.text));
+  const out = [];
+  for (let i = 0; i + q.length <= sorted.length && out.length < limit; i++) {
+    let ok = true;
+    for (let k = 0; k < q.length; k++) if (toks[i + k] !== q[k]) { ok = false; break; }
+    if (ok) out.push({ start: sorted[i].start + offset, end: (sorted[i + q.length - 1].end ?? sorted[i + q.length - 1].start) + offset, text: sorted.slice(Math.max(0, i - 3), i + q.length + 3).map((w) => w.text).join(" ") });
+  }
+  return out;
+}
+
+// Complement of [{start,end}] within [0,total]: the parts to remove when keeping only the given ranges.
+function complementRanges(keep, total) {
+  const k = keep.map((r) => ({ start: Math.max(0, r.start), end: Math.min(total, r.end) })).filter((r) => r.end > r.start).sort((a, b) => a.start - b.start);
+  const out = []; let cur = 0;
+  k.forEach((r) => { if (r.start > cur) out.push({ start: cur, end: r.start }); cur = Math.max(cur, r.end); });
+  if (cur < total) out.push({ start: cur, end: total });
+  return out;
+}
+
+module.exports = { complementRanges, findInWords, linesFromWords, tc, DEFAULT_MIN_PAUSE, decodeWords, listTranscripts, pausesFromWords, transcriptForClip };

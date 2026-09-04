@@ -15,7 +15,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = 
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
-const { DEFAULT_MIN_PAUSE, decodeWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
+const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
 const { MODELS: WHISPER_MODELS, cachedWords, currentModel, ensureModel, installedModels, modelReady, setModel, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
 const vad = require(path.join(extensionRoot, "src", "vad.cjs"));
 
@@ -464,7 +464,9 @@ async function applyCuts(card, cuts, dryRun, summary) {
 
 // Silence removal. method "vad" (default): Silero VAD finds speech on every audio clip; everything outside
 // speech is a candidate cut. method "db": Premiere's peak-file waveform vs each clip's noise floor.
-async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 0.5, pad_s = 0.1, threshold_db, method = "vad", dry_run = true }) {
+const CUT_PRESETS = { social: { min_silence_s: 0.35, pad_s: 0.05 }, natural: { min_silence_s: 0.6, pad_s: 0.15 } };
+async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 0.5, pad_s = 0.1, threshold_db, method = "vad", preset, dry_run = true }) {
+  if (preset && CUT_PRESETS[preset]) ({ min_silence_s, pad_s } = CUT_PRESETS[preset]);
   const useVad = method !== "db" && vad.available();
   const card = addTool((dry_run ? "plan" : "remove") + "_silences (" + (useVad ? "voice: Silero VAD" : "dB") + ")", "");
   let snap, clips;
@@ -750,7 +752,9 @@ function parseDuration(text) {
 }
 
 // New sequence from a bin. Premiere matches the footage unless width/height/fps are given. Becomes the active sequence.
-async function createSequence({ name = "", bin = "", width, height, fps, insert_clips = true } = {}) {
+const SEQUENCE_PRESETS = { match: {}, vertical: { width: 1080, height: 1920 }, hd: { width: 1920, height: 1080 }, uhd: { width: 3840, height: 2160 } };
+async function createSequence({ name = "", bin = "", width, height, fps, preset, insert_clips = true } = {}) {
+  if (preset && SEQUENCE_PRESETS[preset]) ({ width = width, height = height } = SEQUENCE_PRESETS[preset]);
   const card = addTool("create_sequence " + (name || "(unnamed)"), "");
   if (!name) return err(card, "name is required");
   const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false");
@@ -777,6 +781,43 @@ async function muteClipAudio({ media_paths = [] } = {}) {
   return { text: copyNote + raw + (ok ? "\nUndo: Cmd+Z once per clip." : ""), isError: !ok };
 }
 
+// Deterministic phrase search over the transcript (Premiere's from the saved project, or Whisper's cache).
+async function findInTranscript({ query = "", source = "auto" } = {}) {
+  const card = addTool("find_in_transcript \"" + query + "\"", "");
+  if (!query.trim()) return err(card, "query is required");
+  let snap, clips;
+  try { ({ snap, clips } = await audioClipsIn(0, Infinity)); } catch (error) { return err(card, error.message); }
+  let transcripts = [];
+  if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
+  const hits = [];
+  clips.forEach((c) => {
+    let words; try { words = wordsForClip(c, source, transcripts).words; } catch (_) { return; }
+    findInWords(words, query, c.start - c.inPoint, 20).filter((h) => h.end > c.s0 && h.start < c.s1).forEach((h) => hits.push({ ...h, clip: c.name, track: c.track }));
+  });
+  hits.sort((a, b) => a.start - b.start);
+  const text = hits.length ? hits.slice(0, 20).map((h) => "[" + tc(h.start) + "-" + tc(h.end) + "] " + h.track + " " + h.clip + ": …" + h.text + "…").join("\n") + (hits.length > 20 ? "\n(+" + (hits.length - 20) + " more)" : "") : "no match for \"" + query + "\" (try fewer words)";
+  card.done(text, true);
+  return { text: text + "\n(timestamps are sequence seconds; use them directly with extract_ranges / keep_only)" };
+}
+
+// Deterministic timeline surgery, no scripts: remove exact ranges, or keep only the given ranges.
+async function extractRanges({ ranges = [], dry_run = true } = {}) {
+  const card = addTool((dry_run ? "plan" : "extract") + "_ranges (" + ranges.length + ")", "");
+  const cuts = (Array.isArray(ranges) ? ranges : []).map((r) => Array.isArray(r) ? { start: Number(r[0]), end: Number(r[1]) } : { start: Number(r.start), end: Number(r.end) }).filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start).sort((a, b) => b.start - a.start);
+  if (!cuts.length) return err(card, "ranges must be [[start,end], ...] in sequence seconds");
+  const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
+  return applyCuts(card, cuts, dry_run, cuts.length + " range(s), " + total.toFixed(1) + "s removed");
+}
+async function keepOnly({ ranges = [], dry_run = true } = {}) {
+  const card = addTool((dry_run ? "plan" : "keep") + "_only (" + ranges.length + " range(s))", "");
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const keep = (Array.isArray(ranges) ? ranges : []).map((r) => Array.isArray(r) ? { start: Number(r[0]), end: Number(r[1]) } : { start: Number(r.start), end: Number(r.end) }).filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+  if (!keep.length) return err(card, "ranges must be [[start,end], ...] in sequence seconds");
+  const cuts = complementRanges(keep, snap.duration).filter((c) => c.end - c.start >= 0.05).sort((a, b) => b.start - a.start);
+  const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
+  return applyCuts(card, cuts, dry_run, "keep " + keep.length + " range(s): remove " + cuts.length + " gap(s), " + total.toFixed(1) + "s, " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s");
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -784,13 +825,13 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
     inputSchema: { type: "object", properties: {} } },
   { name: "remove_silences", description: "Remove non-speech ranges from the active sequence with Premiere's own Extract (all tracks, linked video+audio together, one History step per range). Default method 'vad': Silero voice activity detection on every audio clip's source; a range is cut only where audio exists and no clip has speech. Method 'db' uses Premiere's peak-file waveform instead. The default for silences, gaps, dead air, pauses. Call with dry_run=true first, show the plan, then apply with dry_run=false.",
-    inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number", description: "Default: end of sequence." }, min_silence_s: { type: "number", description: "Shortest non-speech gap to cut, after padding. Default 0.5." }, pad_s: { type: "number", description: "Air kept on each side of a cut. Default 0.1." }, method: { type: "string", enum: ["vad", "db"], description: "Default vad." }, threshold_db: { type: "number", description: "db method only: absolute threshold in dBFS peak; default auto." }, dry_run: { type: "boolean", description: "true = plan only (default)." } } } },
+    inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["social", "natural"], description: "social = 0.35 s min / 0.05 s pad (default style); natural = 0.6 / 0.15" }, start_seconds: { type: "number" }, end_seconds: { type: "number", description: "Default: end of sequence." }, min_silence_s: { type: "number", description: "Shortest non-speech gap to cut, after padding. Default 0.5." }, pad_s: { type: "number", description: "Air kept on each side of a cut. Default 0.1." }, method: { type: "string", enum: ["vad", "db"], description: "Default vad." }, threshold_db: { type: "number", description: "db method only: absolute threshold in dBFS peak; default auto." }, dry_run: { type: "boolean", description: "true = plan only (default)." } } } },
   { name: "read_transcript", description: "Premiere's own transcript (what the Text panel shows) for the clips in the active sequence, as timestamped lines in sequence seconds. Read from the saved project file: the user transcribes in the Text panel and presses Cmd+S. Use it to answer what is said and when, find a phrase, or choose cut points by dialogue (then remove_silences/run_extendscript with those times). Optional range.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, source: { type: "string", enum: ["auto", "premiere", "whisper"], description: "auto = Whisper cache if present, else Premiere's transcript." } } } },
   { name: "remove_pauses", description: "Transcript method, what Premiere's Text panel 'Delete all pauses' does: a pause is a gap between transcript words >= min_pause_s (Premiere default 0.75). Transcript source: a cached Whisper transcript (run transcribe_whisper) or Premiere's own from the saved project (Text panel > Transcribe, then Cmd+S). With require_quiet the waveform vetoes gaps that have sound. Same Extract apply as remove_silences. Use when the user says pauses.",
@@ -803,10 +844,16 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence at the given timeline positions and return them as images. Only when the user asks what something looks like; never to verify edits.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512." } }, required: ["seconds"] } },
+  { name: "find_in_transcript", description: "Deterministic search for a phrase in the transcript. Returns every match with sequence timecodes and a little context. Use this instead of reading the transcript to find where something is said.",
+    inputSchema: { type: "object", properties: { query: { type: "string" }, source: { type: "string", enum: ["auto", "premiere", "whisper"] } }, required: ["query"] } },
+  { name: "extract_ranges", description: "Remove exact time ranges from the active sequence (all tracks, ripple), in sequence seconds. Deterministic; each range is one Cmd+Z step. Plan with dry_run=true first.",
+    inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
+  { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
+    inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",
     inputSchema: { type: "object", properties: { media_paths: { type: "array", items: { type: "string" } } }, required: ["media_paths"] } },
   { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
-    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
+    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, preset: { type: "string", enum: ["match", "vertical", "hd", "uhd"], description: "match = the footage; vertical = 1080x1920; hd = 1920x1080; uhd = 3840x2160" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
   { name: "classify_clips", description: "Cheap first pass over every source file in a bin (give bin) or in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path like 'Footage/Day 2'; omit for the active sequence" } } } },
   { name: "project_bins", description: "The Project panel as a tree: bins (ending in /, with item counts) and the items inside them, including loose items at the root. Call before organizing.",
