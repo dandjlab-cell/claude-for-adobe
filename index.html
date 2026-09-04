@@ -32,8 +32,14 @@
     .tabs button:hover:not(.active) { background: var(--line-soft); color: var(--ink); }
     .tabs button.active { background: var(--accent); color: #fff; }
     .tabs button.attention:not(.active) { color: var(--accent); }
-    .settings { padding: 6px 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-    .settings h2 { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--ink-40); margin: 14px 0 2px; letter-spacing: .02em; }
+    .settings { padding: 10px 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .settings section { border: 1px solid var(--line); padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+    .settings h2 { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--accent); margin: 0 0 2px; letter-spacing: .02em; }
+    .settings summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--ink-60); list-style: none; }
+    .settings summary::-webkit-details-marker { display: none; }
+    .settings summary::before { content: "+"; display: inline-block; width: 12px; color: var(--ink-40); }
+    .settings details[open] summary::before { content: "–"; }
+    .settings details > :not(summary) { margin-top: 8px; }
     .settings label { display: flex; align-items: flex-start; gap: 6px; }
     .settings p { margin: 0; font-size: 12px; }
     .settings .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -179,27 +185,38 @@
     </section>
     <section id="view-settings" class="view">
       <div class="settings">
-        <h2>Safety</h2>
-        <label title="Before the first edit on a sequence, duplicate it inside the project as '<name> [Claude]' and edit the copy. The original stays untouched."><input id="dup-sequence" type="checkbox" checked>Edit a duplicate sequence, never the original</label>
-        <label title="On: scripts that edit the project wait for your click. Off: they run without asking. Actions Cmd+Z can't undo always ask."><input id="ask-scripts" type="checkbox" checked>Ask before running scripts that edit the project</label>
-        <label title="Off: edits run directly inside Premiere; undo them with Cmd+Z. On: the project is saved and copied to _claude-for-adobe_checkpoints before every mutating script."><input id="require-checkpoint" type="checkbox">Save a file checkpoint before every edit</label>
+        <section>
+          <h2>Safety</h2>
+          <label title="Before the first edit on a sequence, duplicate it inside the project as '<name> [Claude]' and edit the copy. The original stays untouched."><input id="dup-sequence" type="checkbox" checked>Edit a duplicate sequence, never the original</label>
+          <label title="On: scripts that edit the project wait for your click. Off: they run without asking. Actions Cmd+Z can't undo always ask."><input id="ask-scripts" type="checkbox" checked>Ask before running scripts that edit the project</label>
+          <label title="Off: edits run directly inside Premiere; undo them with Cmd+Z. On: the project is saved and copied to _claude-for-adobe_checkpoints before every mutating script."><input id="require-checkpoint" type="checkbox">Save a file checkpoint before every edit</label>
+        </section>
 
-        <h2>Transcription</h2>
-        <p class="muted">Whisper runs on this Mac. Pick a model; it downloads once. Claude asks before downloading if it needs one.</p>
-        <div id="model-row" class="row"><span id="model-state" class="mono">Whisper: checking…</span><select id="whisper-model" title="Bigger is more accurate; smaller is faster and lighter. The choice downloads once."></select><button id="btn-whisper-model" type="button" class="utility" hidden>Download</button></div>
-        <span id="model-bar" hidden><i></i></span>
+        <section>
+          <h2>Transcription</h2>
+          <div class="row"><span id="model-state" class="mono">Whisper: checking…</span><select id="whisper-model" title="Bigger is more accurate; smaller is faster and lighter. The choice downloads once."></select><button id="btn-whisper-model" type="button" class="utility" hidden>Download</button></div>
+          <span id="model-bar" hidden><i></i></span>
+          <p class="muted">Runs on this Mac. Downloads once. Claude asks before downloading.</p>
+        </section>
 
-        <h2>Captions</h2>
-        <p class="muted">Default: a few words at a time. The Captions button and Claude both use these.</p>
-        <div class="row"><label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label><label>lines <input id="cap-lines" type="number" value="1" min="1" max="3" style="width:3em"></label><label>max <input id="cap-seconds" type="number" value="3" min="1" max="10" step="0.5" style="width:3.6em"> s</label></div>
+        <section>
+          <h2>Captions</h2>
+          <div class="row"><label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label><label>lines <input id="cap-lines" type="number" value="1" min="1" max="3" style="width:3em"></label><label>max <input id="cap-seconds" type="number" value="3" min="1" max="10" step="0.5" style="width:3.6em"> s</label></div>
+          <p class="muted">Used by the Captions button and by Claude.</p>
+        </section>
 
-        <h2>Working copies</h2>
-        <div id="copies" class="copies"></div>
-        <h2>File checkpoints</h2>
-        <div id="checkpoints"></div>
+        <section>
+          <h2>Working copies</h2>
+          <div id="copies" class="copies"></div>
+        </section>
 
-        <h2>Log</h2>
-        <pre id="log"></pre>
+        <section>
+          <details><summary>File checkpoints</summary><div id="checkpoints"></div></details>
+        </section>
+
+        <section>
+          <details><summary>Log</summary><pre id="log"></pre></details>
+        </section>
       </div>
     </section>
     <footer id="version-row" class="mono muted">v… <button id="check-updates" type="button" class="utility">Check for updates</button></footer>
