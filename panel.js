@@ -1071,6 +1071,57 @@ async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1 } = {}) 
   return { text: copyNote + raw + (ok ? "\nLook at preview_frames at this time to confirm before moving on." : ""), isError: !ok };
 }
 
+// Snapshot pass: the timeline decides the moments (first frame of every distinct clip on every video track,
+// midpoints of long ones), frames are rendered, saved next to the project as a contact sheet, and handed back.
+function keyMoments(snap, max = 12) {
+  const pts = [];
+  snap.clips.filter((c) => c.track[0] === "V").sort((a, b) => a.start - b.start).forEach((c) => {
+    pts.push({ t: c.start + 0.1, why: "start of " + c.name + " (" + c.track + ")" });
+    if (c.end - c.start > 15) pts.push({ t: (c.start + c.end) / 2, why: "middle of " + c.name });
+  });
+  const out = [];
+  pts.sort((a, b) => a.t - b.t).forEach((p) => { if (!out.length || p.t - out[out.length - 1].t > 0.5) out.push(p); });
+  if (out.length > max) { const step = out.length / max; return Array.from({ length: max }, (_, i) => out[Math.floor(i * step)]); }
+  return out;
+}
+async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
+  const card = addTool("snapshot_moments", "");
+  card.open();
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const moments = keyMoments(snap, Math.min(12, Math.max(1, Number(max))));
+  if (!moments.length) return err(card, "no video clips in the active sequence");
+  const dir = path.join(analysisDir(), "snapshots", (project.sequence || "sequence").replace(/[\/\\:]/g, "_"));
+  fs.mkdirSync(dir, { recursive: true });
+  const content = [], index = [];
+  for (let i = 0; i < moments.length; i += 6) {
+    const batch = moments.slice(i, i + 6);
+    card.progress(i, moments.length, "rendering ");
+    const base = path.join(os.tmpdir(), "claude-for-adobe-snap-" + Date.now().toString(36));
+    const raw = await host("frames", JSON.stringify(batch.map((m) => Number(m.t.toFixed(3)))), base);
+    if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
+    raw.split(ROW).forEach((row, j) => {
+      const m = batch[j]; if (!m) return;
+      const [b, ok, tcode] = row.split(COL);
+      const src = [b + ".png", b].find((f) => fs.existsSync(f));
+      if (!src) { content.push({ type: "text", text: tc(m.t) + " " + m.why + ": render failed (" + ok + ")" }); return; }
+      try {
+        const name = tc(m.t).replace(":", "-") + ".jpg";
+        const file = path.join(dir, name);
+        resizeImage(src, file, max_px);
+        index.push("- " + tc(m.t) + " (" + tcode + ") " + m.why + " -> " + name);
+        content.push({ type: "text", text: tc(m.t) + " " + m.why });
+        content.push({ type: "image", data: fs.readFileSync(file).toString("base64"), mimeType: "image/jpeg" });
+      } catch (error) { content.push({ type: "text", text: tc(m.t) + ": " + error.message }); }
+      try { fs.unlinkSync(src); } catch (_) {}
+    });
+  }
+  fs.writeFileSync(path.join(dir, "index.md"), "# Snapshots of \"" + (project.sequence || "sequence") + "\"\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.width + "x" + snap.height + ", " + snap.duration.toFixed(1) + "s\n\n" + index.join("\n") + "\n");
+  card.done(index.join("\n") + "\nsaved in " + dir, true);
+  setStatus("Thinking…");
+  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + ". Snapshots saved in " + dir + ". Judge each: subject centred? anything cropped? graphics inside the frame and in the right place for this shape? Fix with nudge_clip, then snapshot_moments again." });
+  return { content };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -1078,7 +1129,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, snapshot_moments: snapshotMoments };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1103,9 +1154,11 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
+  { name: "snapshot_moments", description: "The check pass. The timeline picks the moments (first frame of every distinct clip on every video track, midpoints of long ones, graphics included), renders them, saves them as a contact sheet next to the project, and returns the images. Use after any reframe or b-roll placement; then fix with nudge_clip and run it again until every moment is right.",
+    inputSchema: { type: "object", properties: { max: { type: "number", description: "moments to render, default 8, max 12" }, max_px: { type: "number" } } } },
   { name: "nudge_clip", description: "After a reframe: move the picture of the video clip at a sequence time by a fraction of the frame (dx right, dy down; e.g. dx -0.1 pushes it left by 10% of the width) and optionally scale it (1.1 = 10% bigger). Use with preview_frames: look, nudge, look again.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track; omit to find the clip on any track" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" } }, required: ["at_seconds"] } },
-  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked. THEN LOOP: preview_frames at each distinct clip and every graphic/title (up to 8 moments); nudge_clip anything off-centre, cropped or misplaced; preview again; repeat until all moments are right. Do not stop at describing what needs repositioning.",
+  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked. THEN LOOP: snapshot_moments (it picks the moments); nudge_clip anything off-centre, cropped or misplaced; snapshot_moments again; repeat until all moments are right. Do not stop at describing what needs repositioning.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
