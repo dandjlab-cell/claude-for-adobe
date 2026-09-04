@@ -289,9 +289,22 @@ function onHostEvent(name) {
   snapshotTimer = setTimeout(() => { snapshotTimeline().catch((e) => log("snapshot failed: " + e.message)); }, 400);
 }
 
+// Frame facts (sequence size vs footage sizes) attached to every message. Recomputed only when they can change.
+let frameNote = "", frameKey = "";
+async function refreshFrameNote(snap) {
+  try {
+    if (!snap || snap.error) return;
+    const key = snap.width + "x" + snap.height + "|" + [...new Set(snap.clips.filter((c) => c.mediaPath && c.track[0] === "V").map((c) => c.mediaPath))].sort().join(",");
+    if (key === frameKey) return;
+    frameKey = key;
+    frameNote = await frameMismatchNote(snap);
+  } catch (_) {}
+}
+
 // Records changes only between Claude's turns; during a turn the edits are Claude's own.
 async function snapshotTimeline() {
   const next = await readSnapshot();
+  refreshFrameNote(next);
   if (!(session && session.busy) && timeline) {
     const changes = diffSnapshots(timeline, next);
     if (changes.length) { pendingChanges.push(...changes); if (pendingChanges.length > 40) pendingChanges = pendingChanges.slice(-40); }
@@ -1050,6 +1063,8 @@ async function sendMessage() {
   }
   // Attach what is highlighted in Premiere, so "this bin" / "these clips" needs no typing.
   try {
+    if (!frameNote) { try { await refreshFrameNote(timeline || await readSnapshot()); } catch (_) {} }
+    if (frameNote) payload = "[" + frameNote + "]\n" + payload;
     const sel = await host("selectionInfo");
     const binPath = await selectedBin();
     log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)") + (binPath ? " [bin path " + binPath + "]" : ""));
