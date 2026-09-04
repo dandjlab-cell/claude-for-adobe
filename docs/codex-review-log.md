@@ -93,6 +93,6 @@ Verdict: NOT APPROVED. H2 and the update-failure MEDIUM RESOLVED; one NEW HIGH: 
 
 | # | Severity | Finding | Response |
 |---|---|---|---|
-| H6 | HIGH | resizeSequence deleted but still exported; host script throws at load | Function restored from the previous commit. New test (test/host.test.cjs) parses the host script, checks every exported name is defined, and checks every host call from panel.js has an export. 0.1.45 superseded by 0.1.46. |
+| H6 | HIGH | resizeSequence deleted but still exported; host script throws at load | First restore attempt failed silently and 0.1.46 shipped broken as well. Restored properly in 0.1.47 (function extracted by brace matching from the 0.1.44 commit). New test (test/host.test.cjs) parses the host script, checks every exported name is defined, and checks every host call from panel.js has an export. Releases 0.1.45 and 0.1.46 deleted. |
 
 Status: fix applied with a regression test; Round 4 (final) requested.
