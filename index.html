@@ -105,8 +105,8 @@
     textarea::placeholder { color: var(--ink-40); }
     .composer .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .composer .row .options { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; color: var(--ink-60); font-size: 12px; }
-    #selection-line { font-size: 11px; padding: 2px 0; }
-    #selection-line b { color: var(--accent); font-weight: 500; }
+    .chip.sel { border-color: var(--accent); color: var(--ink); padding: 3px 8px; }
+    .chip.sel b { color: var(--accent); font-weight: 500; margin-right: 4px; }
     #attachments { display: flex; gap: 6px; flex-wrap: wrap; }
     .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); padding: 3px 6px 3px 3px; font-family: var(--mono); font-size: 11px; color: var(--ink-60); }
     .chip img { height: 28px; width: auto; display: block; }
@@ -155,7 +155,7 @@
       </div>
       <div id="messages"></div>
       <div id="starter">
-        <img src="docs/demo.gif" alt="Click the folder, ask Claude to edit it" style="width:100%;max-width:560px;border:1px solid var(--line);display:block;margin-bottom:14px">
+        <img src="docs/demo.gif" alt="Click the folder, ask Claude to edit it" style="width:100%;max-width:480px;border:1px solid var(--line);display:block;margin-bottom:14px">
         <h1>Claude, inside your timeline.</h1>
         <p>Click the folder you want to work on, then ask Claude to edit it.</p>
         <p class="muted">Tip: keep b-roll in a separate folder from the talking head. It helps Claude a lot.</p>
@@ -167,13 +167,11 @@
         <p class="muted" style="margin-top:14px;font-size:12px">Remove silences uses the Cut silences button at the top. It runs without Claude.</p>
       </div>
       <div class="composer">
-        <div id="selection-line" class="mono muted" hidden></div>
-        <div id="attachments" style="display:none"></div>
+        <div id="attachments" style="display:none"><span id="selection-chip" class="chip sel" hidden></span></div>
         <textarea id="input" placeholder="Ask Claude to inspect or edit the open project. Enter sends, Shift+Enter for a new line. Drop or paste a screenshot to include it."></textarea>
         <div class="row">
           <button id="send" type="button" class="accent">Send</button>
           <button id="stop" type="button" disabled>Stop</button>
-          <span class="hint" style="margin-left:auto">Transcript answers come from the saved project: Text panel › Transcribe, then Cmd+S.</span>
         </div>
       </div>
     </section>
