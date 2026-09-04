@@ -858,6 +858,23 @@ async function saveNotes({ name = "notes.md", text = "" } = {}) {
   return { text: "saved " + f };
 }
 
+// Frame size change with automatic reframe. Not undoable, so the project is saved and checkpointed first, no question asked.
+async function setSequenceSize({ preset, width, height, fps, reframe = "fill" } = {}) {
+  if (preset && SEQUENCE_PRESETS[preset]) ({ width = width, height = height } = SEQUENCE_PRESETS[preset]);
+  const card = addTool("set_sequence_size " + (width && height ? width + "x" + height : "") + (fps ? " @" + fps : "") + " (" + reframe + ")", "");
+  if (!(width && height) && !fps) return err(card, "give preset (vertical/hd/uhd) or width+height, or fps");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  let cp = "";
+  try { await saveProject(); const entry = createCheckpoint(project.path, "before sequence resize"); renderCheckpoints(); cp = " File checkpoint " + entry.id + " saved first (this is not undoable with Cmd+Z)."; }
+  catch (error) { return err(card, "Resize blocked: it cannot be undone and a checkpoint was not possible: " + error.message); }
+  const raw = await host("resizeSequence", String(width || ""), String(height || ""), String(fps || ""), reframe);
+  const ok = raw.indexOf("ERR:") !== 0;
+  card.done(raw + cp, ok);
+  timeline = await readSnapshot().catch(() => timeline);
+  return { text: copyNote + raw + cp, isError: !ok };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -865,7 +882,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -890,6 +907,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
+  { name: "set_sequence_size", description: "Change the active sequence's frame size (preset vertical = 1080x1920, hd, uhd, or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked; report the result in one line and offer a nudge left/right if framing matters.",
+    inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd"] }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration, sound off. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
   { name: "list_analysis", description: "Lists the analysis files next to this project (transcripts, classifications, notes, and anything extracted elsewhere such as prosody or diarization). Check it first; read files with a subagent.",
