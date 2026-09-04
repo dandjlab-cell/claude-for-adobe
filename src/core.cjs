@@ -150,6 +150,9 @@ function inspectExtendScript(code) {
     /\[\s*(["'])([A-Za-z_$][\w$]*)\1\s*\]/g,
     ".$2",
   );
+  // What remains inside string literals is data (file names, labels), not code: blank it so a clip called
+  // "SOCIAL with CODEX" or "File 3" cannot trip the keyword checks. Escapes were already refused above.
+  inspectedSource = inspectedSource.replace(/"[^"\\\n]*"|'[^'\\\n]*'/g, '""');
   const rejected = rejectionPatterns.find(([, pattern]) => pattern.test(inspectedSource));
   const mutating = mutationPatterns.some((pattern) => pattern.test(inspectedSource)) || nonUndoablePatterns.some(([, p]) => p.test(inspectedSource));
   return {

@@ -287,3 +287,14 @@ test("round-4 probes: every assignment operator and engine facility is kept off 
   assert.equal(inspectExtendScript("var n = app.project.activeSequence.videoTracks[0].clips.numItems; n").readOnly, true);
   assert.equal(inspectExtendScript("app.project.activeSequence.videoTracks[0].clips.numItems == 3").readOnly, true);
 });
+
+test("words inside string literals do not trip the keyword checks", () => {
+  const { inspectExtendScript } = require("../src/core.cjs");
+  const script = 'var it = findChild(root, "SOCIAL with CODEX.aep"); var f = findChild(root, "File 3 delete me.mov"); it.moveBin(dest);';
+  const r = inspectExtendScript(script);
+  assert.equal(r.rejection, null);
+  assert.equal(r.mutating, true);
+  assert.equal(r.readOnly, false);
+  assert.ok(inspectExtendScript('with (app) { quit() }').rejection, "the real with statement is still refused");
+  assert.ok(inspectExtendScript('app["qu" + "it"]()').rejection, "folded bracket access is still refused");
+});
