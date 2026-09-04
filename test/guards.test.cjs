@@ -273,3 +273,17 @@ test("round-3 probes: string tricks and comments never reach auto-run", () => {
   }
   assert.equal(inspectExtendScript("app.project.activeSequence.videoTracks[0].clips.numItems").readOnly, true);
 });
+
+test("round-4 probes: every assignment operator and engine facility is kept off auto-run", () => {
+  const { inspectExtendScript } = require("../src/core.cjs");
+  for (const op of ["|=", "&=", "^=", "<<=", ">>=", ">>>=", "+=", "-=", "=", "*="]) {
+    const r = inspectExtendScript("app.project.activeSequence.videoTracks[0].clips[0].disabled " + op + " 1");
+    assert.equal(r.readOnly, false, "must not auto-run: " + op);
+    assert.equal(r.mutating, true, "must count as mutating: " + op);
+  }
+  assert.equal(inspectExtendScript("app.project.activeSequence.videoTracks[0].clips[0].disabled++").readOnly, false);
+  assert.ok(inspectExtendScript("app.reflect.properties").rejection, "reflection must be rejected");
+  assert.ok(inspectExtendScript('new Window("dialog")').rejection, "ScriptUI must be rejected");
+  assert.equal(inspectExtendScript("var n = app.project.activeSequence.videoTracks[0].clips.numItems; n").readOnly, true);
+  assert.equal(inspectExtendScript("app.project.activeSequence.videoTracks[0].clips.numItems == 3").readOnly, true);
+});

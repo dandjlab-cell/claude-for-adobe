@@ -46,3 +46,14 @@ Verdict: none. Codex ran its probes, then OpenAI's content filter stopped it bef
 | C1c | CRITICAL | `"sa"+""+"ve"` (three-part concatenation), comments between tokens (`save/*y*/()`, `name/*x*/=`), and `["exportAs"+""+"MediaDirect"]` were classified read-only | Comments are stripped before matching; any string concatenation is folded, including empty pieces; and the read-only (auto-run) class now requires a script with no string literals, no comments, and no backslashes at all. Anything with a string in it waits for the click. |
 
 Status after Round 3: fixes applied; Round 4 (final under the 4-round cap).
+
+## Round 4 (2026-09-04, final under the 4-round cap)
+
+Verdict: NOT APPROVED on one item; all Round 2 resolutions re-verified; privacy confirmed clean (history 2 commits, no private terms, no local paths).
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| C1d | CRITICAL | Compound bitwise assignments (`|=`, `&=`, `^=`, `<<=`, `>>=`, `>>>=`) counted as read-only | Read-only now means: no assignment or increment of any operator except `var name = ...` declarations (comparisons excluded first), plus `mutating:false` is required for auto-run. Mutation patterns cover the bitwise operators too. |
+| M | MEDIUM | `app.reflect` and `new Window` (Reflection / ScriptUI) not in the engine-object list | Added: reflect, Reflection, Window, ScriptUI, Palette, Dialog are rejected. |
+
+Status after Round 4: fix applied and verified locally against the Round 4 strings. The 4-round cap is reached; a confirmation round is the maintainer's call.

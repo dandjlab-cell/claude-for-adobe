@@ -77,7 +77,7 @@ const rejectionPatterns = [
   ["Project persistence operations are not allowed.", /\.\s*(?:save|saveAs)\b/],
   ["Render and export operations are not allowed.", /\bencoder\b|\brenderQueue\b|\.\s*(?:encode\w*|export\w*)\b/],
   ["Dynamic evaluation is not allowed.", /\b(?:eval|Function|constructor|callee|caller|toSource|evalFile|with|call|apply|bind)\b/],
-  ["Filesystem, network, shell, and engine objects are not allowed.", /\b(?:File|Folder|Socket|BridgeTalk|ExternalObject|system|callSystem|XML|\$)\b|(?:^|[^\w$])\$(?![\w$])/],
+  ["Filesystem, network, shell, and engine objects are not allowed.", /\b(?:File|Folder|Socket|BridgeTalk|ExternalObject|system|callSystem|XML|reflect|Reflection|Window|ScriptUI|Palette|Dialog|\$)\b|(?:^|[^\w$])\$(?![\w$])/],
   ["`this` and escape sequences are not allowed.", /\bthis\b|\\[ux0-7]/],
   ["Preprocessor directives are not allowed.", /^\s*#\s*(?:include|includepath|target|script|strict)\b/m],
   ["Asynchronous execution is not allowed.", /\.\s*scheduleTask\s*\(/],
@@ -92,7 +92,11 @@ const warningPatterns = [
 // user's click before it runs (panel.js), on top of the duplicate sequence and checkpoints.
 const READ_ONLY_CALL = /^(?:(?:get|is|has|query|find|to|index|char|search)[A-Za-z]*|slice|split|join|match|replace|substr|substring|concat|push|pop|shift|unshift|sort|reverse|String|Number|Boolean|Array|parseInt|parseFloat|isNaN|isFinite|floor|ceil|round|abs|min|max|pow|sqrt|exec|test|log|localeCompare)$/;
 function isReadOnlyScript(src) {
-  if (/(?:\.|\])\s*[A-Za-z_$][\w$]*\s*(?:[+\-*\/%]?=|\+\+|--)(?!=)/.test(src)) return false;
+  // Any assignment or increment at all, of any operator (=, +=, |=, <<=, ++ ...), except `var name = ...`
+  // declarations, means "not a plain read". Comparisons are removed first so == != <= >= do not count.
+  const noCompare = src.replace(/[=!<>]==?=?/g, " ").replace(/\bvar\s+[A-Za-z_$][\w$]*\s*=/g, " ");
+  if (/=|\+\+|--/.test(noCompare)) return false;
+  if (/(?:\.|\])\s*[A-Za-z_$][\w$]*\s*(?:[+\-*\/%&|^]?=|<<=|>>>?=|\+\+|--)(?!=)/.test(src)) return false;
   if (/\bdelete\b/.test(src)) return false;
   if (/\[\s*(?![0-9]+\s*\]|["'])[^\]]*\]/.test(src.replace(/\[\s*\]/g, ""))) return false;
   const calls = [...src.matchAll(/\.\s*([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
@@ -104,9 +108,9 @@ function isReadOnlyScript(src) {
 
 const mutationPatterns = [
   /\.\s*(?:add|attach|change|clear|create|delete|execute|import|insert|move|overwrite|remove|rename|set)\w*\s*\(/i,
-  /(?:\.|\])\s*[A-Za-z_$][\w$]*\s*(?:[+\-*\/%]?=|\+\+|--)(?!=)/,
+  /(?:\.|\])\s*[A-Za-z_$][\w$]*\s*(?:[+\-*\/%&|^]?=|<<=|>>>?=|\+\+|--)(?!=)/,
   /(?:\+\+|--)\s*(?:[A-Za-z_$][\w$]*\s*\.|[^;\n]*\])\s*[A-Za-z_$][\w$]*/,
-  /\]\s*(?:[+\-*\/%]?=|\+\+|--)(?!=)/,
+  /\]\s*(?:[+\-*\/%&|^]?=|<<=|>>>?=|\+\+|--)(?!=)/,
   /(?:\+\+|--)\s*[^;\n]*\]/,
   /\bdelete\b/,
 ];
@@ -147,15 +151,16 @@ function inspectExtendScript(code) {
     ".$2",
   );
   const rejected = rejectionPatterns.find(([, pattern]) => pattern.test(inspectedSource));
+  const mutating = mutationPatterns.some((pattern) => pattern.test(inspectedSource)) || nonUndoablePatterns.some(([, p]) => p.test(inspectedSource));
   return {
     rejection: rejected ? rejected[0] : null,
     warnings: warningPatterns
       .filter(([, pattern]) => pattern.test(inspectedSource))
       .map(([warning]) => warning),
-    mutating: mutationPatterns.some((pattern) => pattern.test(inspectedSource)) || nonUndoablePatterns.some(([, p]) => p.test(inspectedSource)),
+    mutating,
     notUndoable: nonUndoablePatterns.filter(([, p]) => p.test(inspectedSource)).map(([name]) => name),
     // Auto-run without a click only for the plainest reads: no strings, comments, or escapes at all.
-    readOnly: !rejected && !hasComments(String(code)) && !hasStrings(String(code)) && !/\\/.test(String(code)) && isReadOnlyScript(inspectedSource),
+    readOnly: !rejected && !mutating && !hasComments(String(code)) && !hasStrings(String(code)) && !/\\/.test(String(code)) && isReadOnlyScript(inspectedSource),
   };
 }
 
