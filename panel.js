@@ -580,13 +580,59 @@ async function removePauses({ start_seconds = 0, end_seconds, min_pause_s = DEFA
 // "duration|clipCount|firstStarts": enough to tell whether an analysis file still describes this timeline.
 function timelineFingerprint(snap) { return snap && !snap.error ? snap.duration.toFixed(2) + "|" + snap.clips.length + "|" + snap.clips.slice(0, 12).map((c) => c.start.toFixed(2)).join(",") : "?"; }
 
+// Exact transcript of the CURRENT cut: render the sequence audio (Premiere's 16 kHz mono preset), transcribe it.
+// Words are already in timeline time. Cached by timeline fingerprint next to the project.
+function timelineTranscriptPath() { return path.join(analysisDir(), (project.sequence || "sequence") + ".timeline.json"); }
+function freshTimelineWords(snap) {
+  try { const j = JSON.parse(fs.readFileSync(timelineTranscriptPath(), "utf8")); return j.fingerprint === timelineFingerprint(snap) ? j : null; } catch (_) { return null; }
+}
+async function transcribeTimeline({ language = "en" } = {}) {
+  const card = addTool("transcribe_timeline", "");
+  card.open();
+  let snap;
+  try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const fresh = freshTimelineWords(snap);
+  if (fresh) { card.done("cached for this cut: " + fresh.words.length + " words", true); return { text: "Timeline transcript already exists for this exact cut (" + fresh.words.length + " words): " + fresh.md + ". Use read_transcript (source timeline) or find_in_transcript." }; }
+  if (!modelReady()) {
+    const go = await askInline("Transcribing the timeline needs the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one time). Download it now?", "Download", "Not now");
+    if (!go) return err(card, "The user chose not to download the Whisper model now.");
+    downloadWhisperModel().then((ok) => { if (ok && session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[The Whisper model finished installing. Continue: transcribe_timeline.]"); } catch (_) { setBusy(false); } } });
+    card.done("download started", true);
+    return { text: "Whisper model download started; tell the user in one line and stop. You will be told when it is installed." };
+  }
+  const wav = path.join(analysisDir(), (project.sequence || "sequence") + ".mix.wav");
+  fs.mkdirSync(analysisDir(), { recursive: true });
+  card.progress(0, 3, "rendering timeline audio ");
+  setStatus("Rendering timeline audio…");
+  const out = await host("exportSequenceAudio", wav);
+  if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return err(card, "audio render failed: " + out.replace(/^ERR:/, ""));
+  card.progress(1, 3, "transcribing ");
+  setStatus("Whisper: timeline…");
+  // Runs outside the tool call; nudges Claude when done.
+  (async () => {
+    try {
+      const r = await transcribe(wav, { language, vad: true, onLog: log });
+      const lines = linesFromWords(r.words, 0).map((l) => "[" + tc(l.start) + "] " + l.text);
+      const md = writeAnalysis((project.sequence || "sequence") + ".timeline.transcript.md", "# Timeline transcript of \"" + (project.sequence || "sequence") + "\" (exact for this cut)\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.duration.toFixed(1) + "s, " + snap.clips.length + " clips, " + r.words.length + " words, timestamps are sequence seconds.\n\n" + lines.join("\n") + "\n");
+      fs.writeFileSync(timelineTranscriptPath(), JSON.stringify({ fingerprint: timelineFingerprint(snap), words: r.words, md, createdAt: new Date().toISOString() }));
+      card.done(r.words.length + " words -> " + md, true);
+      setStatus("Ready");
+      if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[Timeline transcription finished: " + r.words.length + " words, written to " + md + ". Timestamps are sequence seconds. Continue with the task; read_transcript / find_in_transcript / remove_fillers now use this exact transcript.]"); } catch (_) { setBusy(false); } }
+    } catch (error) { card.done("transcription failed: " + error.message, false); setStatus("Ready"); if (session && !session.busy) { setBusy(true); try { session.send("[Timeline transcription failed: " + error.message + "]"); } catch (_) { setBusy(false); } } }
+  })();
+  return { text: "Timeline audio rendered; transcription started (" + currentModel() + "). Tell the user in one line and stop; you will be told when it is done." };
+}
+
 async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" } = {}) {
+  // source: auto = exact timeline transcript for this cut if present, else per-clip (Premiere's saved, or Whisper cache)
   const card = addTool("read_transcript", "");
   let snap, clips;
   try { ({ snap, clips } = await audioClipsIn(Math.max(0, Number(start_seconds)), end_seconds ? Number(end_seconds) : Infinity)); } catch (error) { return err(card, error.message); }
   let transcripts = [];
   if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (error) { log("could not read project file: " + error.message); } }
   const out = [], skipped = [], used = new Set();
+  const tl = source === "premiere" || source === "whisper" ? null : freshTimelineWords(snap);
+  if (tl) { used.add("timeline"); const a = Math.max(0, Number(start_seconds)), b = end_seconds ? Number(end_seconds) : Infinity; linesFromWords(tl.words, 0).filter((l) => l.end > a && l.start < b).forEach((l) => out.push("[" + tc(l.start) + "] " + l.text)); clips = []; }
   clips.forEach((c) => {
     let words;
     try { const r = wordsForClip(c, source, transcripts); words = r.words; used.add(r.from); }
@@ -844,7 +890,9 @@ async function findInTranscript({ query = "", source = "auto" } = {}) {
   let transcripts = [];
   if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
   const hits = [];
-  clips.forEach((c) => {
+  const tlf = source === "auto" ? freshTimelineWords(snap) : null;
+  if (tlf) findInWords(tlf.words, query, 0, 20).forEach((h) => hits.push({ ...h, clip: "timeline", track: "" }));
+  else clips.forEach((c) => {
     let words; try { words = wordsForClip(c, source, transcripts).words; } catch (_) { return; }
     findInWords(words, query, c.start - c.inPoint, 20).filter((h) => h.end > c.s0 && h.start < c.s1).forEach((h) => hits.push({ ...h, clip: c.name, track: c.track }));
   });
@@ -934,7 +982,10 @@ async function removeFillers({ start_seconds = 0, end_seconds, repeats = true, s
   let transcripts = [];
   if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
   const found = [], skipped = [];
-  clips.forEach((c) => {
+  const tlw = source === "auto" ? freshTimelineWords(snap) : null;
+  const a0 = Math.max(0, Number(start_seconds)), b0 = end_seconds ? Number(end_seconds) : Infinity;
+  if (tlw) fillerRanges(tlw.words, { repeats }).filter((r) => r.end > a0 && r.start < b0).forEach((r) => found.push(r));
+  else clips.forEach((c) => {
     let words; try { words = wordsForClip(c, source, transcripts).words; } catch (error) { skipped.push(c.name); return; }
     fillerRanges(words, { repeats, offset: c.start - c.inPoint }).filter((r) => r.end > c.s0 && r.start < c.s1).forEach((r) => found.push(r));
   });
@@ -955,7 +1006,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -988,6 +1039,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: {} } },
   { name: "save_notes", description: "Save your notes (shot descriptions per b-roll clip, decisions, selects) as a markdown file next to the project, so later turns and sessions reuse them instead of looking again.",
     inputSchema: { type: "object", properties: { name: { type: "string", description: "file name, e.g. broll-notes" }, text: { type: "string" } }, required: ["text"] } },
+  { name: "transcribe_timeline", description: "Exact transcript of the current cut: renders the sequence's audio mix with Premiere's own 16 kHz preset into the analysis folder and transcribes it (Whisper, local). Words come out in timeline time, so it is right after any edit and covers clips that were never transcribed. Runs in the background; you are told when it is done. Then read_transcript, find_in_transcript and remove_fillers use it automatically for this exact cut. Use before captions or anything that needs exact timing on a cut timeline.",
+    inputSchema: { type: "object", properties: { language: { type: "string", description: "default en; 'auto' to detect" } } } },
   { name: "remove_fillers", description: "Basic audio clean-up from the transcript: cuts 'um', 'uh', 'hmm' and immediate repeats or stutters ('I I', 'we were we were'). Plan with dry_run=true (default), show the count in one line, then apply. Needs a transcript (Premiere's saved one, or transcribe_whisper).",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, repeats: { type: "boolean", description: "also cut repeated words, default true" }, source: { type: "string", enum: ["auto", "premiere", "whisper"] }, dry_run: { type: "boolean" } } } },
   { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",

@@ -530,8 +530,22 @@ var PCX = (function () {
     return rows.join(ROW);
   }
 
+  // Render the active sequence's audio mix to a 16 kHz mono WAV using Premiere's own preset (in-app export).
+  // Returns the output path. This is a read of the timeline, not an edit.
+  function exportSequenceAudio(outPath) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var appDir = "";
+    try { appDir = String(app.path); } catch (e) {}
+    if (!appDir) return "ERR:cannot find the Premiere application folder";
+    var preset = appDir.replace(/\/$/, "") + "/Settings/EncoderPresets/WAV_Mono_16bit_16kHz.epr";
+    var r = null;
+    try { r = s.exportAsMediaDirect(outPath, preset, 0); } catch (e2) { return "ERR:exportAsMediaDirect " + e2; }
+    return String(r) === "No Error" || String(r) === "" || String(r) === "0" ? outPath : "ERR:" + r;
+  }
+
   return {
-    mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
