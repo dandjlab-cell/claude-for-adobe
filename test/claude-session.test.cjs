@@ -26,6 +26,13 @@ test("buildArgs locks Claude to the premiere MCP tool only", () => {
   assert.ok(!buildArgs({ model: "m", mcpConfigPath: "/tmp/c.json", systemPrompt: "sp" }).includes("--resume"));
 });
 
+test("buildArgs allows Read only inside the given analysis folders", () => {
+  const args = buildArgs({ model: "claude-opus-5", mcpConfigPath: "/tmp/c.json", systemPrompt: "sp", readPaths: ["/Volumes/X/proj/_claude-for-adobe_analysis"] });
+  assert.equal(args[args.indexOf("--allowedTools") + 1], "mcp__premiere__*,Read(///Volumes/X/proj/_claude-for-adobe_analysis/**)");
+  assert.equal(DISALLOWED_TOOLS.includes("Read"), false);
+  assert.equal(buildArgs({ model: "m", mcpConfigPath: "/tmp/c.json", systemPrompt: "sp" })[buildArgs({ model: "m", mcpConfigPath: "/tmp/c.json", systemPrompt: "sp" }).indexOf("--allowedTools") + 1], "mcp__premiere__*");
+});
+
 test("buildArgs asks the CLI to fall back down the model tiers", () => {
   assert.deepEqual(fallbackModels("claude-opus-5"), ["claude-sonnet-5", "claude-haiku-4-5"]);
   assert.deepEqual(fallbackModels("claude-haiku-4-5"), []);

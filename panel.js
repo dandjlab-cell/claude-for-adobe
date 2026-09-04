@@ -153,10 +153,11 @@ async function readProject() {
 
 async function refreshProject() {
   const next = await readProject();
-  const changed = next.path !== project.path;
+  const previousPath = project.path;
+  const changed = next.path !== previousPath;
   project = next;
   ui.project.textContent = (project.name || "No project") + (project.sequence ? " · " + project.sequence : "");
-  if (changed) { log("project: " + (project.path || "(none)")); renderCheckpoints(); }
+  if (changed) { log("project: " + (project.path || "(none)")); renderCheckpoints(); if (session && !session.busy && previousPath) restartSession(session.sessionId); }
 }
 
 async function saveProject() {
@@ -559,9 +560,11 @@ async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" 
   });
   if (!out.length) return err(card, "No transcript available. In Premiere: Text panel > Transcribe, then Cmd+S (the transcript is read from the saved project file). Or run transcribe_whisper.");
   const stale = used.has("premiere") && project.path ? " (project saved " + ((Date.now() - fs.statSync(project.path).mtimeMs) / 60000).toFixed(0) + " min ago; edits since then are not visible until Cmd+S)" : "";
-  const text = out.join("\n") + (skipped.length ? "\n(skipped: " + skipped.join(", ") + ")" : "") + "\n(source: " + [...used].join("+") + "; timestamps are sequence seconds" + stale + ")";
-  card.done(text, true);
-  return { text };
+  const full = out.join("\n") + (skipped.length ? "\n(skipped: " + skipped.join(", ") + ")" : "") + "\n(source: " + [...used].join("+") + "; timestamps are sequence seconds" + stale + ")";
+  const file = writeAnalysis((project.sequence || "sequence") + ".transcript.md", "# Transcript of \"" + (project.sequence || "sequence") + "\"\n\n" + full + "\n");
+  card.done(full.split("\n").slice(0, 8).join("\n") + (out.length > 8 ? "\n…" : ""), true);
+  if (out.length <= 40) return { text: full + "\n(also written to " + file + ")" };
+  return { text: out.length + " lines of transcript written to " + file + ". First lines:\n" + out.slice(0, 6).join("\n") + "\n…\nFor questions about it (find a phrase, what is said at a time), give a subagent the question and that path." };
 }
 
 // Watches the project file; when it is saved and now carries a transcript, nudges Claude to continue (up to 30 min).
@@ -597,6 +600,8 @@ async function runTranscriptionJob(card, media, { language, vad, write_transcrip
       const r = await transcribe(m, { language, vad, onLog: log });
       let note = path.basename(m) + ": " + r.words.length + " words" + (r.cached ? " (cached)" : " (" + ((Date.now() - t0) / 1000).toFixed(0) + "s)");
       if (write_transcript_json) { fs.mkdirSync(outDir, { recursive: true }); const f = path.join(outDir, path.basename(m) + ".transcript.json"); fs.writeFileSync(f, JSON.stringify(toPremiereTranscript(r.words, r.language), null, 2)); note += " -> " + f; }
+      const md = writeAnalysis(path.basename(m) + ".transcript.md", "# " + path.basename(m) + " (source seconds)\n\n" + linesFromWords(r.words, 0).map((l) => "[" + tc(l.start) + "] " + l.text).join("\n") + "\n");
+      note += "; text: " + md;
       lines.push(note);
     } catch (error) { lines.push(path.basename(m) + ": " + error.message); }
   }
@@ -724,6 +729,7 @@ async function classifyClips({ bin = "" } = {}) {
   }
   rows.sort((a, b) => b.ratio - a.ratio);
   const text = (footage ? "footage: " + footage + "\n" : "") + formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
+  writeAnalysis((bin ? bin.replace(/\//g, "_") : (project.sequence || "sequence")) + ".classification.md", "# Classification of " + (bin ? "bin " + bin : "sequence " + (project.sequence || "")) + "\n\n" + text + "\n");
   card.done(text, true);
   setStatus("Thinking…");
   return { text };
@@ -863,7 +869,7 @@ function restartSession(resumeSessionId) {
     if (old) await old.stop();
     try {
       const next = createClaudeSession({
-        mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot,
+        mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot, readPaths: [analysisDir()],
         capabilities: "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
         onEvent: (event) => { if (gen === sessionGen) onEvent(event); },
       });
@@ -1085,6 +1091,12 @@ function addFiles(files) {
 ["dragleave", "dragend"].forEach((ev) => document.addEventListener(ev, () => document.body.classList.remove("dropping")));
 document.addEventListener("drop", (e) => { e.preventDefault(); document.body.classList.remove("dropping"); if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); else { const t = e.dataTransfer && e.dataTransfer.getData("text"); if (t) ui.input.value += (ui.input.value ? "\n" : "") + t; } ui.input.focus(); });
 ui.input.addEventListener("paste", (e) => { const files = e.clipboardData && [...e.clipboardData.files]; if (files && files.length) { e.preventDefault(); addFiles(files); } });
+// Analysis files next to the project: what the tools write, what Claude (or its subagent) may read.
+function analysisDir() { return project.path ? path.join(path.dirname(project.path), "_claude-for-adobe_analysis") : path.join(os.tmpdir(), "claude-for-adobe-analysis"); }
+function writeAnalysis(name, text) {
+  const dir = analysisDir(); fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, name.replace(/[\/\\:]/g, "_")); fs.writeFileSync(f, text); return f;
+}
 // Chat / Settings tabs.
 const tabChat = document.getElementById("tab-chat"), tabSettings = document.getElementById("tab-settings");
 function showView(which) {

@@ -7,7 +7,7 @@ const { createJsonLineParser } = require("./core.cjs");
 const MCP_SERVER_NAME = "premiere";
 const DEFAULT_MODEL = "claude-opus-5";
 // Everything except our MCP tool. Claude runs headless inside Premiere; it must not touch the filesystem or shell.
-const DISALLOWED_TOOLS = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
+const DISALLOWED_TOOLS = ["Bash", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch",
   "NotebookEdit", "EnterPlanMode", "ExitPlanMode", "AskUserQuestion", "TodoWrite", "TaskCreate", "TaskUpdate"]; // Skill stays: skills are the panel's repeatable recipes (.claude/skills)
 
 // The Claude desktop app keeps a native CLI per version under its support folder; newest version wins.
@@ -39,6 +39,7 @@ function buildSystemPrompt(capabilities = "") {
     ...(capabilities ? ["Right now on this Mac: " + capabilities] : []),
     "You are Claude running inside Adobe Premiere Pro 2026 as a panel. Prefer the panel tools; write ExtendScript only for things no tool covers.",
     "Tools: sequence_overview (live active sequence), read_transcript (Premiere's transcript with timestamps, read from the SAVED project file; the tool for what is said/when, finding phrases, dialogue-based cuts. If it reports no transcript or a stale save, tell the user exactly: transcribe in the Text panel, then press Cmd+S, then ask again), remove_silences (Silero voice detection by default, the tool for silences, gaps, dead air), remove_pauses (transcript method, Premiere's 'Delete all pauses'; uses a cached Whisper transcript or Premiere's own), transcribe_whisper (local Whisper large-v3-turbo, bundled; first use downloads the model once with a progress bar; also writes .transcript.json files the user can import in the Text panel; vad=false only for clean narration), analyze_audio (levels for questions about audio), preview_frames (images, only when asked what something looks like), classify_clips (speech coverage per source file, works on a bin or the active sequence; run first when asked to edit or assemble), create_sequence (new sequence from a bin, matching the footage or given size/fps; ask first), media_info (ffprobe), project_bins + move_to_bin (organize the Project panel: list the tree, then move items into bins; never use scripts for this), run_extendscript (escape hatch).",
+    "Analysis files: the panel writes transcripts, classifications, and other analysis as files in the project's _claude-for-adobe_analysis folder (the tool result names the path) and you may Read that folder, nothing else. For anything longer than a screen, do not read it yourself: give a subagent the question and the file path and take back one line with timecodes. That subagent runs the loop: read the files, narrow to a few moments, preview_frames only at those moments if the question is visual, answer.",
     "Token discipline: read-heavy steps go to a subagent (Agent tool) that returns a short summary, e.g. reading a long transcript to find a phrase, classifying many clips, summarising an overview. Subagents run on a cheaper model and have the same tools as you. Keep the main conversation to decisions and edits. Long jobs (a download, a transcription) return immediately with 'started'; the panel tells you when they finish, so do not poll or repeat the call.",
     "Cutting style: social-tight by default. Silence removal uses remove_silences with method vad, min_silence_s 0.35, pad_s 0.05, which leaves almost no air between phrases. Go looser (0.6 / 0.15) only when the editor asks for natural pacing.",
     "After classifying footage, mute the audio of b-roll clips (mute_clip_audio on the files classify_clips called b-roll or silent) and say so in one line. Tell the editor once that keeping b-roll separate from the talking head, on its own track or bin, makes every later step more accurate.",
@@ -83,8 +84,10 @@ function readClaudeJson() { try { return JSON.parse(fs.readFileSync(path.join(os
 const MODEL_TIERS = ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"];
 const fallbackModels = (model) => { const i = MODEL_TIERS.indexOf(model); return i >= 0 ? MODEL_TIERS.slice(i + 1) : MODEL_TIERS.slice(2); };
 
-function buildArgs({ model, mcpConfigPath, systemPrompt, resumeSessionId }) {
+function buildArgs({ model, mcpConfigPath, systemPrompt, resumeSessionId, readPaths = [] }) {
   const fallback = fallbackModels(model);
+  // Read is allowed only inside the analysis folders the panel writes; in dontAsk mode everything else is denied.
+  const allowed = ["mcp__" + MCP_SERVER_NAME + "__*", ...readPaths.map((p) => "Read(//" + String(p).replace(/^\/+/, "") + "/**)")];
   const args = [
     "-p",
     "--output-format", "stream-json",
@@ -93,7 +96,7 @@ function buildArgs({ model, mcpConfigPath, systemPrompt, resumeSessionId }) {
     "--model", model,
     ...(fallback.length ? ["--fallback-model", fallback.join(",")] : []),
     "--permission-mode", "dontAsk",
-    "--allowedTools", "mcp__" + MCP_SERVER_NAME + "__*",
+    "--allowedTools", allowed.join(","),
     "--disallowed-tools", DISALLOWED_TOOLS.join(","),
     "--mcp-config", mcpConfigPath,
     "--strict-mcp-config",
@@ -142,9 +145,9 @@ function userMessage(text, images = []) {
 
 
 function createClaudeSession(options) {
-  const { mcpUrl, mcpToken, onEvent, model = DEFAULT_MODEL, cwd = os.tmpdir(), claudePath = findClaude(), resumeSessionId, capabilities = "" } = options;
+  const { mcpUrl, mcpToken, onEvent, model = DEFAULT_MODEL, cwd = os.tmpdir(), claudePath = findClaude(), resumeSessionId, capabilities = "", readPaths = [] } = options;
   const mcpConfigPath = writeMcpConfig(mcpUrl, mcpToken);
-  const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(capabilities), resumeSessionId });
+  const args = buildArgs({ model, mcpConfigPath, systemPrompt: buildSystemPrompt(capabilities), resumeSessionId, readPaths });
   // Tool calls may run long (a transcription, hundreds of extracts): give them up to an hour before the CLI gives up.
   const env = { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000", CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5", PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
   const child = spawn(claudePath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
