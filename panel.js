@@ -885,6 +885,7 @@ async function sendMessage() {
   // Attach what is highlighted in Premiere, so "this bin" / "these clips" needs no typing.
   try {
     const sel = await host("selectionInfo");
+    log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)"));
     if (sel && sel.indexOf("ERR:") !== 0) payload = "[Selected in Premiere right now: " + sel.split("\u0003").join("; ") + "]\n\n" + payload;
   } catch (_) {}
   lastPayload = payload;

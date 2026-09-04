@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.claude-for-adobe.premiere" ExtensionBundleVersion="0.1.22" ExtensionBundleName="Claude for Adobe">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.claude-for-adobe.premiere" ExtensionBundleVersion="0.1.23" ExtensionBundleName="Claude for Adobe">
   <ExtensionList>
-    <Extension Id="com.claude-for-adobe.premiere" Version="0.1.22" />
+    <Extension Id="com.claude-for-adobe.premiere" Version="0.1.23" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

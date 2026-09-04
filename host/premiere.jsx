@@ -354,8 +354,15 @@ var PCX = (function () {
   // What the editor has highlighted right now: Project panel items (bins, clips) and timeline clips.
   function selectionInfo() {
     var out = [];
+    var items = null;
+    try { if (typeof app.getCurrentProjectViewSelection === "function") items = app.getCurrentProjectViewSelection(); } catch (e) {}
+    if (!items || !items.length) {
+      try {
+        var ids = app.getProjectViewIDs();
+        for (var v = 0; ids && v < ids.length; v++) { var sel0 = app.getProjectViewSelection(ids[v]); if (sel0 && sel0.length) { items = sel0; break; } }
+      } catch (e2) {}
+    }
     try {
-      var items = app.getCurrentProjectViewSelection();
       if (items && items.length) {
         var parts = [];
         for (var i = 0; i < items.length && i < 12; i++) {
