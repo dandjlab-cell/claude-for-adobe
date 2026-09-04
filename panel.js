@@ -1073,22 +1073,44 @@ async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1 } = {}) 
 
 // Snapshot pass: the timeline decides the moments (first frame of every distinct clip on every video track,
 // midpoints of long ones), frames are rendered, saved next to the project as a contact sheet, and handed back.
-function keyMoments(snap, max = 12) {
+const isGraphic = (c) => !c.mediaPath || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(c.mediaPath);
+// What is on screen at a moment: every video-track clip covering it, graphics called out, plus our captions if any.
+function layersAt(snap, t, cues) {
+  const on = snap.clips.filter((c) => c.track[0] === "V" && t >= c.start && t < c.end).sort((a, b) => a.track.localeCompare(b.track));
+  const parts = on.map((c) => c.track + " " + (isGraphic(c) ? "GRAPHIC " : "") + "\"" + c.name + "\"");
+  const cue = cues && cues.find((q) => t >= q.start && t <= q.end);
+  if (cue) parts.push("CAPTION \"" + cue.lines.join(" ") + "\"");
+  return parts.join(" + ") || "nothing";
+}
+function keyMoments(snap, max = 12, cues = null) {
   const pts = [];
   snap.clips.filter((c) => c.track[0] === "V").sort((a, b) => a.start - b.start).forEach((c) => {
-    pts.push({ t: c.start + 0.1, why: "start of " + c.name + " (" + c.track + ")" });
-    if (c.end - c.start > 15) pts.push({ t: (c.start + c.end) / 2, why: "middle of " + c.name });
+    if (isGraphic(c)) pts.push({ t: Math.min(c.end - 0.05, c.start + Math.min(1.5, (c.end - c.start) / 2)), why: "graphic \"" + c.name + "\" (" + c.track + ") fully on" });
+    else { pts.push({ t: c.start + 0.1, why: "start of " + c.name + " (" + c.track + ")" }); if (c.end - c.start > 15) pts.push({ t: (c.start + c.end) / 2, why: "middle of " + c.name }); }
   });
+  if (cues && cues.length) cues.slice(0, 2).forEach((q, i) => pts.push({ t: (q.start + q.end) / 2, why: "caption on screen (" + (i + 1) + ")" }));
   const out = [];
   pts.sort((a, b) => a.t - b.t).forEach((p) => { if (!out.length || p.t - out[out.length - 1].t > 0.5) out.push(p); });
   if (out.length > max) { const step = out.length / max; return Array.from({ length: max }, (_, i) => out[Math.floor(i * step)]); }
   return out;
 }
+function captionCuesForSequence(snap) {
+  try {
+    const tl = freshTimelineWords(snap);
+    const srt = path.join(analysisDir(), (project.sequence || "sequence") + ".srt");
+    if (!fs.existsSync(srt)) return null;
+    // parse our own SRT back into cues
+    const cues = []; const blocks = fs.readFileSync(srt, "utf8").split(/\n\n+/);
+    blocks.forEach((b) => { const m = /(\d+):(\d+):(\d+),(\d+) --> (\d+):(\d+):(\d+),(\d+)\n([\s\S]*)/.exec(b.replace(/^\d+\n/, "")); if (m) cues.push({ start: +m[1] * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000, end: +m[5] * 3600 + +m[6] * 60 + +m[7] + +m[8] / 1000, lines: m[9].trim().split("\n") }); });
+    return cues.length ? cues : null;
+  } catch (_) { return null; }
+}
 async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
   const card = addTool("snapshot_moments", "");
   card.open();
   let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
-  const moments = keyMoments(snap, Math.min(12, Math.max(1, Number(max))));
+  const cues = captionCuesForSequence(snap);
+  const moments = keyMoments(snap, Math.min(12, Math.max(1, Number(max))), cues);
   if (!moments.length) return err(card, "no video clips in the active sequence");
   const dir = path.join(analysisDir(), "snapshots", (project.sequence || "sequence").replace(/[\/\\:]/g, "_"));
   fs.mkdirSync(dir, { recursive: true });
@@ -1108,8 +1130,9 @@ async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
         const name = tc(m.t).replace(":", "-") + ".jpg";
         const file = path.join(dir, name);
         resizeImage(src, file, max_px);
-        index.push("- " + tc(m.t) + " (" + tcode + ") " + m.why + " -> " + name);
-        content.push({ type: "text", text: tc(m.t) + " " + m.why });
+        const layers = layersAt(snap, m.t, cues);
+        index.push("- " + tc(m.t) + " (" + tcode + ") " + m.why + " | on screen: " + layers + " -> " + name);
+        content.push({ type: "text", text: tc(m.t) + " " + m.why + " | on screen: " + layers });
         content.push({ type: "image", data: fs.readFileSync(file).toString("base64"), mimeType: "image/jpeg" });
       } catch (error) { content.push({ type: "text", text: tc(m.t) + ": " + error.message }); }
       try { fs.unlinkSync(src); } catch (_) {}
@@ -1118,7 +1141,7 @@ async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
   fs.writeFileSync(path.join(dir, "index.md"), "# Snapshots of \"" + (project.sequence || "sequence") + "\"\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.width + "x" + snap.height + ", " + snap.duration.toFixed(1) + "s\n\n" + index.join("\n") + "\n");
   card.done(index.join("\n") + "\nsaved in " + dir, true);
   setStatus("Thinking…");
-  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + ". Snapshots saved in " + dir + ". Judge each: subject centred? anything cropped? graphics inside the frame and in the right place for this shape? Fix with nudge_clip, then snapshot_moments again." });
+  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + ". Snapshots saved in " + dir + ". Judge each: subject centred? anything cropped? Does any GRAPHIC or CAPTION cover a face or overlap another element? Graphics: nudge_clip the graphic (by its time) or the subject. Captions: their position is a track setting in Premiere's Essential Graphics panel, so move the subject up or down with nudge_clip to clear them, and say so. Then snapshot_moments again." });
   return { content };
 }
 
