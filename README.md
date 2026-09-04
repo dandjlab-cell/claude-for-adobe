@@ -1,8 +1,10 @@
 # Claude for Adobe
 
-Claude Code inside Adobe Premiere Pro: chat with Claude about the open sequence, let it edit on a duplicate, cut silences with a bundled voice model, and ask about dialogue using Premiere's own transcript. Free and MIT. Runs on your Mac and uses your own Claude Code login; what Claude reads (clip names and paths, transcript lines, frames you ask it to look at) goes to Anthropic like any Claude Code session, so treat client material accordingly. After Effects next.
+Claude Code, inside Premiere Pro. Talk to it about your timeline, let it make the cuts, remove silences, ask what was said. Free, open source, runs on your Mac with your own Claude account.
 
-**Install:** download the latest zip from [Releases](https://github.com/dandjlab-cell/claude-for-adobe/releases), unzip, right-click `Install.command` > Open, restart Premiere, then **Window > Extensions > Claude for Premiere**. Needs the Claude desktop app (signed in, Claude Code opened once) or the Claude Code CLI. Updates are offered inside the panel.
+**Install:** [download the latest zip](https://github.com/dandjlab-cell/claude-for-adobe/releases/latest), unzip, right-click `Install.command` > Open, restart Premiere, then **Window > Extensions > Claude for Premiere**. You need the Claude desktop app signed in (open Claude Code in it once) or the Claude Code CLI. Updates come through a button in the panel.
+
+Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
 
 
 A personal CEP panel that runs **Claude Code inside Adobe Premiere Pro 2026**. Claude gets four
