@@ -41,7 +41,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionLine: $("selection-line"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -1016,6 +1016,22 @@ setTimeout(() => checkUpdates(false), 4000);
 // Persistent choice: ask before scripts (default on).
 try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
 ui.askScripts.onchange = () => { try { localStorage.setItem("askScripts", ui.askScripts.checked ? "yes" : "no"); } catch (_) {} };
+// Live "what is selected in Premiere" line above the message box. Polled: the Project panel has no selection event.
+let lastSelection = "";
+async function refreshSelectionLine() {
+  if (!document.getElementById("view-chat").classList.contains("active")) return;
+  let sel = "";
+  try { sel = await host("selectionInfo"); } catch (_) {}
+  if (sel === lastSelection) return;
+  lastSelection = sel;
+  if (!sel || sel.indexOf("ERR:") === 0) { ui.selectionLine.hidden = true; return; }
+  ui.selectionLine.innerHTML = "";
+  const b = document.createElement("b"); b.textContent = "Selected in Premiere: ";
+  ui.selectionLine.append(b, document.createTextNode(sel.split("\u0003").join(" · ") + "  (say \"this\" or \"these\")"));
+  ui.selectionLine.hidden = false;
+}
+setInterval(refreshSelectionLine, 2000);
+
 // Drops and pastes. Without this, dropping a file makes the embedded browser navigate to it and the panel is gone.
 const attachments = []; // [{ name, mediaType, data }]
 function renderAttachments() {

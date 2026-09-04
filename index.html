@@ -104,6 +104,8 @@
     textarea::placeholder { color: var(--ink-40); }
     .composer .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .composer .row .options { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; color: var(--ink-60); font-size: 12px; }
+    #selection-line { font-size: 11px; padding: 2px 0; }
+    #selection-line b { color: var(--accent); font-weight: 500; }
     #attachments { display: flex; gap: 6px; flex-wrap: wrap; }
     .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); padding: 3px 6px 3px 3px; font-family: var(--mono); font-size: 11px; color: var(--ink-60); }
     .chip img { height: 28px; width: auto; display: block; }
@@ -153,15 +155,17 @@
       <div id="messages"></div>
       <div id="starter">
         <h1>Claude, inside your timeline.</h1>
-        <p>Ask about the open sequence or tell Claude what to change. Edits land on a duplicate sequence, so the original stays as it is.</p>
+        <p>Select a bin or some clips in Premiere and say what you want done with them, or ask about the open sequence. Edits land on a duplicate sequence, so the original stays as it is.</p>
         <div class="chips">
           <button type="button" data-prompt="What's said in this sequence, with timestamps?">What's said in this sequence?</button>
           <button type="button" data-prompt="Remove every pause longer than 1 second.">Remove pauses longer than 1 s</button>
           <button type="button" data-prompt="Find where they say “” and cut everything before it.">Cut to the moment they say…</button>
+          <button type="button" data-prompt="Edit what I have selected in the Project panel.">Edit what I've selected</button>
           <button type="button" data-prompt="Give me an overview of every clip on the timeline.">Overview of every clip</button>
         </div>
       </div>
       <div class="composer">
+        <div id="selection-line" class="mono muted" hidden></div>
         <div id="attachments" style="display:none"></div>
         <textarea id="input" placeholder="Ask Claude to inspect or edit the open project. Enter sends, Shift+Enter for a new line. Drop or paste a screenshot to include it."></textarea>
         <div class="row">
