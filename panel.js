@@ -1141,7 +1141,7 @@ async function refreshSelectionLine() {
   if (sel === lastSelection) return;
   lastSelection = sel;
   const bar = ui.selectionBar;
-  if (!sel || sel.indexOf("ERR:") === 0) { bar.hidden = true; return; }
+  if (!sel || sel.indexOf("ERR:") === 0) { bar.innerHTML = ""; return; }
   // Compact: the bin name and item count, then a clip count for the timeline. Details travel with the message.
   const parts = [];
   const bin = /bin "([^"]+)" \((\d+) items?\)/.exec(sel); if (bin) parts.push(bin[1] + " (" + bin[2] + ")");
@@ -1150,7 +1150,6 @@ async function refreshSelectionLine() {
   bar.innerHTML = "";
   const b = document.createElement("b"); b.textContent = "Selected ";
   bar.append(b, document.createTextNode(parts.join(" · ")));
-  bar.hidden = false;
 }
 function showAttachmentsRow() { ui.attachments.style.display = attachments.length ? "flex" : "none"; }
 setInterval(refreshSelectionLine, 800);
