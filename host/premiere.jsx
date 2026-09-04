@@ -488,19 +488,35 @@ var PCX = (function () {
     if (s.videoTracks.numTracks <= idx) return "ERR:video track V" + (idx + 1) + " does not exist (add it in the timeline)";
     var track = s.videoTracks[idx];
     var at = Number(atSec), dur = Number(durSec), inPt = Number(inSec) || 0;
-    var before = track.clips.numItems;
-    var ok = false;
-    try { ok = track.overwriteClip(item, at); } catch (e) { return "ERR:overwriteClip " + e; }
+    // Fingerprint every OTHER track so we can prove nothing moved (an overwrite must never ripple or replace).
+    function fingerprint() {
+      var out = [];
+      function list(tracks, skipIdx, prefix) { for (var t = 0; t < tracks.numTracks; t++) { if (t === skipIdx) continue; var tr = tracks[t]; var row = [prefix + t]; for (var c = 0; c < tr.clips.numItems; c++) row.push(tr.clips[c].name + "@" + tr.clips[c].start.ticks + "-" + tr.clips[c].end.ticks); out.push(row.join("|")); } }
+      list(s.videoTracks, idx, "V"); list(s.audioTracks, -1, "A");
+      return out.join("\n");
+    }
+    var before = fingerprint();
+    // Lock everything except the target track so the linked audio cannot land on A1 over the talking head.
+    var locks = [];
+    function lockAll(tracks, skipIdx) { for (var t = 0; t < tracks.numTracks; t++) { if (t === skipIdx) continue; var tr = tracks[t]; var was = false; try { was = !!tr.isLocked(); } catch (e) {} locks.push({ tr: tr, was: was }); try { tr.setLocked(1); } catch (e2) {} } }
+    lockAll(s.videoTracks, idx); lockAll(s.audioTracks, -1);
+    var ok = false, err = "";
+    try { ok = track.overwriteClip(item, at); } catch (e) { err = String(e); }
+    for (var L = 0; L < locks.length; L++) { try { locks[L].tr.setLocked(locks[L].was ? 1 : 0); } catch (e3) {} }
+    if (err) return "ERR:overwriteClip " + err;
     if (!ok) return "ERR:overwriteClip refused";
     var placed = null;
     for (var c = 0; c < track.clips.numItems; c++) { var cl = track.clips[c]; if (Math.abs(num(cl.start.ticks) / T - at) < 0.05) { placed = cl; } }
-    if (!placed) return "ERR:clip was inserted but not found at " + at.toFixed(2) + "s on V" + (idx + 1) + " (" + before + " -> " + track.clips.numItems + " clips)";
+    if (!placed) return "ERR:clip was inserted but not found at " + at.toFixed(2) + "s on V" + (idx + 1);
     var notes = [];
     if (inPt > 0) { try { var ti = new Time(); ti.seconds = inPt; placed.inPoint = ti; } catch (e1) { notes.push("source offset not applied: " + e1); } }
     if (dur > 0) { try { var te = new Time(); te.seconds = at + dur; placed.end = te; } catch (e2) { notes.push("could not trim: " + e2); } }
-    var muted = 0;
-    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tr = s.audioTracks[a]; for (var k = 0; k < tr.clips.numItems; k++) { var ac = tr.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.05) { try { if (dur > 0) { var ta = new Time(); ta.seconds = at + dur; ac.end = ta; } } catch (e3) {} try { ac.disabled = true; muted++; } catch (e4) {} } } }
-    return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (muted ? " (audio off)" : "") + (notes.length ? " [" + notes.join("; ") + "]" : "");
+    // Any audio the overwrite still created for this clip is removed, not muted: b-roll never carries sound here.
+    var removed = 0;
+    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tra = s.audioTracks[a]; for (var k = tra.clips.numItems - 1; k >= 0; k--) { var ac = tra.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.05) { try { ac.remove(0, 0); removed++; } catch (e4) { try { ac.disabled = true; } catch (e5) {} } } } }
+    var after = fingerprint();
+    var sync = after === before ? "" : " WARNING: other tracks changed during the overwrite (sync at risk). Cmd+Z and tell the editor.";
+    return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (removed ? " (its audio removed)" : "") + (notes.length ? " [" + notes.join("; ") + "]" : "") + sync;
   }
 
   return {
