@@ -1,7 +1,7 @@
 // Words -> caption cues -> SRT. Cues break at sentence ends, gaps, a character budget, or a max duration.
-const MAX_CHARS = 32, MAX_LINES = 2, MAX_SECONDS = 5, GAP = 0.7;
+const MAX_CHARS = 32, MAX_LINES = 1, MAX_SECONDS = 3, MAX_WORDS = 4, GAP = 0.7;
 
-function cuesFromWords(words, { maxChars = MAX_CHARS, maxLines = MAX_LINES, maxSeconds = MAX_SECONDS, gap = GAP } = {}) {
+function cuesFromWords(words, { maxChars = MAX_CHARS, maxLines = MAX_LINES, maxSeconds = MAX_SECONDS, maxWords = MAX_WORDS, gap = GAP } = {}) {
   const sorted = [...words].filter((w) => Number.isFinite(w.start) && /\S/.test(w.text || "")).sort((a, b) => a.start - b.start);
   const cues = [];
   let cur = null;
@@ -10,10 +10,10 @@ function cuesFromWords(words, { maxChars = MAX_CHARS, maxLines = MAX_LINES, maxS
     const text = String(w.text).trim();
     const end = Number.isFinite(w.end) ? w.end : w.start;
     const wouldBe = cur ? cur.text + " " + text : text;
-    const breakHere = cur && (w.start - cur.end >= gap || wouldBe.length > budget || end - cur.start > maxSeconds || /[.!?]$/.test(cur.last));
+    const breakHere = cur && (w.start - cur.end >= gap || wouldBe.length > budget || end - cur.start > maxSeconds || /[.!?]$/.test(cur.last) || (maxWords > 0 && cur.n >= maxWords));
     if (breakHere) { cues.push(cur); cur = null; }
-    if (!cur) cur = { start: w.start, end, text, last: text };
-    else { cur.text = wouldBe; cur.end = end; cur.last = text; }
+    if (!cur) cur = { start: w.start, end, text, last: text, n: 1 };
+    else { cur.text = wouldBe; cur.end = end; cur.last = text; cur.n++; }
   });
   if (cur) cues.push(cur);
   // Minimum on-screen time and no overlaps.
@@ -43,4 +43,4 @@ function wrap(text, maxChars, maxLines) {
 const srtTime = (s) => { const ms = Math.round(s * 1000); const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, sec = Math.floor(ms / 1000) % 60, r = ms % 1000; return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0") + "," + String(r).padStart(3, "0"); };
 function toSRT(cues) { return cues.map((c, i) => (i + 1) + "\n" + srtTime(c.start) + " --> " + srtTime(c.end) + "\n" + c.lines.join("\n") + "\n").join("\n") + "\n"; }
 
-module.exports = { MAX_CHARS, MAX_LINES, MAX_SECONDS, cuesFromWords, toSRT, wrap };
+module.exports = { MAX_CHARS, MAX_LINES, MAX_SECONDS, MAX_WORDS, cuesFromWords, toSRT, wrap };

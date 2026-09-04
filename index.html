@@ -189,6 +189,10 @@
         <div id="model-row" class="row"><span id="model-state" class="mono">Whisper: checking…</span><select id="whisper-model" title="Bigger is more accurate; smaller is faster and lighter. The choice downloads once."></select><button id="btn-whisper-model" type="button" class="utility" hidden>Download</button></div>
         <span id="model-bar" hidden><i></i></span>
 
+        <h2>Captions</h2>
+        <p class="muted">Default: a few words at a time. The Captions button and Claude both use these.</p>
+        <div class="row"><label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label><label>lines <input id="cap-lines" type="number" value="1" min="1" max="3" style="width:3em"></label><label>max <input id="cap-seconds" type="number" value="3" min="1" max="10" step="0.5" style="width:3.6em"> s</label></div>
+
         <h2>Working copies</h2>
         <div id="copies" class="copies"></div>
         <h2>File checkpoints</h2>
