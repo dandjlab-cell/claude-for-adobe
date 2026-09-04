@@ -39,7 +39,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -87,6 +87,7 @@ const MODEL_FALLBACK = "claude-sonnet-5";
 })();
 const modelLabel = (id) => { const o = [...ui.model.options].find((x) => x.value === id); return o ? o.text : id; };
 let lastPayload = "";
+let lastCopyId = null;        // working copy created by the most recent ensureWorkingCopy()
 let allowScriptsThisSession = false; // set by "Run all this session"; cleared on New
 function setStatus(text, cls) { ui.status.textContent = text; ui.status.className = cls || (/^(Ready|Starting)/.test(text) ? "" : "busy"); }
 function setBusy(busy) { ui.send.disabled = busy || !session; ui.stop.disabled = !busy; if (!busy) ui.input.focus(); }
@@ -244,10 +245,17 @@ async function ensureWorkingCopy() {
   const p = await readProject();
   if (!p.sequenceId) throw new Error("no active sequence");
   if (workingCopies.has(p.sequenceId) || / \[Claude\]$/.test(p.sequence)) return "";
+  const existing = [...workingCopies.entries()].find(([, c]) => c.originalId === p.sequenceId);
+  if (existing) {
+    await host("openSequence", existing[0]);
+    timeline = await readSnapshot();
+    return "[The panel switched to the existing working copy \"" + existing[1].copyName + "\"; \"" + p.sequence + "\" stays untouched.]\n";
+  }
   const out = await host("cloneActive", p.sequence + " [Claude]");
   if (out.indexOf("ERR:") === 0) throw new Error(out.slice(4));
   const [copyId, copyName] = out.split("|");
   workingCopies.set(copyId, { copyName, originalId: p.sequenceId, originalName: p.sequence });
+  lastCopyId = copyId;
   renderCopies();
   log("working copy created: " + copyName);
   addMessage("assistant muted", "Duplicated \"" + p.sequence + "\" as \"" + copyName + "\" (same bin) and made it active. The original is untouched; use Open original / Discard copy above to revert.");
@@ -289,7 +297,7 @@ async function runExtendScript({ summary = "", code = "" }) {
   if (inspection.rejection) return err(card, inspection.rejection);
   // Enforced human approval: the guard cannot prove ExtendScript safe, so anything that is not a plain read waits for a
   // click. "Run all this session" skips the click for undoable scripts until New is pressed; non-undoable ones always ask.
-  if (!inspection.readOnly && (inspection.notUndoable.length || !allowScriptsThisSession)) {
+  if (!inspection.readOnly && (inspection.notUndoable.length || !(allowScriptsThisSession || !ui.askScripts.checked))) {
     const what = inspection.notUndoable.length ? "This cannot be undone with Cmd+Z (" + inspection.notUndoable.join(", ") + ")." : (inspection.mutating ? "This edits the project (Cmd+Z undoes it)." : "The guard could not prove this script is read-only.");
     const answer = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run", inspection.notUndoable.length ? "" : "Run all this session");
     if (!answer) return err(card, "The user declined to run this script. Ask before trying a different approach.");
@@ -297,8 +305,11 @@ async function runExtendScript({ summary = "", code = "" }) {
   }
   let note = inspection.warnings.map((w) => "[warning] " + w).join("\n");
   let copyNote = "";
+  let freshCopy = null;
   if (inspection.mutating) {
+    lastCopyId = null;
     try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+    if (lastCopyId) freshCopy = { id: lastCopyId, before: formatSnapshot(timeline) };
     const forced = inspection.notUndoable.length ? inspection.notUndoable.join(", ") : "";
     if (ui.requireCheckpoint.checked || forced) {
       try {
@@ -319,6 +330,16 @@ async function runExtendScript({ summary = "", code = "" }) {
   const ok = raw.indexOf("CLAUDE_FOR_ADOBE_OK:") === 0;
   const body = raw === "EvalScript error." ? "ExtendScript host error (script could not be evaluated)"
     : raw.replace(/^CLAUDE_FOR_ADOBE_(?:OK|ERROR):/, "") || (ok ? "(empty result)" : "EvalScript returned nothing");
+  if (freshCopy) {
+    // The duplicate was made for this script only. If nothing changed, drop it so the project stays tidy.
+    const after = await readSnapshot();
+    if (formatSnapshot(after) === freshCopy.before) {
+      const c = workingCopies.get(freshCopy.id);
+      if (c) { try { await host("deleteSequence", freshCopy.id, c.originalId); } catch (_) {} workingCopies.delete(freshCopy.id); renderCopies(); }
+      copyNote = "[The panel duplicated the sequence first, but this script changed nothing, so the duplicate was removed again; \"" + (c ? c.originalName : "the original") + "\" is active.]\n";
+      addMessage("assistant muted", "No changes were made, so the duplicate was removed.");
+    } else timeline = after;
+  }
   card.done((note ? note + "\n" : "") + body, ok);
   setStatus("Thinking…");
   if (inspection.mutating) refreshProject();
@@ -712,11 +733,12 @@ ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.va
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 
 document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { ui.input.value = b.dataset.prompt; ui.input.focus(); const i = ui.input.value.indexOf("\u201c\u201d"); if (i >= 0) ui.input.setSelectionRange(i + 1, i + 1); }; });
-// Update check, once per launch. Offers a one-click install; the panel needs a close/reopen afterwards.
-setTimeout(async () => {
+// Update check: once per launch, and on demand from the version row at the bottom.
+async function checkUpdates(announce) {
   let update = null;
-  try { update = await checkForUpdate(extensionRoot); } catch (error) { log("update check skipped: " + error.message); return; }
-  if (!update) { log("up to date (" + currentVersion(extensionRoot) + ")"); return; }
+  try { update = await checkForUpdate(extensionRoot); } catch (error) { log("update check skipped: " + error.message); if (announce) addMessage("assistant muted", "Could not check for updates: " + error.message); return; }
+  ui.versionRow.firstChild.textContent = "v" + currentVersion(extensionRoot) + (update ? " · " + update.version + " available" : " · up to date") + " ";
+  if (!update) { log("up to date (" + currentVersion(extensionRoot) + ")"); if (announce) addMessage("assistant muted", "You have the latest version (" + currentVersion(extensionRoot) + ")."); return; }
   const el = addMessage("assistant muted", "Version " + update.version + " of Claude for Premiere is available (you have " + currentVersion(extensionRoot) + ").");
   const row = document.createElement("div"); row.className = "row";
   const go = document.createElement("button"); go.textContent = "Update to " + update.version; go.className = "utility";
@@ -727,7 +749,13 @@ setTimeout(async () => {
     catch (error) { go.disabled = false; go.textContent = "Update to " + update.version; addMessage("assistant error", "Update failed: " + error.message); }
   };
   row.append(go, notes); el.appendChild(row);
-}, 4000);
+}
+ui.versionRow.firstChild.textContent = "v" + currentVersion(extensionRoot) + " ";
+ui.checkUpdates.onclick = () => checkUpdates(true);
+setTimeout(() => checkUpdates(false), 4000);
+// Persistent choice: ask before scripts (default on).
+try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
+ui.askScripts.onchange = () => { try { localStorage.setItem("askScripts", ui.askScripts.checked ? "yes" : "no"); } catch (_) {} };
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => restartSession(session && session.sessionId);

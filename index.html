@@ -141,6 +141,7 @@
         <span class="options">
           <label title="Before the first edit on a sequence, duplicate it inside the project as '<name> [Claude]' and edit the copy. The original stays untouched."><input id="dup-sequence" type="checkbox" checked>Edit a duplicate</label>
           <label title="Off: edits run directly inside Premiere; undo them with Cmd+Z. On: the project is saved and copied to _claude-for-adobe_checkpoints before every mutating script."><input id="require-checkpoint" type="checkbox">File checkpoints</label>
+          <label title="On: scripts that edit the project wait for your click. Off: they run without asking. Actions Cmd+Z can't undo always ask."><input id="ask-scripts" type="checkbox" checked>Ask before scripts</label>
         </span>
       </div>
       <div class="hint">Transcript answers come from the saved project: Text panel › Transcribe, then Cmd+S.</div>
@@ -149,6 +150,7 @@
       <details><summary>Working copies</summary><div id="copies" class="copies"></div></details>
       <details><summary>File checkpoints</summary><div id="checkpoints"></div></details>
       <details><summary>Log</summary><pre id="log"></pre></details>
+      <div id="version-row" class="mono muted" style="padding:6px 0 2px">v… <button id="check-updates" type="button" class="utility">Check for updates</button></div>
     </div>
   </main>
   <script src="panel.js"></script>
