@@ -733,25 +733,45 @@ ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.va
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 
 document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { ui.input.value = b.dataset.prompt; ui.input.focus(); const i = ui.input.value.indexOf("\u201c\u201d"); if (i >= 0) ui.input.setSelectionRange(i + 1, i + 1); }; });
-// Update check: once per launch, and on demand from the version row at the bottom.
+// Update check: once per launch, and on demand. The bottom button IS the update: it turns into
+// "Update to x.y.z" when a newer release exists and installs on click.
+let pendingUpdate = null;
+function setVersionRow(text) { ui.versionRow.firstChild.textContent = text + " "; }
 async function checkUpdates(announce) {
+  ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Checking…";
   let update = null;
-  try { update = await checkForUpdate(extensionRoot); } catch (error) { log("update check skipped: " + error.message); if (announce) addMessage("assistant muted", "Could not check for updates: " + error.message); return; }
-  ui.versionRow.firstChild.textContent = "v" + currentVersion(extensionRoot) + (update ? " · " + update.version + " available" : " · up to date") + " ";
-  if (!update) { log("up to date (" + currentVersion(extensionRoot) + ")"); if (announce) addMessage("assistant muted", "You have the latest version (" + currentVersion(extensionRoot) + ")."); return; }
-  const el = addMessage("assistant muted", "Version " + update.version + " of Claude for Premiere is available (you have " + currentVersion(extensionRoot) + ").");
-  const row = document.createElement("div"); row.className = "row";
-  const go = document.createElement("button"); go.textContent = "Update to " + update.version; go.className = "utility";
-  const notes = document.createElement("button"); notes.textContent = "What changed"; notes.className = "utility"; notes.onclick = () => { try { require("node:child_process").spawn("open", [update.notesUrl]); } catch (_) {} };
-  go.onclick = async () => {
-    go.disabled = true; go.textContent = "Updating…";
-    try { const v = await installUpdate(update, extensionRoot); el.textContent = "Updated to " + v + ". Close this panel and open it again (Window > Extensions > Claude for Premiere) to finish."; row.remove(); }
-    catch (error) { go.disabled = false; go.textContent = "Update to " + update.version; addMessage("assistant error", "Update failed: " + error.message); }
-  };
-  row.append(go, notes); el.appendChild(row);
+  try { update = await checkForUpdate(extensionRoot); }
+  catch (error) { log("update check skipped: " + error.message); ui.checkUpdates.textContent = "Check for updates"; ui.checkUpdates.disabled = false; if (announce) addMessage("assistant muted", "Could not check for updates: " + error.message); return; }
+  ui.checkUpdates.disabled = false;
+  if (!update) {
+    pendingUpdate = null;
+    setVersionRow("v" + currentVersion(extensionRoot) + " · up to date");
+    ui.checkUpdates.textContent = "Check for updates"; ui.checkUpdates.className = "utility";
+    log("up to date (" + currentVersion(extensionRoot) + ")");
+    return;
+  }
+  pendingUpdate = update;
+  setVersionRow("v" + currentVersion(extensionRoot) + " · " + update.version + " available");
+  ui.checkUpdates.textContent = "Update to " + update.version; ui.checkUpdates.className = "accent";
+  ui.checkUpdates.title = "Downloads the release from GitHub, verifies its checksum, and installs it. " + update.notesUrl;
+  if (announce) addMessage("assistant muted", "Version " + update.version + " is available. Use the Update button at the bottom.");
 }
-ui.versionRow.firstChild.textContent = "v" + currentVersion(extensionRoot) + " ";
-ui.checkUpdates.onclick = () => checkUpdates(true);
+async function installPending() {
+  const update = pendingUpdate; if (!update) return;
+  ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Updating…";
+  try {
+    const v = await installUpdate(update, extensionRoot);
+    pendingUpdate = null;
+    setVersionRow("v" + v + " installed");
+    ui.checkUpdates.textContent = "Reopen the panel to finish"; ui.checkUpdates.className = "accent"; ui.checkUpdates.disabled = true;
+    addMessage("assistant muted", "Updated to " + v + ". Close this panel and open it again (Window > Extensions > Claude for Premiere) to finish.");
+  } catch (error) {
+    ui.checkUpdates.disabled = false; ui.checkUpdates.textContent = "Update to " + update.version;
+    addMessage("assistant error", "Update failed: " + error.message);
+  }
+}
+setVersionRow("v" + currentVersion(extensionRoot));
+ui.checkUpdates.onclick = () => (pendingUpdate ? installPending() : checkUpdates(true));
 setTimeout(() => checkUpdates(false), 4000);
 // Persistent choice: ask before scripts (default on).
 try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
