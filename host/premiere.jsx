@@ -242,7 +242,62 @@ var PCX = (function () {
     return ok.join(",");
   }
 
+  // Project panel tree: one line per node, depth-indented. Bins end with "/" and show item counts.
+  function listBins() {
+    var out = [];
+    function walk(bin, depth, path) {
+      for (var i = 0; i < bin.children.numItems; i++) {
+        var c = bin.children[i];
+        var pad = "";
+        for (var d = 0; d < depth; d++) pad += "  ";
+        if (c.type === 2) { out.push(pad + c.name + "/  (" + c.children.numItems + ")"); walk(c, depth + 1, path + c.name + "/"); }
+        else out.push(pad + c.name + (c.type === 1 ? "" : (c.type === 4 ? "  [file]" : "")));
+      }
+    }
+    walk(app.project.rootItem, 0, "");
+    return out.join("\n");
+  }
+
+  function binByPath(path, create) {
+    var bin = app.project.rootItem;
+    var parts = String(path || "").split("/");
+    for (var i = 0; i < parts.length; i++) {
+      var name = parts[i];
+      if (!name) continue;
+      var found = null;
+      for (var j = 0; j < bin.children.numItems; j++) { var c = bin.children[j]; if (c.type === 2 && c.name === name) { found = c; break; } }
+      if (!found) { if (!create) return null; found = bin.createBin(name); }
+      bin = found;
+    }
+    return bin;
+  }
+
+  function findItemByPath(path) {
+    var parts = String(path || "").split("/");
+    var name = parts.pop();
+    var bin = parts.length ? binByPath(parts.join("/"), false) : app.project.rootItem;
+    if (!bin) return null;
+    for (var i = 0; i < bin.children.numItems; i++) if (bin.children[i].name === name) return bin.children[i];
+    // not found at that level: search the whole tree by name (first match)
+    function walk(b) { for (var k = 0; k < b.children.numItems; k++) { var c = b.children[k]; if (c.name === name) return c; if (c.type === 2) { var r = walk(c); if (r) return r; } } return null; }
+    return parts.length ? null : walk(app.project.rootItem);
+  }
+
+  // moves: [[itemPath, binPath], ...]. Bins are created when missing. Returns one line per move.
+  function moveToBin(json) {
+    var moves = parse(json), out = [];
+    for (var i = 0; i < moves.length; i++) {
+      var it = findItemByPath(moves[i][0]);
+      var bin = binByPath(moves[i][1], true);
+      if (!it) { out.push("not found: " + moves[i][0]); continue; }
+      if (!bin) { out.push("no bin: " + moves[i][1]); continue; }
+      try { it.moveBin(bin); out.push("moved " + it.name + " -> " + bin.name + "/"); } catch (e) { out.push("failed " + it.name + ": " + e); }
+    }
+    return out.join("\n");
+  }
+
   return {
+    listBins: listBins, moveToBin: moveToBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

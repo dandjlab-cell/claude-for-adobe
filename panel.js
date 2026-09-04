@@ -594,6 +594,24 @@ async function transcribeWhisper({ language = "", write_transcript_json = true, 
 }
 
 // ffprobe on a clip's source file. The path must belong to a project item.
+// Project panel housekeeping without the script hatch. Moves are Premiere project actions (Cmd+Z undoes each).
+async function projectBins() {
+  const card = addTool("project_bins", "");
+  const text = await host("listBins");
+  card.done(text.split("\n").slice(0, 25).join("\n") + (text.split("\n").length > 25 ? "\n…" : ""), true);
+  return { text: text || "(empty project)" };
+}
+async function moveToBin({ moves = [] } = {}) {
+  const list = (Array.isArray(moves) ? moves : []).filter((m) => m && m.item && m.bin).map((m) => [String(m.item), String(m.bin)]);
+  const card = addTool("move_to_bin (" + list.length + ")", list.map((m) => m[0] + " -> " + m[1] + "/").join("\n"));
+  if (!list.length) return err(card, "moves must be a list of { item, bin }");
+  const text = await host("moveToBin", JSON.stringify(list));
+  const failed = /^(not found|no bin|failed)/m.test(text);
+  card.done(text, !failed);
+  refreshProject();
+  return { text: text + "\nUndo: Cmd+Z once per move.", isError: false };
+}
+
 async function mediaInfoTool({ media_path = "" }) {
   const card = addTool("media_info " + path.basename(media_path), "");
   if ((await host("isMediaPath", media_path)) !== "ok") return err(card, media_path + " is not the media path of any project item (use sequence_overview)");
@@ -601,7 +619,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -620,6 +638,10 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence at the given timeline positions and return them as images. Only when the user asks what something looks like; never to verify edits.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512." } }, required: ["seconds"] } },
+  { name: "project_bins", description: "The Project panel as a tree: bins (ending in /, with item counts) and the items inside them, including loose items at the root. Call before organizing.",
+    inputSchema: { type: "object", properties: {} } },
+  { name: "move_to_bin", description: "Move project items into bins, creating bins as needed. Use this for organizing the Project panel instead of scripts. Each move is one Cmd+Z step. item = name or bin/name path; bin = bin path like '_ASSETS' or 'Footage/Day 2'.",
+    inputSchema: { type: "object", properties: { moves: { type: "array", items: { type: "object", properties: { item: { type: "string" }, bin: { type: "string" } }, required: ["item", "bin"] } } }, required: ["moves"] } },
   { name: "media_info", description: "ffprobe a clip's source file (media path from sequence_overview): container, duration, video resolution/fps, audio sample rate/channels.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" } }, required: ["media_path"] } },
 ];

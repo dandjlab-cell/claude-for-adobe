@@ -298,3 +298,9 @@ test("words inside string literals do not trip the keyword checks", () => {
   assert.ok(inspectExtendScript('with (app) { quit() }').rejection, "the real with statement is still refused");
   assert.ok(inspectExtendScript('app["qu" + "it"]()').rejection, "folded bracket access is still refused");
 });
+
+test("a rejection names the line and the offending text", () => {
+  const { inspectExtendScript } = require("../src/core.cjs");
+  const r = inspectExtendScript("var a = 1;\nvar b = 2;\napp.project.save();");
+  assert.match(r.rejection, /line 3: `\.save`/);
+});

@@ -153,7 +153,11 @@ function inspectExtendScript(code) {
   // What remains inside string literals is data (file names, labels), not code: blank it so a clip called
   // "SOCIAL with CODEX" or "File 3" cannot trip the keyword checks. Escapes were already refused above.
   inspectedSource = inspectedSource.replace(/"[^"\\\n]*"|'[^'\\\n]*'/g, '""');
-  const rejected = rejectionPatterns.find(([, pattern]) => pattern.test(inspectedSource));
+  let rejected = null;
+  for (const [message, pattern] of rejectionPatterns) {
+    const m = pattern.exec(inspectedSource);
+    if (m) { const line = inspectedSource.slice(0, m.index).split("\n").length; rejected = [message + " (line " + line + ": `" + m[0].trim().slice(0, 40) + "`)"]; break; }
+  }
   const mutating = mutationPatterns.some((pattern) => pattern.test(inspectedSource)) || nonUndoablePatterns.some(([, p]) => p.test(inspectedSource));
   return {
     rejection: rejected ? rejected[0] : null,
