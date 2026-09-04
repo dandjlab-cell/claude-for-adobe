@@ -42,7 +42,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), btnCaptions: $("btn-captions"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -587,6 +587,15 @@ function timelineTranscriptPath() { return path.join(analysisDir(), (project.seq
 function freshTimelineWords(snap) {
   try { const j = JSON.parse(fs.readFileSync(timelineTranscriptPath(), "utf8")); return j.fingerprint === timelineFingerprint(snap) ? j : null; } catch (_) { return null; }
 }
+// Transcribe an already rendered timeline mix and write the analysis files. Returns { words, md }.
+async function transcribeRenderedTimeline(wav, snap, language) {
+  const r = await transcribe(wav, { language, vad: true, onLog: log });
+  const lines = linesFromWords(r.words, 0).map((l) => "[" + tc(l.start) + "] " + l.text);
+  const md = writeAnalysis((project.sequence || "sequence") + ".timeline.transcript.md", "# Timeline transcript of \"" + (project.sequence || "sequence") + "\" (exact for this cut)\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.duration.toFixed(1) + "s, " + snap.clips.length + " clips, " + r.words.length + " words, timestamps are sequence seconds.\n\n" + lines.join("\n") + "\n");
+  fs.writeFileSync(timelineTranscriptPath(), JSON.stringify({ fingerprint: timelineFingerprint(snap), words: r.words, md, createdAt: new Date().toISOString() }));
+  return { words: r.words, md };
+}
+
 async function transcribeTimeline({ language = "en" } = {}) {
   const card = addTool("transcribe_timeline", "");
   card.open();
@@ -612,10 +621,8 @@ async function transcribeTimeline({ language = "en" } = {}) {
   // Runs outside the tool call; nudges Claude when done.
   (async () => {
     try {
-      const r = await transcribe(wav, { language, vad: true, onLog: log });
-      const lines = linesFromWords(r.words, 0).map((l) => "[" + tc(l.start) + "] " + l.text);
-      const md = writeAnalysis((project.sequence || "sequence") + ".timeline.transcript.md", "# Timeline transcript of \"" + (project.sequence || "sequence") + "\" (exact for this cut)\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.duration.toFixed(1) + "s, " + snap.clips.length + " clips, " + r.words.length + " words, timestamps are sequence seconds.\n\n" + lines.join("\n") + "\n");
-      fs.writeFileSync(timelineTranscriptPath(), JSON.stringify({ fingerprint: timelineFingerprint(snap), words: r.words, md, createdAt: new Date().toISOString() }));
+      const { words, md } = await transcribeRenderedTimeline(wav, snap, language);
+      const r = { words };
       card.done(r.words.length + " words -> " + md, true);
       setStatus("Ready");
       if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[Timeline transcription finished: " + r.words.length + " words, written to " + md + ". Timestamps are sequence seconds. Continue with the task; read_transcript / find_in_transcript / remove_fillers now use this exact transcript.]"); } catch (_) { setBusy(false); } }
@@ -1232,6 +1239,35 @@ async function runCutButton(tool, params, label) {
     setStatus("Ready");
   } finally { quietCard = null; ui.btnCut.disabled = false; }
 }
+// Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
+async function runCaptionsButton() {
+  if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
+  ui.btnCaptions.disabled = true;
+  const card = addTool("Captions", ""); card.open(); quietCard = card;
+  try {
+    if (!modelReady()) {
+      const go = await askInline("Captions need the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one time; change the model in Settings). Download it now?", "Download", "Not now");
+      if (!go) { card.done("cancelled: Whisper model not installed", false); return; }
+      if (!await downloadWhisperModel()) { card.done("model download failed", false); return; }
+    }
+    let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { card.done(error.message, false); return; }
+    if (!freshTimelineWords(snap)) {
+      card.progress(0, 3, "rendering timeline audio ");
+      const wav = path.join(analysisDir(), (project.sequence || "sequence") + ".mix.wav");
+      fs.mkdirSync(analysisDir(), { recursive: true });
+      const out = await host("exportSequenceAudio", wav);
+      if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) { card.done("audio render failed: " + out.replace(/^ERR:/, ""), false); return; }
+      card.progress(1, 3, "transcribing (" + currentModel() + ") ");
+      await transcribeRenderedTimeline(wav, snap, "en");
+    }
+    card.progress(2, 3, "building captions ");
+    const r = await createCaptions({});
+    card.done(r.isError ? r.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "") : r.text, !r.isError);
+    setStatus("Ready");
+  } catch (error) { card.done(error.message, false); }
+  finally { quietCard = null; ui.btnCaptions.disabled = false; }
+}
+ui.btnCaptions.onclick = runCaptionsButton;
 ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
