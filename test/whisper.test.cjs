@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { KNOBS, MODEL, premiereLanguage, toPremiereTranscript, wordsFromWhisperCpp } = require("../src/whisper.cjs");
+const { KNOBS, MODELS, currentModel, setModel, premiereLanguage, toPremiereTranscript, wordsFromWhisperCpp } = require("../src/whisper.cjs");
 // Adobe's transcript JSON schema is not redistributed; fetch it once into a gitignored cache, skip offline.
 const specPath = path.join(__dirname, "..", ".cache", "transcript_format_spec.json");
 let spec = null;
@@ -65,7 +65,7 @@ test("toPremiereTranscript matches Premiere's export shape", () => {
 
 test("decoding knobs: deterministic, no fallback, no context carry-over", () => {
   assert.ok(KNOBS.includes("-nf") && KNOBS[KNOBS.indexOf("-tp") + 1] === "0" && KNOBS[KNOBS.indexOf("-mc") + 1] === "0");
-  assert.equal(MODEL, "large-v3-turbo-q5_0");
+  assert.equal(currentModel(), "large-v3-turbo"); assert.equal(setModel("small"), "small"); assert.equal(setModel("nope"), "small"); setModel("large-v3-turbo"); assert.equal(Object.keys(MODELS).length, 3);
 });
 
 test("generated transcript validates against Adobe's transcript format spec", { skip: !spec && "schema not reachable" }, () => {

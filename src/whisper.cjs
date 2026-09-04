@@ -11,23 +11,32 @@ const os = require("node:os");
 const path = require("node:path");
 
 const BIN = process.env.PCX_WHISPER_BIN || path.join(__dirname, "..", "bin", "whisper-cli");
-const MODEL_NAME = process.env.PCX_WHISPER_MODEL || "ggml-large-v3-turbo-q5_0.bin";
-const MODEL = MODEL_NAME.replace(/^ggml-|\.bin$/g, "");
-const MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + MODEL_NAME;
+// Model choices: the user picks size versus speed in the panel; whichever is chosen downloads once on first use.
+const MODELS = {
+  "large-v3-turbo": { file: "ggml-large-v3-turbo-q5_0.bin", label: "Best (large-v3-turbo, 570 MB, ~8x real time)", mb: 574 },
+  "small": { file: "ggml-small-q5_1.bin", label: "Fast (small, 190 MB, ~25x real time, less accurate)", mb: 190 },
+  "base": { file: "ggml-base-q5_1.bin", label: "Fastest (base, 60 MB, rough, English best)", mb: 60 },
+};
+let current = process.env.PCX_WHISPER_MODEL && MODELS[process.env.PCX_WHISPER_MODEL] ? process.env.PCX_WHISPER_MODEL : "large-v3-turbo";
+function setModel(key) { if (MODELS[key]) current = key; return current; }
+function currentModel() { return current; }
 const MODEL_DIR = path.join(os.homedir(), "Library", "Caches", "claude-for-adobe", "models");
-const MODEL_PATH = path.join(MODEL_DIR, MODEL_NAME);
+const modelPath = (key = current) => path.join(MODEL_DIR, MODELS[key].file);
+const modelUrl = (key = current) => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/" + MODELS[key].file;
 const VAD_MODEL = path.join(__dirname, "..", "assets", "silero-vad-v6.2.0-ggml.bin");
 const CACHE_DIR = path.join(os.homedir(), "Library", "Caches", "claude-for-adobe", "whisper");
 const CACHE_VERSION = "v3-whispercpp"; // bump when decoding knobs change
 // Decoding knobs: deterministic, no fallback sweep, no context carry-over, Whisper's own guards.
 const KNOBS = ["-tp", "0", "-nf", "-mc", "0", "-nth", "0.6", "-et", "2.4", "-lpt", "-1.0", "-bo", "5"];
 
-function modelReady() { return fs.existsSync(MODEL_PATH); }
+function modelReady(key = current) { return fs.existsSync(modelPath(key)); }
+function installedModels() { return Object.keys(MODELS).filter((k) => fs.existsSync(modelPath(k))); }
 function available() { return fs.existsSync(BIN) && process.arch === "arm64"; }
 
 // Downloads the model once. onProgress(receivedBytes, totalBytes). Uses the page's fetch when present.
-async function ensureModel(onProgress = () => {}) {
-  if (modelReady()) return MODEL_PATH;
+async function ensureModel(onProgress = () => {}, key = current) {
+  const MODEL_PATH = modelPath(key), MODEL_URL = modelUrl(key);
+  if (modelReady(key)) return MODEL_PATH;
   fs.mkdirSync(MODEL_DIR, { recursive: true });
   const part = MODEL_PATH + ".part";
   if (typeof fetch === "function") {
@@ -53,14 +62,14 @@ async function ensureModel(onProgress = () => {}) {
       go(MODEL_URL, 0);
     });
   }
-  if (fs.statSync(part).size < 100 * 1024 * 1024) { fs.unlinkSync(part); throw new Error("model download was incomplete"); }
+  if (fs.statSync(part).size < 20 * 1024 * 1024) { fs.unlinkSync(part); throw new Error("model download was incomplete"); }
   fs.renameSync(part, MODEL_PATH);
   return MODEL_PATH;
 }
 
 function cachePath(mediaPath) {
   const st = fs.statSync(mediaPath);
-  const key = crypto.createHash("sha1").update(CACHE_VERSION + "|" + mediaPath + "|" + st.size + "|" + st.mtimeMs).digest("hex").slice(0, 12);
+  const key = crypto.createHash("sha1").update(CACHE_VERSION + "|" + current + "|" + mediaPath + "|" + st.size + "|" + st.mtimeMs).digest("hex").slice(0, 12);
   return path.join(CACHE_DIR, path.basename(mediaPath) + "." + key + ".whisper.json");
 }
 
@@ -98,12 +107,12 @@ async function transcribe(mediaPath, { language = "en", onLog = () => {}, onProg
   try {
     require("./vad.cjs").extractWav16k(mediaPath, wav);
     onLog("whisper: transcribing " + path.basename(mediaPath));
-    const args = ["-m", MODEL_PATH, "-f", wav, "-l", language || "auto", "-t", String(Math.max(2, Math.min(8, os.cpus().length - 2))),
+    const args = ["-m", modelPath(), "-f", wav, "-l", language || "auto", "-t", String(Math.max(2, Math.min(8, os.cpus().length - 2))),
       "--vad", "-vm", VAD_MODEL, "-vt", "0.5", "-ml", "1", "-sow", "-oj", "-of", outBase, "-np", ...KNOBS];
     const r = spawnSync(BIN, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     if (r.status !== 0) throw new Error("whisper failed: " + (r.stderr || r.stdout || "").trim().slice(-400));
     const json = JSON.parse(fs.readFileSync(outBase + ".json", "utf8"));
-    const result = { words: wordsFromWhisperCpp(json), language: (json.result && json.result.language) || language || "en", model: MODEL, knobs: KNOBS.join(" "), vad: true, createdAt: new Date().toISOString() };
+    const result = { words: wordsFromWhisperCpp(json), language: (json.result && json.result.language) || language || "en", model: current, knobs: KNOBS.join(" "), vad: true, createdAt: new Date().toISOString() };
     fs.writeFileSync(cachePath(mediaPath), JSON.stringify(result));
     return { ...result, cached: false };
   } finally {
@@ -137,4 +146,4 @@ function toPremiereTranscript(words, language = "en") {
   return { language: lang, segments, speakers: [{ id: speakerId, name: "Speaker 1" }] };
 }
 
-module.exports = { BIN, CACHE_DIR, KNOBS, LANGUAGE_CODES, MODEL, MODEL_PATH, MODEL_URL, available, cachedWords, ensureModel, modelReady, premiereLanguage, toPremiereTranscript, transcribe, wordsFromWhisperCpp };
+module.exports = { BIN, CACHE_DIR, KNOBS, LANGUAGE_CODES, MODELS, available, cachedWords, currentModel, ensureModel, installedModels, modelPath, modelReady, premiereLanguage, setModel, toPremiereTranscript, transcribe, wordsFromWhisperCpp };

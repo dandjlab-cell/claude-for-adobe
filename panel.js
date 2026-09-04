@@ -16,7 +16,7 @@ const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extension
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, decodeWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
-const { MODEL: WHISPER_MODEL, cachedWords, ensureModel, modelReady, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
+const { MODELS: WHISPER_MODELS, cachedWords, currentModel, ensureModel, installedModels, modelReady, setModel, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
 const vad = require(path.join(extensionRoot, "src", "vad.cjs"));
 
 // VAD from Premiere's own waveform: speech regions of a whole media file (source seconds), padded.
@@ -41,7 +41,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), modelState: $("model-state"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -565,7 +565,7 @@ async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" 
 }
 
 async function transcribeWhisper({ language = "en", write_transcript_json = true, vad = true } = {}) {
-  const card = addTool("transcribe_whisper (" + WHISPER_MODEL + ")", "");
+  const card = addTool("transcribe_whisper (" + currentModel() + ")", "");
   card.open();
   let snap;
   try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
@@ -573,7 +573,7 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
   if (!media.length) return err(card, "no audio clips with source media in the active sequence");
   if (!modelReady()) {
     // The one big download is the user's call: ask, then use the same download the panel row uses.
-    const go = await askInline("Transcribing needs the Whisper model, a one-time 570 MB download stored in your Library. Download it now?", "Download", "Not now");
+    const go = await askInline("Transcribing needs the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one-time download stored in your Library; change the choice at the bottom of the panel). Download it now?", "Download", "Not now");
     if (!go) return err(card, "The user chose not to download the Whisper model now. Suggest Premiere's own transcription (Text panel > Transcribe, then Cmd+S) instead.");
     setStatus("Downloading the Whisper model (one time)…");
     if (!await downloadWhisperModel()) return err(card, "Whisper model download failed.");
@@ -789,7 +789,7 @@ function restartSession(resumeSessionId) {
     try {
       const next = createClaudeSession({
         mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot,
-        capabilities: "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, 570 MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
+        capabilities: "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
         onEvent: (event) => { if (gen === sessionGen) onEvent(event); },
       });
       if (gen !== sessionGen) { next.stop(); return; }
@@ -877,19 +877,26 @@ if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySel
 
 document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { ui.input.value = b.dataset.prompt; ui.input.focus(); const i = ui.input.value.indexOf("\u201c\u201d"); if (i >= 0) ui.input.setSelectionRange(i + 1, i + 1); }; });
 // Whisper model row: the one big download, visible and under the user's control. Also tells Claude what is available.
-function whisperState() { return modelReady() ? "ready" : "not downloaded"; }
+function whisperState() { const inst = installedModels(); return (modelReady() ? "ready (" + currentModel() + ")" : "not downloaded (" + currentModel() + " chosen)") + (inst.length && !modelReady() ? "; installed: " + inst.join(", ") : ""); }
 function renderModelRow() {
+  if (!ui.whisperModel.options.length) {
+    Object.entries(WHISPER_MODELS).forEach(([k, m]) => { const o = document.createElement("option"); o.value = k; o.textContent = m.label; ui.whisperModel.appendChild(o); });
+    try { setModel(localStorage.getItem("whisperModel") || currentModel()); } catch (_) {}
+    ui.whisperModel.value = currentModel();
+  }
   const ready = modelReady();
-  ui.modelState.textContent = "Whisper model (large-v3-turbo): " + (ready ? "installed, transcription runs on this Mac" : "not installed, needed for transcription");
+  ui.modelState.textContent = "Whisper: " + (ready ? "installed" : "not installed") + " ·";
   ui.btnWhisperModel.hidden = ready;
+  ui.btnWhisperModel.textContent = "Download (" + WHISPER_MODELS[currentModel()].mb + " MB)";
 }
+ui.whisperModel.onchange = () => { setModel(ui.whisperModel.value); try { localStorage.setItem("whisperModel", currentModel()); } catch (_) {} renderModelRow(); };
 async function downloadWhisperModel() {
-  ui.btnWhisperModel.disabled = true; ui.modelBar.hidden = false;
+  ui.btnWhisperModel.disabled = true; ui.whisperModel.disabled = true; ui.modelBar.hidden = false;
   try {
-    await ensureModel((got, total) => { ui.modelBar.querySelector("i").style.width = (total ? Math.round(100 * got / total) : 0) + "%"; ui.modelState.textContent = "Downloading Whisper model: " + Math.round(got / 1048576) + (total ? " / " + Math.round(total / 1048576) : "") + " MB"; });
-    addMessage("assistant muted", "Whisper model installed. Transcription now runs on this Mac.");
+    await ensureModel((got, total) => { ui.modelBar.querySelector("i").style.width = (total ? Math.round(100 * got / total) : 0) + "%"; ui.modelState.textContent = "Downloading " + currentModel() + ": " + Math.round(got / 1048576) + (total ? " / " + Math.round(total / 1048576) : "") + " MB"; });
+    addMessage("assistant muted", "Whisper " + currentModel() + " installed. Transcription runs on this Mac.");
   } catch (error) { addMessage("assistant error", "Model download failed: " + error.message + ". Check your internet connection and try again."); }
-  finally { ui.btnWhisperModel.disabled = false; ui.modelBar.hidden = true; renderModelRow(); }
+  finally { ui.btnWhisperModel.disabled = false; ui.whisperModel.disabled = false; ui.modelBar.hidden = true; renderModelRow(); }
   return modelReady();
 }
 ui.btnWhisperModel.onclick = downloadWhisperModel;
