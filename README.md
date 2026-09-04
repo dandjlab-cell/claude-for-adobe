@@ -4,7 +4,7 @@ Claude Code, inside Premiere Pro. Talk to it about your timeline, let it make th
 
 **Install:** [download ClaudeForAdobe.zip](https://github.com/dandjlab-cell/claude-for-adobe/releases/latest/download/ClaudeForAdobe.zip), double-click it to unzip, right-click `Install.command` > Open, restart Premiere, then **Window > Extensions > Claude for Premiere**. You need the Claude desktop app signed in (open Claude Code in it once) or the Claude Code CLI. Updates come through a button in the panel.
 
-Select a bin or clips in Premiere and say "edit this"; the panel sends the selection along. Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
+Click the folder you want to work on, then ask Claude to edit it. Tip: keep b-roll in a separate folder from the talking head; it helps Claude a lot. Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
 
 Updated regularly; the panel tells you when a new version is ready and installs it in one click. Coming next: After Effects, and Codex as an alternative to Claude.
 
