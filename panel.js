@@ -31,7 +31,7 @@ function speechRegionsFor(mediaPath) {
   return union(loud.map((r) => ({ start: Math.max(0, r.start - pad), end: Math.min(total, r.end + pad) }))).filter((r) => r.end - r.start >= 0.3);
 }
 
-const EXTENSION_ID = "com.claude-for-adobe.premiere";
+const EXTENSION_ID = (() => { try { return window.__adobe_cep__.getExtensionId() || "com.claude-for-adobe.premiere"; } catch (_) { return "com.claude-for-adobe.premiere"; } })(); // the dev panel has its own id
 const TOOL_TIMEOUT_MS = 180000; // a modal dialog in Premiere can hang evalScript forever; the turn must still finish
 const PROJECT_POLL_MS = 1000;
 const COL = "", ROW = "";

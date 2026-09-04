@@ -159,6 +159,22 @@ node scripts/probe-claude.cjs     # live: real claude CLI, fake Premiere tool, a
 
 Claude reaches Premiere only through the panel's tools. Its own file, shell, and web tools are disabled, and the panel's MCP endpoint is bound to 127.0.0.1 with a per-session bearer token. Scripts Claude writes go through a guard: saving, exporting, quitting, opening projects, file and shell objects, and dynamic evaluation are refused outright; anything that is not a provable plain read waits for your click in the panel before it runs. Edits go to a duplicate sequence, and actions Cmd+Z cannot undo get a file checkpoint first.
 
+## Developing
+
+Two panels can run side by side:
+
+- **Shipped**: what users get. Install from the zip. Updates itself from GitHub Releases.
+- **Dev**: `sh scripts/install.sh` creates "Claude for Premiere (dev)" as symlinks into this repo, with its own
+  extension id and DevTools on port 9296. Edit, then close and reopen the dev panel (restart Premiere for
+  `host/premiere.jsx` changes). The dev panel never self-updates.
+
+Flow: work on a branch, `node --test test/*.test.cjs` (includes a host-script integrity test), try it in the dev
+panel on a sandbox project, merge to `main`. To ship: bump the version in `CSXS/manifest.xml` and `package.json`
+(they must match), `sh scripts/package.sh`, then
+`gh release create vX.Y.Z dist/ClaudeForAdobe-X.Y.Z.zip dist/ClaudeForAdobe.zip`. Every installed copy sees the
+update on its next open. Before anything that touches the installer, updater, or host script, run an independent
+review (`docs/codex-review-log.md` shows the format).
+
 ## Remove
 
 ```sh
