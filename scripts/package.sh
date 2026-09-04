@@ -3,6 +3,8 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION=$(sed -n 's/.*ExtensionBundleVersion="\([^"]*\)".*/\1/p' "$ROOT/CSXS/manifest.xml" | head -1)
+PKG=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$ROOT/package.json" | head -1)
+[ "$VERSION" = "$PKG" ] || { echo "version mismatch: manifest $VERSION vs package.json $PKG" >&2; exit 1; }
 STAGE="$(mktemp -d)/Claude for Adobe"
 mkdir -p "$STAGE" "$ROOT/dist"
 for f in CSXS assets bin host src licenses .claude docs index.html panel.js package.json README.md LICENSE THIRD_PARTY.md Install.command; do cp -R "$ROOT/$f" "$STAGE/"; done

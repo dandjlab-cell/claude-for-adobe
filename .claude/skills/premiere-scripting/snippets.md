@@ -111,8 +111,10 @@ res;
 ```javascript
 var seq = app.project.activeSequence, want = "/path/to/broll.mov", atSec = 30, vIdx = 1;   // V2 must exist
 function findByPath(bin, path) {
-  for (var i = 0; i < bin.children.numItems; i++) { var c = bin.children[i];
-    if (c.type === 2) { var r = findByPath(c, path); if (r) return r; } else { try { if (c.getMediaPath() === path) return c; } catch (e) {} } }
+  for (var i = 0; i < bin.children.numItems; i++) {
+    var c = bin.children[i];
+    if (c.type === 2) { var r = findByPath(c, path); if (r) return r; } else { try { if (c.getMediaPath() === path) return c; } catch (e) {} }
+  }
   return null;
 }
 var item = findByPath(app.project.rootItem, want), track = seq.videoTracks[vIdx], res = "item or track missing";
@@ -211,9 +213,11 @@ Keep `newText` ASCII with no quotes. Non-ASCII needs `\uXXXX` escapes; build the
 var want = "/path/to/interview.mov", NL = String.fromCharCode(10), hits = [];
 function walk(bin, depth, prefix) {
   if (depth > 10) return;
-  for (var i = 0; i < bin.children.numItems; i++) { var c = bin.children[i];
+  for (var i = 0; i < bin.children.numItems; i++) {
+    var c = bin.children[i];
     if (c.type === 2) walk(c, depth + 1, prefix + c.name + "/");
-    else { try { if (c.getMediaPath() === want) hits.push(prefix + c.name + " [" + c.nodeId + "]"); } catch (e) {} } }
+    else { try { if (c.getMediaPath() === want) hits.push(prefix + c.name + " [" + c.nodeId + "]"); } catch (e) {} }
+  }
 }
 walk(app.project.rootItem, 0, "");
 // alternative: var arr = app.project.rootItem.findItemsMatchingMediaPath(want, 1);  (array, or 0 when none)

@@ -57,3 +57,21 @@ Verdict: NOT APPROVED on one item; all Round 2 resolutions re-verified; privacy 
 | M | MEDIUM | `app.reflect` and `new Window` (Reflection / ScriptUI) not in the engine-object list | Added: reflect, Reflection, Window, ScriptUI, Palette, Dialog are rejected. |
 
 Status after Round 4: fix applied and verified locally against the Round 4 strings. The 4-round cap is reached; a confirmation round is the maintainer's call.
+
+## Release process and new tools review, Round 1 (2026-09-04, separate track)
+
+Scope: the zip and installer as a first-time user receives them, the update path end to end, and the tools added today. Verdict: NOT APPROVED, 0 CRITICAL, 5 HIGH, 4 MEDIUM. Zip contents, binaries, skills, licences, manifest and first-launch dependencies verified clean.
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| H1 | HIGH | set_sequence_size assigned a number to videoFrameRate (a Time), fps-only calls computed reframe from 0x0, EvalScript error read as success | Frame rate set through `.seconds`; fps-only keeps the current size and skips reframe; all inside try; panel treats EvalScript error / empty as failure. |
+| H2 | HIGH | place_broll passed seconds to overwriteClip (ticks expected); in/out not restored on error; audio muted but not trimmed | Time built with `new Time().seconds`, `.ticks` passed; project item in/out saved and restored in every path; linked audio trimmed to the duration and muted. |
+| H3 | HIGH | extract_ranges did not union overlapping ranges | Ranges unioned before cutting. closeGaps behaviour left as is (validated on silence cuts; follow-up). |
+| H4 | HIGH | Update overwrote the live extension before stopping Claude/MCP; no busy guard | Refuses while Claude is busy; stops the session and the server before files change; then installs and reloads. |
+| H5 | HIGH | Project switch while busy never refreshed readPaths | Switch during a turn sets a flag; the session restarts (new read path) when the turn ends. |
+| M1 | MEDIUM | Installer deleted the old install before copying; could delete its own source | Copies to a staging folder first, swaps, refuses to run from the installed copy. |
+| M2 | MEDIUM | create_sequence scanned direct children only; settings failure reported as success | Nested walk; settings failure is an error. |
+| M3 | MEDIUM | Version discipline manual | package.sh refuses to build when manifest and package.json versions differ. |
+| M4 | MEDIUM | Duplicate-sequence protection is optional but stated unconditionally | When the option is off, Claude's instructions carry a warning and it must confirm before edits. |
+
+Status: fixes applied; Round 2 requested.

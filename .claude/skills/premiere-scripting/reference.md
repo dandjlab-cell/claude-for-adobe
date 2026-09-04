@@ -121,3 +121,64 @@ UXP cannot set MOGRT text or create caption tracks; those are ExtendScript jobs,
 - Use `try { } catch (e) { }` around per-item calls that can throw (`getMediaPath`, `getValue`) and keep going.
 - End with one expression: `out.join(NL)` or a status string like `"scaled 3 clips"`.
 - Say how many History steps the edit created (one per assignment or mutating call).
+
+## ES3 gotchas that produce confusing errors
+
+- `Array.prototype.indexOf`, `forEach`, `map`, `filter`, `trim`, `Object.keys`, `JSON`: absent. Loop by hand; `String.indexOf` exists.
+- A trailing comma in an array or object literal is a syntax error. `{ a: 1, }` fails.
+- Reserved words cannot follow a dot: `settings.default`, `x.in`, `x.class` fail. Use `x["default"]`.
+- `Number(cl.start.ticks)`: tick strings compared with `===` are string compares; convert before comparing or subtracting.
+- `getSelection()` is an array-like with `.length`; `clips` and `children` use `.numItems`; mixing them returns `undefined`.
+- Functions declared inside `if` blocks are hoisted unpredictably; declare helpers at top level of the script.
+- `alert()` opens a modal that the user may not see behind the panel; return text instead.
+- A script that throws returns `CLAUDE_FOR_ADOBE_ERROR: <message>`; ExtendScript messages are short ("undefined is not an object"),
+  so wrap suspect calls in `try` and push `"step N: " + e` into the result to learn which line failed.
+- Unicode in string literals is not reliable; keep literals ASCII and build other characters with `String.fromCharCode`.
+
+## Read-first recipes (run these before an edit when a name or index is uncertain)
+
+Components and params on a clip (replace the indexes):
+
+```javascript
+var NL = String.fromCharCode(10), cl = app.project.activeSequence.videoTracks[0].clips[0], out = [cl.name];
+for (var i = 0; i < cl.components.numItems; i++) {
+  var comp = cl.components[i];
+  out.push(i + " " + comp.displayName + " [" + comp.matchName + "]");
+  for (var j = 0; j < comp.properties.numItems; j++) {
+    var p = comp.properties[j], v = "";
+    try { v = String(p.getValue()); } catch (e) { v = "(keyframed or unreadable)"; }
+    out.push("   " + j + " " + p.displayName + " = " + v.substring(0, 60) + (p.isTimeVarying() ? " [keyframed]" : ""));
+  }
+}
+out.join(NL);
+```
+
+Sequence settings and tracks:
+
+```javascript
+var s = app.project.activeSequence, st = s.getSettings(), T = 254016000000;
+s.name + " " + st.videoFrameWidth + "x" + st.videoFrameHeight + " fps=" + (T / Number(s.timebase)).toFixed(3) +
+  " V=" + s.videoTracks.numTracks + " A=" + s.audioTracks.numTracks + " end=" + (Number(s.end) / T).toFixed(2) + "s";
+```
+
+MOGRT fields on a clip (which display names exist before setting text):
+
+```javascript
+var cl = app.project.activeSequence.videoTracks[2].clips[0], comp = cl.getMGTComponent(), names = [];
+if (comp) {
+  for (var p = 0; p < comp.properties.numItems; p++) {
+    var prop = comp.properties[p];
+    names.push(prop.displayName);
+  }
+}
+comp ? cl.name + ": " + names.join(", ") : cl.name + " is not a MOGRT";
+```
+
+## Undo and reporting
+
+- Every mutating call or assignment is one History entry; a loop over 12 clips is 12 Cmd+Z steps. Say the count.
+- QE `extract` is one step per range. `importFiles`, `setSettings`, `deleteSequence`, `setXMPMetadata` are not undoable; the panel
+  checkpoints the project file first and the tool result says so.
+- The panel duplicates the sequence as "<name> [Claude]" before the first edit; scripts run on the copy. Do not clone again.
+- After an edit, read the state back in the same script (clip count, `getValue()`, marker start) and put it in the result so the
+  user sees proof rather than an assumption.

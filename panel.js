@@ -89,6 +89,7 @@ const MODEL_FALLBACK = "claude-sonnet-5";
 })();
 const modelLabel = (id) => { const o = [...ui.model.options].find((x) => x.value === id); return o ? o.text : id; };
 let lastPayload = "";
+let pendingProjectRestart = false; // the project changed mid-turn: restart (new read path) when the turn ends
 let lastCopyId = null;        // working copy created by the most recent ensureWorkingCopy()
 let allowScriptsThisSession = false; // set by "Run all this session"; cleared on New
 function setStatus(text, cls) { ui.status.textContent = text; ui.status.className = cls || (/^(Ready|Starting)/.test(text) ? "" : "busy"); }
@@ -157,7 +158,7 @@ async function refreshProject() {
   const changed = next.path !== previousPath;
   project = next;
   ui.project.textContent = (project.name || "No project") + (project.sequence ? " · " + project.sequence : "");
-  if (changed) { log("project: " + (project.path || "(none)")); renderCheckpoints(); if (session && !session.busy && previousPath) restartSession(session.sessionId); }
+  if (changed) { log("project: " + (project.path || "(none)")); renderCheckpoints(); if (session && previousPath) { if (session.busy) pendingProjectRestart = true; else restartSession(session.sessionId); } }
 }
 
 async function saveProject() {
@@ -357,10 +358,28 @@ async function runExtendScript({ summary = "", code = "" }) {
   return { text: copyNote + (ok ? raw : "CLAUDE_FOR_ADOBE_ERROR:" + body) + (note ? "\n" + note : ""), isError: !ok };
 }
 
+// "sequence 1080x1920; footage 3840x2160 (landscape)": says when clips and frame disagree, so Claude offers the reframe.
+async function frameMismatchNote(snap) {
+  try {
+    if (!snap || !snap.width || !snap.height) return "";
+    const paths = new Set(snap.clips.filter((c) => c.mediaPath && c.track[0] === "V").map((c) => c.mediaPath));
+    if (!paths.size) return "";
+    const raw = await host("binMedia", "");
+    const sizes = new Map();
+    (raw && raw.indexOf("ERR:") !== 0 ? raw.split("\u0003") : []).forEach((r) => { const [, mp, , vi] = r.split("\u0002"); const m = /(\d+)\s*x\s*(\d+)/.exec(vi || ""); if (paths.has(mp) && m) sizes.set(m[1] + "x" + m[2], (sizes.get(m[1] + "x" + m[2]) || 0) + 1); });
+    if (!sizes.size) return "";
+    const seqPortrait = snap.height > snap.width;
+    const parts = [...sizes].map(([k, n]) => { const [w, h] = k.split("x").map(Number); return n + " x " + k + (h > w ? " (portrait)" : w === h ? " (square)" : " (landscape)"); });
+    const mismatch = [...sizes.keys()].some((k) => { const [w, h] = k.split("x").map(Number); return (h > w) !== seqPortrait || Math.abs(w / h - snap.width / snap.height) > 0.02; });
+    return "Frame: sequence " + snap.width + "x" + snap.height + (seqPortrait ? " (portrait)" : snap.width === snap.height ? " (square)" : " (landscape)") + "; footage " + parts.join(", ") + (mismatch ? ". MISMATCH: clips do not match the frame (letterboxed or cropped). set_sequence_size with reframe fill, or ask which frame the editor wants." : ".");
+  } catch (_) { return ""; }
+}
+
 async function sequenceOverview() {
   const card = addTool("sequence_overview", "");
   timeline = await readSnapshot();
-  const text = formatSnapshot(timeline);
+  let text = formatSnapshot(timeline);
+  text += "\n" + await frameMismatchNote(timeline);
   card.done(text.split("\n").slice(0, 12).join("\n") + (timeline.clips.length > 10 ? "\n…" : ""), !timeline.error);
   return { text, isError: !!timeline.error };
 }
@@ -735,7 +754,8 @@ async function classifyClips({ bin = "" } = {}) {
     rows.push(classifyMedia({ name: path.basename(mediaPath), duration, speechSeconds, hasTranscript, method }));
   }
   rows.sort((a, b) => b.ratio - a.ratio);
-  const text = (footage ? "footage: " + footage + "\n" : "") + formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
+  const seqNote = timeline && timeline.width ? " (active sequence " + timeline.width + "x" + timeline.height + ")" : "";
+  const text = (footage ? "footage: " + footage + seqNote + "\n" : "") + formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
   writeAnalysis((bin ? bin.replace(/\//g, "_") : (project.sequence || "sequence")) + ".classification.md", "# Classification of " + (bin ? "bin " + bin : "sequence " + (project.sequence || "")) + "\n\n" + text + "\n");
   card.done(text, true);
   setStatus("Thinking…");
@@ -818,7 +838,8 @@ async function findInTranscript({ query = "", source = "auto" } = {}) {
 // Deterministic timeline surgery, no scripts: remove exact ranges, or keep only the given ranges.
 async function extractRanges({ ranges = [], dry_run = true } = {}) {
   const card = addTool((dry_run ? "plan" : "extract") + "_ranges (" + ranges.length + ")", "");
-  const cuts = (Array.isArray(ranges) ? ranges : []).map((r) => Array.isArray(r) ? { start: Number(r[0]), end: Number(r[1]) } : { start: Number(r.start), end: Number(r.end) }).filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start).sort((a, b) => b.start - a.start);
+  const raw = (Array.isArray(ranges) ? ranges : []).map((r) => Array.isArray(r) ? { start: Number(r[0]), end: Number(r[1]) } : { start: Number(r.start), end: Number(r.end) }).filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+  const cuts = union(raw).sort((a, b) => b.start - a.start); // overlapping ranges count once
   if (!cuts.length) return err(card, "ranges must be [[start,end], ...] in sequence seconds");
   const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
   return applyCuts(card, cuts, dry_run, cuts.length + " range(s), " + total.toFixed(1) + "s removed");
@@ -879,7 +900,7 @@ async function setSequenceSize({ preset, aspect, width, height, fps, reframe = "
   try { await saveProject(); const entry = createCheckpoint(project.path, "before sequence resize"); renderCheckpoints(); cp = " File checkpoint " + entry.id + " saved first (this is not undoable with Cmd+Z)."; }
   catch (error) { return err(card, "Resize blocked: it cannot be undone and a checkpoint was not possible: " + error.message); }
   const raw = await host("resizeSequence", String(width || ""), String(height || ""), String(fps || ""), reframe);
-  const ok = raw.indexOf("ERR:") !== 0;
+  const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
   card.done(raw + cp, ok);
   timeline = await readSnapshot().catch(() => timeline);
   return { text: copyNote + raw + cp, isError: !ok };
@@ -962,6 +983,7 @@ function onEvent(event) {
       return;
     }
     if (event.isError) addMessage("assistant error", event.text || "Claude returned an error.");
+    if (pendingProjectRestart) { pendingProjectRestart = false; setTimeout(() => restartSession(session && session.sessionId), 50); }
     const used = (event.modelsUsed || []).map(modelLabel).join(" + ");
     setStatus("Ready" + (used ? " · " + used : "") + (event.costUsd ? " · $" + event.costUsd.toFixed(3) + " this session" : ""));
     setBusy(false);
@@ -992,7 +1014,7 @@ function restartSession(resumeSessionId) {
     try {
       const next = createClaudeSession({
         mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot, readPaths: [analysisDir(), path.join(extensionRoot, ".claude", "skills")],
-        capabilities: "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
+        capabilities: (ui.dupSequence.checked ? "" : "WARNING: the editor turned off duplicate-sequence protection; edits hit the ORIGINAL sequence. Confirm before any edit. ") + "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
         onEvent: (event) => { if (gen === sessionGen) onEvent(event); },
       });
       if (gen !== sessionGen) { next.stop(); return; }
@@ -1140,15 +1162,16 @@ async function checkUpdates(announce) {
 }
 async function installPending() {
   const update = pendingUpdate; if (!update) return;
+  if (session && session.busy) { addMessage("assistant muted", "Wait for Claude to finish (or press Stop), then update."); return; }
   ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Updating…";
   try {
+    // Stop the Claude process and the local server BEFORE files change under them.
+    try { if (session) { const old = session; session = null; await old.stop(); } } catch (_) {}
+    try { if (mcp) mcp.close(); } catch (_) {}
     const v = await installUpdate(update, extensionRoot);
     pendingUpdate = null;
     setVersionRow("v" + v + " installed, restarting");
     ui.checkUpdates.textContent = "Restarting…"; ui.checkUpdates.className = "accent"; ui.checkUpdates.disabled = true;
-    // Reload the panel in place: stop the Claude process and the local server first so nothing is orphaned.
-    try { if (session) await session.stop(); } catch (_) {}
-    try { if (mcp) mcp.close(); } catch (_) {}
     setTimeout(() => location.reload(), 400);
   } catch (error) {
     ui.checkUpdates.disabled = false; ui.checkUpdates.textContent = "Update to " + update.version;

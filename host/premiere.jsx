@@ -328,7 +328,7 @@ var PCX = (function () {
     var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
     if (!bin) return "ERR:no bin " + binPath;
     var items = [];
-    for (var i = 0; i < bin.children.numItems; i++) { var c = bin.children[i]; if (c.type !== 2) { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp) items.push(c); } }
+    (function walk(b) { for (var i = 0; i < b.children.numItems; i++) { var c = b.children[i]; if (c.type === 2) walk(c); else { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp) items.push(c); } } })(bin);
     if (!items.length) return "ERR:no media in " + (binPath || "root");
     var s = null;
     try { s = app.project.createNewSequenceFromClips(name, items, bin); } catch (e) { return "ERR:" + e; }
@@ -342,9 +342,9 @@ var PCX = (function () {
       try {
         var st = s.getSettings();
         if (w && h) { st.videoFrameWidth = w; st.videoFrameHeight = h; }
-        if (f) st.videoFrameRate = f;
+        if (f) { if (st.videoFrameRate && typeof st.videoFrameRate === "object") st.videoFrameRate.seconds = 1 / f; else st.videoFrameRate = 1 / f; }
         s.setSettings(st);
-      } catch (e) { return s.sequenceID + "|" + s.name + "|settings-unchanged:" + e; }
+      } catch (e) { return "ERR:sequence created but settings could not be applied: " + e; }
     }
     var fin = s.getSettings();
     try { app.project.openSequence(s.sequenceID); } catch (e) {}
@@ -442,17 +442,26 @@ var PCX = (function () {
     if (s.videoTracks.numTracks <= idx) return "ERR:video track V" + (idx + 1) + " does not exist (add it in the timeline)";
     var track = s.videoTracks[idx];
     var at = Number(atSec), dur = Number(durSec), inPt = Number(inSec) || 0;
-    try { if (inPt > 0) { item.setInPoint(inPt, 4); } } catch (e) {}
-    var ok = false;
-    try { ok = track.overwriteClip(item, at); } catch (e) { return "ERR:overwriteClip " + e; }
-    try { if (inPt > 0) item.clearInPoint(4); } catch (e) {}
+    var hadIn = null, hadOut = null;
+    try { hadIn = item.getInPoint(4); hadOut = item.getOutPoint(4); } catch (e) {}
+    var ok = false, err = "";
+    try {
+      if (inPt > 0) item.setInPoint(inPt, 4);
+      if (inPt > 0 && dur > 0) item.setOutPoint(inPt + dur, 4);
+      var tAt = new Time(); tAt.seconds = at;
+      ok = track.overwriteClip(item, tAt.ticks);
+    } catch (e) { err = String(e); }
+    // Restore the project item's own in/out whatever happened above.
+    try { if (hadIn && num(hadIn.ticks) > 0) item.setInPoint(num(hadIn.ticks) / T, 4); else item.clearInPoint(4); } catch (e) {}
+    try { if (hadOut && num(hadOut.ticks) > 0) item.setOutPoint(num(hadOut.ticks) / T, 4); else item.clearOutPoint(4); } catch (e) {}
+    if (err) return "ERR:overwriteClip " + err;
     if (!ok) return "ERR:overwriteClip refused";
     var placed = null;
     for (var c = 0; c < track.clips.numItems; c++) { var cl = track.clips[c]; if (Math.abs(num(cl.start.ticks) / T - at) < 0.02) { placed = cl; } }
     if (!placed) return "ERR:placed clip not found on V" + (idx + 1);
     if (dur > 0) { try { var tm = new Time(); tm.seconds = at + dur; placed.end = tm; } catch (e) { return "placed " + placed.name + " V" + (idx + 1) + " at " + at.toFixed(2) + "s (could not trim: " + e + ")"; } }
     var muted = 0;
-    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tr = s.audioTracks[a]; for (var k = 0; k < tr.clips.numItems; k++) { var ac = tr.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.02) { try { ac.disabled = true; muted++; } catch (e2) {} } } }
+    for (var a = 0; a < s.audioTracks.numTracks; a++) { var tr = s.audioTracks[a]; for (var k = 0; k < tr.clips.numItems; k++) { var ac = tr.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.02) { try { if (dur > 0) { var ta = new Time(); ta.seconds = at + dur; ac.end = ta; } } catch (e3) {} try { ac.disabled = true; muted++; } catch (e2) {} } } }
     return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (muted ? " (audio off)" : "");
   }
 
@@ -465,9 +474,13 @@ var PCX = (function () {
     var w = Number(width), h = Number(height), f = Number(fps);
     var st = s.getSettings();
     var oldW = num(st.videoFrameWidth), oldH = num(st.videoFrameHeight);
-    if (w && h) { st.videoFrameWidth = w; st.videoFrameHeight = h; }
-    if (f) st.videoFrameRate = f;
-    try { s.setSettings(st); } catch (e) { return "ERR:setSettings " + e; }
+    if (!(w && h)) { w = oldW; h = oldH; }
+    try {
+      st.videoFrameWidth = w; st.videoFrameHeight = h;
+      if (f) { if (st.videoFrameRate && typeof st.videoFrameRate === "object") st.videoFrameRate.seconds = 1 / f; else st.videoFrameRate = 1 / f; }
+      s.setSettings(st);
+    } catch (e) { return "ERR:setSettings " + e; }
+    if (w === oldW && h === oldH) mode = "none";
     var done = 0, skipped = 0;
     if (mode === "fill" || mode === "fit") {
       for (var t = 0; t < s.videoTracks.numTracks; t++) {
@@ -485,7 +498,7 @@ var PCX = (function () {
             var fx = w / srcW, fy = h / srcH;
             var factor = mode === "fill" ? Math.max(fx, fy) : Math.min(fx, fy);
             var cur = num(scale.getValue());
-            scale.setValue(cur * factor / Math.max(oldW / srcW, oldH / srcH) * (mode === "fill" ? 1 : 1), true);
+            scale.setValue(cur * factor / Math.max(oldW / srcW, oldH / srcH), true);
             var p = pos.getValue();
             var normalized = p && p.length === 2 && p[0] <= 1.5 && p[1] <= 1.5;
             pos.setValue(normalized ? [0.5, 0.5] : [w / 2, h / 2], true);

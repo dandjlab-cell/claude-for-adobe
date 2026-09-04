@@ -4,10 +4,15 @@
 set -e
 SRC="$(cd "$(dirname "$0")" && pwd)"
 DEST="$HOME/Library/Application Support/Adobe/CEP/extensions/com.claude-for-adobe.premiere"
+if [ "$SRC" = "$DEST" ]; then echo "This is the installed copy already. Download the zip and run Install.command from there."; exit 0; fi
 mkdir -p "$(dirname "$DEST")"
-rm -rf "$DEST"
-cp -R "$SRC" "$DEST"
-xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true   # let the bundled VAD binary run
+STAGE="$DEST.new.$$"
+rm -rf "$STAGE"
+cp -R "$SRC" "$STAGE"                                    # copy first; the old install is untouched if this fails
+xattr -dr com.apple.quarantine "$STAGE" 2>/dev/null || true   # let the bundled binaries run
+rm -rf "$DEST.old" && { [ -e "$DEST" ] && mv "$DEST" "$DEST.old" || true; }
+mv "$STAGE" "$DEST"
+rm -rf "$DEST.old"
 for v in 11 12 13; do defaults write com.adobe.CSXS.$v PlayerDebugMode 1; done
 echo ""
 echo "Installed to: $DEST"
