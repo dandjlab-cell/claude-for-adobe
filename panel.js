@@ -757,10 +757,19 @@ function parseDuration(text) {
 }
 
 // New sequence from a bin. Premiere matches the footage unless width/height/fps are given. Becomes the active sequence.
-const SEQUENCE_PRESETS = { match: {}, vertical: { width: 1080, height: 1920 }, hd: { width: 1920, height: 1080 }, uhd: { width: 3840, height: 2160 } };
-async function createSequence({ name = "", bin = "", width, height, fps, preset, insert_clips = true } = {}) {
+const SEQUENCE_PRESETS = { match: {}, vertical: { width: 1080, height: 1920 }, hd: { width: 1920, height: 1080 }, uhd: { width: 3840, height: 2160 }, square: { width: 1080, height: 1080 }, four_five: { width: 1080, height: 1350 } };
+// "9:16", "4:5", "16:9", "1:1", "2.39:1" -> a frame size: portrait and square at 1080 wide, landscape at 1920 wide.
+function sizeFromAspect(aspect) {
+  const m = /^\s*([\d.]+)\s*[:x\/]\s*([\d.]+)\s*$/.exec(String(aspect || ""));
+  if (!m) return null;
+  const a = Number(m[1]), b = Number(m[2]); if (!(a > 0 && b > 0)) return null;
+  const even = (n) => Math.round(n / 2) * 2;
+  return a < b ? { width: 1080, height: even(1080 * b / a) } : a === b ? { width: 1080, height: 1080 } : { width: 1920, height: even(1920 * b / a) };
+}
+async function createSequence({ name = "", bin = "", width, height, fps, preset, aspect, insert_clips = true } = {}) {
   if (!bin) bin = await selectedBin();
   if (preset && SEQUENCE_PRESETS[preset]) ({ width = width, height = height } = SEQUENCE_PRESETS[preset]);
+  if (!(width && height) && aspect) { const sz = sizeFromAspect(aspect); if (sz) ({ width, height } = sz); }
   const card = addTool("create_sequence " + (name || "(unnamed)"), "");
   if (!name) return err(card, "name is required");
   const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false");
@@ -859,8 +868,9 @@ async function saveNotes({ name = "notes.md", text = "" } = {}) {
 }
 
 // Frame size change with automatic reframe. Not undoable, so the project is saved and checkpointed first, no question asked.
-async function setSequenceSize({ preset, width, height, fps, reframe = "fill" } = {}) {
+async function setSequenceSize({ preset, aspect, width, height, fps, reframe = "fill" } = {}) {
   if (preset && SEQUENCE_PRESETS[preset]) ({ width = width, height = height } = SEQUENCE_PRESETS[preset]);
+  if (!(width && height) && aspect) { const sz = sizeFromAspect(aspect); if (sz) ({ width, height } = sz); }
   const card = addTool("set_sequence_size " + (width && height ? width + "x" + height : "") + (fps ? " @" + fps : "") + " (" + reframe + ")", "");
   if (!(width && height) && !fps) return err(card, "give preset (vertical/hd/uhd) or width+height, or fps");
   let copyNote = "";
@@ -907,8 +917,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
-  { name: "set_sequence_size", description: "Change the active sequence's frame size (preset vertical = 1080x1920, hd, uhd, or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked; report the result in one line and offer a nudge left/right if framing matters.",
-    inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd"] }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
+  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked; report the result in one line and offer a nudge left/right if framing matters.",
+    inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration, sound off. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
   { name: "list_analysis", description: "Lists the analysis files next to this project (transcripts, classifications, notes, and anything extracted elsewhere such as prosody or diarization). Check it first; read files with a subagent.",
@@ -918,7 +928,7 @@ const TOOL_DEFS = [
   { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",
     inputSchema: { type: "object", properties: { media_paths: { type: "array", items: { type: "string" } } }, required: ["media_paths"] } },
   { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
-    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, preset: { type: "string", enum: ["match", "vertical", "hd", "uhd"], description: "match = the footage; vertical = 1080x1920; hd = 1920x1080; uhd = 3840x2160" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
+    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, preset: { type: "string", enum: ["match", "vertical", "hd", "uhd", "square", "four_five"], description: "match = the footage; vertical = 1080x1920; hd = 1920x1080; uhd = 3840x2160; square = 1080x1080; four_five = 1080x1350" }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
   { name: "classify_clips", description: "Cheap first pass over every source file in a bin (give bin) or in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path like 'Footage/Day 2'; omit for the active sequence" } } } },
   { name: "project_bins", description: "With a bin selected in Premiere (or given), lists just that bin's media with sizes and frame rates. Otherwise the whole Project panel tree: bins (ending in /, with item counts) and items, including loose items at the root.",
