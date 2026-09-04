@@ -96,3 +96,9 @@ Verdict: NOT APPROVED. H2 and the update-failure MEDIUM RESOLVED; one NEW HIGH: 
 | H6 | HIGH | resizeSequence deleted but still exported; host script throws at load | First restore attempt failed silently and 0.1.46 shipped broken as well. Restored properly in 0.1.47 (function extracted by brace matching from the 0.1.44 commit). New test (test/host.test.cjs) parses the host script, checks every exported name is defined, and checks every host call from panel.js has an export. Releases 0.1.45 and 0.1.46 deleted. |
 
 Status: fix applied with a regression test; Round 4 (final) requested.
+
+## Release process and new tools review, Round 4 (2026-09-04, final)
+
+Verdict: **APPROVED**. resizeSequence defined once and exported; host script parses; all 21 exports resolve; all 20 host calls map; export and function sets match the known-good 0.1.44. One LOW (test did not check uniqueness or a baseline) addressed: the test now rejects duplicate definitions and a shrinking export table.
+
+**Final status:** 0.1.47 is the release to use. 0.1.45 and 0.1.46 were withdrawn.

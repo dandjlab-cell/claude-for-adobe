@@ -14,6 +14,9 @@ test("host/premiere.jsx parses and every exported host function is defined", () 
   assert.ok(names.length > 10);
   const missing = names.filter((n) => !new RegExp("function " + n + "\\(").test(src));
   assert.deepEqual(missing, [], "exported but not defined");
+  const dupes = names.filter((n) => (src.match(new RegExp("function " + n + "\\(", "g")) || []).length !== 1);
+  assert.deepEqual(dupes, [], "exported function defined more than once");
+  assert.ok(names.length >= 21, "export table shrank below the known-good baseline of 21");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const called = [...panel.matchAll(/host\("(\w+)"/g)].map((m) => m[1]);
   const unknown = [...new Set(called)].filter((n) => !names.includes(n));
