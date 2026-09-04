@@ -39,7 +39,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -673,9 +673,9 @@ function restartSession(resumeSessionId) {
 }
 
 function sendMessage() {
-  const text = ui.input.value.trim();
+  const text = ui.input.value.trim() || (attachments.length ? "(see the attached image" + (attachments.length > 1 ? "s" : "") + ")" : "");
   if (!text || !session || session.busy) return;
-  addMessage("user", text);
+  addMessage("user", text + (attachments.length ? "\n[" + attachments.length + " image" + (attachments.length > 1 ? "s" : "") + " attached]" : ""));
   ui.input.value = "";
   liveMessage = null;
   let payload = text;
@@ -691,9 +691,11 @@ function sendMessage() {
     pendingChanges = [];
   }
   lastPayload = payload;
+  const images = attachments.splice(0).map((a) => ({ mediaType: a.mediaType, data: a.data }));
+  renderAttachments();
   setBusy(true);
   setStatus("Thinking…");
-  try { session.send(payload); } catch (error) { addMessage("assistant error", error.message); setBusy(false); }
+  try { session.send(payload, images); } catch (error) { addMessage("assistant error", error.message); setBusy(false); }
 }
 
 async function boot() {
@@ -777,6 +779,39 @@ setTimeout(() => checkUpdates(false), 4000);
 // Persistent choice: ask before scripts (default on).
 try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
 ui.askScripts.onchange = () => { try { localStorage.setItem("askScripts", ui.askScripts.checked ? "yes" : "no"); } catch (_) {} };
+// Drops and pastes. Without this, dropping a file makes the embedded browser navigate to it and the panel is gone.
+const attachments = []; // [{ name, mediaType, data }]
+function renderAttachments() {
+  ui.attachments.innerHTML = "";
+  attachments.forEach((a, i) => {
+    const chip = document.createElement("span"); chip.className = "chip";
+    const img = document.createElement("img"); img.src = "data:" + a.mediaType + ";base64," + a.data; img.alt = a.name;
+    const x = document.createElement("button"); x.type = "button"; x.textContent = "×"; x.title = "Remove"; x.onclick = () => { attachments.splice(i, 1); renderAttachments(); };
+    chip.append(img, document.createTextNode(a.name), x); ui.attachments.appendChild(chip);
+  });
+  ui.attachments.style.display = attachments.length ? "flex" : "none";
+}
+function addFiles(files) {
+  [...files].forEach((file) => {
+    if (/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+      if (file.size > 20 * 1024 * 1024) { addMessage("assistant error", file.name + " is over 20 MB; not attached."); return; }
+      const r = new FileReader();
+      r.onload = () => { attachments.push({ name: file.name || "image", mediaType: file.type, data: String(r.result).split(",")[1] }); renderAttachments(); };
+      r.readAsDataURL(file);
+    } else if (/^text\/|\.(txt|srt|vtt|md|json|csv|edl|xml)$/i.test(file.type + " " + file.name)) {
+      const r = new FileReader();
+      r.onload = () => { ui.input.value += (ui.input.value ? "\n\n" : "") + "--- " + file.name + " ---\n" + String(r.result).slice(0, 200000); };
+      r.readAsText(file);
+    } else {
+      const p = file.path || file.name;
+      ui.input.value += (ui.input.value ? "\n" : "") + "File: " + p;
+    }
+  });
+}
+["dragenter", "dragover"].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); document.body.classList.add("dropping"); }));
+["dragleave", "dragend"].forEach((ev) => document.addEventListener(ev, () => document.body.classList.remove("dropping")));
+document.addEventListener("drop", (e) => { e.preventDefault(); document.body.classList.remove("dropping"); if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); else { const t = e.dataTransfer && e.dataTransfer.getData("text"); if (t) ui.input.value += (ui.input.value ? "\n" : "") + t; } ui.input.focus(); });
+ui.input.addEventListener("paste", (e) => { const files = e.clipboardData && [...e.clipboardData.files]; if (files && files.length) { e.preventDefault(); addFiles(files); } });
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => restartSession(session && session.sessionId);

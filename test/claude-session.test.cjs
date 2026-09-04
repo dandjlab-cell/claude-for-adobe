@@ -55,3 +55,10 @@ test("writeMcpConfig carries the bearer token and is private to the user", () =>
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   fs.unlinkSync(file);
 });
+
+test("userMessage builds image blocks before the text", () => {
+  const { userMessage } = require("../src/claude-session.cjs");
+  assert.deepEqual(userMessage("hi"), { type: "user", message: { role: "user", content: "hi" } });
+  const m = userMessage("look", [{ mediaType: "image/png", data: "AAAA" }]);
+  assert.deepEqual(m.message.content, [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } }, { type: "text", text: "look" }]);
+});

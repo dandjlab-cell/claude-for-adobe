@@ -82,6 +82,11 @@
     textarea::placeholder { color: var(--ink-40); }
     .composer .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .composer .row .options { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; color: var(--ink-60); font-size: 12px; }
+    #attachments { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); padding: 3px 6px 3px 3px; font-family: var(--mono); font-size: 11px; color: var(--ink-60); }
+    .chip img { height: 28px; width: auto; display: block; }
+    .chip button { padding: 0 5px; border: 0; font-size: 13px; color: var(--ink-60); }
+    body.dropping .composer { outline: 2px dashed var(--accent); outline-offset: -4px; }
     .composer .hint { font-family: var(--mono); font-size: 10.5px; color: var(--ink-40); }
 
     .drawers { border-top: 1px solid var(--line); padding: 4px 12px 8px; }
@@ -134,7 +139,8 @@
       </div>
     </div>
     <div class="composer">
-      <textarea id="input" placeholder="Ask Claude to inspect or edit the open project. Enter sends, Shift+Enter for a new line."></textarea>
+      <div id="attachments" style="display:none"></div>
+      <textarea id="input" placeholder="Ask Claude to inspect or edit the open project. Enter sends, Shift+Enter for a new line. Drop or paste a screenshot to include it."></textarea>
       <div class="row">
         <button id="send" type="button" class="accent">Send</button>
         <button id="stop" type="button" disabled>Stop</button>

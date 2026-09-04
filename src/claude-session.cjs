@@ -127,6 +127,14 @@ function reduceStreamEvent(message) {
   return null;
 }
 
+// stream-json user turn. `images` = [{ mediaType, data (base64) }] become image blocks before the text.
+function userMessage(text, images = []) {
+  const blocks = images.map((i) => ({ type: "image", source: { type: "base64", media_type: i.mediaType, data: i.data } }));
+  const content = blocks.length ? [...blocks, { type: "text", text: String(text) }] : String(text);
+  return { type: "user", message: { role: "user", content } };
+}
+
+
 function createClaudeSession(options) {
   const { mcpUrl, mcpToken, onEvent, model = DEFAULT_MODEL, cwd = os.tmpdir(), claudePath = findClaude(), resumeSessionId } = options;
   const mcpConfigPath = writeMcpConfig(mcpUrl, mcpToken);
@@ -162,10 +170,10 @@ function createClaudeSession(options) {
   return {
     get sessionId() { return sessionId; },
     get busy() { return busy; },
-    send(text) {
+    send(text, images) {
       if (busy) throw new Error("Claude is still working on the previous message.");
       busy = true;
-      child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content: String(text) } }) + "\n");
+      child.stdin.write(JSON.stringify(userMessage(text, images)) + "\n");
     },
     // Graceful: SIGTERM, SIGKILL after 250ms, resolves once the process is gone (max 1s).
     stop() {
@@ -181,4 +189,4 @@ function createClaudeSession(options) {
   };
 }
 
-module.exports = { writeMcpConfig, BASE_MODELS, MODEL_TIERS, availableModels, fallbackModels, readClaudeJson, DEFAULT_MODEL, DISALLOWED_TOOLS, MCP_SERVER_NAME, buildArgs, buildSystemPrompt, createClaudeSession, findClaude, reduceStreamEvent };
+module.exports = { userMessage, writeMcpConfig, BASE_MODELS, MODEL_TIERS, availableModels, fallbackModels, readClaudeJson, DEFAULT_MODEL, DISALLOWED_TOOLS, MCP_SERVER_NAME, buildArgs, buildSystemPrompt, createClaudeSession, findClaude, reduceStreamEvent };
