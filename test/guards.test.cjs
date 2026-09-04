@@ -261,3 +261,15 @@ test("round-2 bypass probes are rejected or at least not read-only", () => {
   assert.ok(inspectExtendScript("x.remove.call(y)").rejection, "call/apply must be rejected");
   assert.equal(inspectExtendScript("String(app.project.activeSequence.name)").readOnly, true);
 });
+
+test("round-3 probes: string tricks and comments never reach auto-run", () => {
+  const { inspectExtendScript } = require("../src/core.cjs");
+  for (const code of ['app.project["sa"+""+"ve"]()', 'app["qu"+""+"it"]()', 'app.project./*x*/save/*y*/()', 'app.project.activeSequence["exportAs"+""+"MediaDirect"]("/o.mov","/p.epr",1)']) {
+    assert.ok(inspectExtendScript(code).rejection, "must be rejected: " + code);
+  }
+  for (const code of ['app.project.activeSequence.clone/*x*/()', 'app.project.activeSequence.name/*x*/="renamed"', 'var n = "x"; app.project.activeSequence.name', 'app.project.activeSequence.name // note']) {
+    const r = inspectExtendScript(code);
+    assert.equal(r.readOnly, false, "must need a click: " + code);
+  }
+  assert.equal(inspectExtendScript("app.project.activeSequence.videoTracks[0].clips.numItems").readOnly, true);
+});

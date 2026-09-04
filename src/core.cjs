@@ -87,8 +87,8 @@ const warningPatterns = [
   ["QE DOM use is undocumented and may be unsafe.", /\bapp\s*\.\s*enableQE\b|\bqe\s*\./i],
 ];
 
-// A script is "read-only" only if it proves it: no assignments to properties, no delete, every method call
-// on the allowlist, and no computed member access with a non-numeric index. Anything else needs the
+// A script is "read-only" only if it proves it: no string literals or comments at all (see inspectExtendScript),
+// no assignments to properties, no delete, every method call on the allowlist, and only numeric computed indexes. Anything else needs the
 // user's click before it runs (panel.js), on top of the duplicate sequence and checkpoints.
 const READ_ONLY_CALL = /^(?:(?:get|is|has|query|find|to|index|char|search)[A-Za-z]*|slice|split|join|match|replace|substr|substring|concat|push|pop|shift|unshift|sort|reverse|String|Number|Boolean|Array|parseInt|parseFloat|isNaN|isFinite|floor|ceil|round|abs|min|max|pow|sqrt|exec|test|log|localeCompare)$/;
 function isReadOnlyScript(src) {
@@ -127,13 +127,18 @@ const nonUndoablePatterns = [
   ["importFiles / importSequences", /\.import(Files|Sequences|AEComps?)\s*\(/],
 ];
 
+const hasComments = (src) => /\/\*[\s\S]*?\*\/|\/\/[^\n]*/.test(src);
+const hasStrings = (src) => /["']/.test(src);
+
 function inspectExtendScript(code) {
-  let inspectedSource = String(code);
+  // Comments are stripped before matching so `a./*x*/save/*y*/()` cannot split a token.
+  let inspectedSource = String(code).replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
   let previousSource;
   do {
     previousSource = inspectedSource;
+    // Fold any string concatenation, including empty pieces: "sa"+""+"ve" -> "save".
     inspectedSource = inspectedSource.replace(
-      /(["'])([A-Za-z_$][\w$]*)\1\s*\+\s*(["'])([A-Za-z_$][\w$]*)\3/g,
+      /(["'])([^"'\\]*)\1\s*\+\s*(["'])([^"'\\]*)\3/g,
       (_match, _leftQuote, left, _rightQuote, right) => JSON.stringify(left + right),
     );
   } while (inspectedSource !== previousSource);
@@ -149,7 +154,8 @@ function inspectExtendScript(code) {
       .map(([warning]) => warning),
     mutating: mutationPatterns.some((pattern) => pattern.test(inspectedSource)) || nonUndoablePatterns.some(([, p]) => p.test(inspectedSource)),
     notUndoable: nonUndoablePatterns.filter(([, p]) => p.test(inspectedSource)).map(([name]) => name),
-    readOnly: !rejected && isReadOnlyScript(inspectedSource),
+    // Auto-run without a click only for the plainest reads: no strings, comments, or escapes at all.
+    readOnly: !rejected && !hasComments(String(code)) && !hasStrings(String(code)) && !/\\/.test(String(code)) && isReadOnlyScript(inspectedSource),
   };
 }
 

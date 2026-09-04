@@ -36,3 +36,13 @@ Verdict: NOT APPROVED. C1 and H4 open; H1, H2, H3, L2 resolved; M1, M2, M3 parti
 | NEW | MEDIUM | LICENSE file empty; acceptance-test header claimed immutability | LICENSE rewritten (MIT); test header now records the policy change and points here. |
 
 Status after Round 2: fixes applied, history squashed, sending Round 3.
+
+## Round 3 (2026-09-04)
+
+Verdict: none. Codex ran its probes, then OpenAI's content filter stopped it before it wrote a verdict. Its probes stand as findings:
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| C1c | CRITICAL | `"sa"+""+"ve"` (three-part concatenation), comments between tokens (`save/*y*/()`, `name/*x*/=`), and `["exportAs"+""+"MediaDirect"]` were classified read-only | Comments are stripped before matching; any string concatenation is folded, including empty pieces; and the read-only (auto-run) class now requires a script with no string literals, no comments, and no backslashes at all. Anything with a string in it waits for the click. |
+
+Status after Round 3: fixes applied; Round 4 (final under the 4-round cap).
