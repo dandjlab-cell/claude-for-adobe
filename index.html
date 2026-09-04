@@ -22,6 +22,10 @@
     .view { display: none; min-height: 0; }
     .view.active { display: grid; grid-template-columns: minmax(0, 1fr); }
     #view-chat.active { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    #view-chat.active.with-options { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+    #caption-options { border-bottom: 1px solid var(--line); background: var(--raised); }
+    #caption-options[hidden] { display: none; }
+    #caption-options label { display: flex; align-items: center; gap: 4px; color: var(--ink-60); font-size: 12px; }
     #selection-bar { font-size: 10.5px; color: var(--ink-40); padding: 4px 12px 0; letter-spacing: .01em; }
     #selection-bar:empty { padding: 0; height: 0; }
     #selection-bar b { color: var(--accent); font-weight: 500; }
@@ -162,6 +166,13 @@
         </span>
         <button id="btn-captions" type="button" title="Transcribes the timeline (Whisper, on this Mac) and adds a native caption track. Editable in the Captions panel.">Captions</button>
       </div>
+      <div id="caption-options" class="scripts" hidden>
+        <label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label>
+        <label>lines <input id="cap-lines" type="number" value="1" min="1" max="3" style="width:3em"></label>
+        <label>max <input id="cap-seconds" type="number" value="3" min="1" max="10" step="0.5" style="width:3.6em"> s</label>
+        <button id="btn-make-captions" type="button" class="accent">Make captions</button>
+        <button id="btn-cancel-captions" type="button" class="utility">Cancel</button>
+      </div>
       <div id="messages"></div>
       <div id="starter">
         <img src="docs/demo.gif" alt="Click the folder, ask Claude to edit it" style="width:100%;max-width:480px;border:1px solid var(--line);display:block;margin-bottom:14px">
@@ -197,12 +208,6 @@
           <div class="row"><span id="model-state" class="mono">Whisper: checking…</span><select id="whisper-model" title="Bigger is more accurate; smaller is faster and lighter. The choice downloads once."></select><button id="btn-whisper-model" type="button" class="utility" hidden>Download</button></div>
           <span id="model-bar" hidden><i></i></span>
           <p class="muted">Runs on this Mac. Downloads once. Claude asks before downloading.</p>
-        </section>
-
-        <section>
-          <h2>Captions</h2>
-          <div class="row"><label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label><label>lines <input id="cap-lines" type="number" value="1" min="1" max="3" style="width:3em"></label><label>max <input id="cap-seconds" type="number" value="3" min="1" max="10" step="0.5" style="width:3.6em"> s</label></div>
-          <p class="muted">Used by the Captions button and by Claude.</p>
         </section>
 
         <section>

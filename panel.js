@@ -42,7 +42,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), btnCaptions: $("btn-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -1265,29 +1265,12 @@ async function runCutButton(tool, params, label) {
   } finally { quietCard = null; ui.btnCut.disabled = false; }
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
-// Options card shown when the Captions button is pressed: the same three settings, prefilled, then Make captions.
-function askCaptionOptions() {
-  return new Promise((resolve) => {
-    const d = captionSettings();
-    const el = addMessage("assistant muted", "Captions for this timeline.\n");
-    const row = document.createElement("div"); row.className = "row";
-    const field = (label, value, min, max, step, width) => { const l = document.createElement("label"); const i = document.createElement("input"); i.type = "number"; i.value = value; i.min = min; i.max = max; i.step = step; i.style.width = width; l.append(document.createTextNode(label + " "), i); return { l, i }; };
-    const w = field("words per caption", d.max_words, 1, 20, 1, "3.6em"), n = field("lines", d.max_lines, 1, 3, 1, "3em"), t = field("max", d.max_seconds, 1, 10, 0.5, "3.6em");
-    const go = document.createElement("button"); go.textContent = "Make captions"; go.className = "accent";
-    const no = document.createElement("button"); no.textContent = "Cancel"; no.className = "utility";
-    const finish = (v) => { row.remove(); el.textContent += v ? "Making " + v.max_words + "-word captions, " + v.max_lines + " line" + (v.max_lines === 1 ? "" : "s") + ", up to " + v.max_seconds + " s." : "Cancelled."; resolve(v); };
-    go.onclick = () => { const v = { max_words: Number(w.i.value) || 4, max_lines: Number(n.i.value) || 1, max_seconds: Number(t.i.value) || 3 }; ui.capWords.value = v.max_words; ui.capLines.value = v.max_lines; ui.capSeconds.value = v.max_seconds; ["capWords", "capLines", "capSeconds"].forEach((k) => { try { localStorage.setItem("captions." + k, ui[k].value); } catch (_) {} }); finish(v); };
-    no.onclick = () => finish(null);
-    row.append(w.l, n.l, t.l, document.createTextNode(" s "), go, no); el.appendChild(row);
-    ui.messages.scrollTop = ui.messages.scrollHeight;
-    w.i.focus();
-  });
-}
-
+// Captions button toggles the options strip under the toolbar; Make captions runs the job.
+function toggleCaptionOptions(show) { ui.captionOptions.hidden = show === undefined ? !ui.captionOptions.hidden : !show; document.getElementById("view-chat").classList.toggle("with-options", !ui.captionOptions.hidden); if (!ui.captionOptions.hidden) ui.capWords.focus(); }
 async function runCaptionsButton() {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
-  const opts = await askCaptionOptions();
-  if (!opts) return;
+  toggleCaptionOptions(false);
+  const opts = captionSettings();
   ui.btnCaptions.disabled = true;
   const card = addTool("Captions", ""); card.open(); quietCard = card;
   try {
@@ -1315,7 +1298,9 @@ async function runCaptionsButton() {
   } catch (error) { card.done(error.message, false); }
   finally { quietCard = null; ui.btnCaptions.disabled = false; }
 }
-ui.btnCaptions.onclick = runCaptionsButton;
+ui.btnCaptions.onclick = () => toggleCaptionOptions();
+ui.btnMakeCaptions.onclick = runCaptionsButton;
+ui.btnCancelCaptions.onclick = () => toggleCaptionOptions(false);
 ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
