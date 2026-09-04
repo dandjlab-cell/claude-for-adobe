@@ -594,7 +594,7 @@ async function readTranscript({ start_seconds = 0, end_seconds, source = "auto" 
   });
   if (!out.length) return err(card, "No transcript available. In Premiere: Text panel > Transcribe, then Cmd+S (the transcript is read from the saved project file). Or run transcribe_whisper.");
   const stale = used.has("premiere") && project.path ? " (project saved " + ((Date.now() - fs.statSync(project.path).mtimeMs) / 60000).toFixed(0) + " min ago; edits since then are not visible until Cmd+S)" : "";
-  const full = out.join("\n") + (skipped.length ? "\n(skipped: " + skipped.join(", ") + ")" : "") + "\n(source: " + [...used].join("+") + "; timestamps are sequence seconds" + stale + ")";
+  const full = out.join("\n") + (skipped.length ? "\n(no transcript yet for: " + skipped.join(", ") + ". Only these need transcribing: transcribe_whisper skips clips already done, or Text panel > Transcribe on them, then Cmd+S.)" : "") + "\n(source: " + [...used].join("+") + "; timestamps are sequence seconds" + stale + ")";
   const file = writeAnalysis((project.sequence || "sequence") + ".transcript.md", "# Transcript of \"" + (project.sequence || "sequence") + "\"\n\n" + full + "\n");
   card.done(full.split("\n").slice(0, 8).join("\n") + (out.length > 8 ? "\n…" : ""), true);
   if (out.length <= 40) return { text: full + "\n(also written to " + file + ")" };
