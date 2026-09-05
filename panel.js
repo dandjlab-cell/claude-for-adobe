@@ -82,7 +82,7 @@ function log(text) {
 
 const MODEL_FALLBACK = "claude-sonnet-5";
 // Agent: Claude (default) or Codex. Same tools, same rulebook, same skills; only the process behind the chat differs.
-const agentName = () => (ui.agent.value === "codex" ? "Codex" : "Claude");
+const agentName = (v = ui.agent.value) => (v === "codex" ? "Codex" : "Claude");
 try { const a = localStorage.getItem("agent"); if (a === "codex" || a === "claude") ui.agent.value = a; } catch (_) {}
 // Fill the model dropdown from each CLI's own account cache, so it matches what the CLI's /model picker shows.
 function fillModels() {
@@ -1365,10 +1365,17 @@ function restartSession(resumeSessionId) {
     if (old) await old.stop();
     try {
       const skillsDir = path.join(extensionRoot, ".claude", "skills");
+      const agent = ui.agent.value;
       const common = {
         mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId,
         capabilities: (ui.dupSequence.checked ? "" : "WARNING: the editor turned off duplicate-sequence protection; edits hit the ORIGINAL sequence. Confirm before any edit. ") + "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
-        onEvent: (event) => { if (gen === sessionGen) onEvent(event); },
+        // Events reach the chat only from the session on screen. A parked session (the other agent's chat) is kept
+        // quiet; if its process dies while parked, remember the thread so it resumes when the editor comes back.
+        onEvent: (event) => {
+          if (session === next) { onEvent(event); return; }
+          const rec = parked[agent];
+          if (rec && rec.session === next && event.kind === "exit") { rec.session = null; rec.resumeId = next.sessionId; }
+        },
       };
       const next = ui.agent.value === "codex"
         ? createCodexSession({ ...common, skillsDir })
@@ -1721,7 +1728,25 @@ ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventD
 ui.stop.onclick = () => restartSession(session && session.sessionId);
 ui.restart.onclick = () => { ui.messages.innerHTML = ""; allowScriptsThisSession = false; restartSession(); };
 ui.model.onchange = () => restartSession(session && session.sessionId);
-// Switching agent starts a fresh conversation: Claude and Codex cannot resume each other's threads.
-ui.agent.onchange = () => { try { localStorage.setItem("agent", ui.agent.value); } catch (_) {} fillModels(); restartSession(); };
+// Two chats, one per agent. Switching parks the chat on screen (its messages, session and model) and shows the
+// other agent's; the parked session stays alive, so the editor can go back and forth. Not while a turn is running.
+const parked = { claude: null, codex: null };
+let activeAgent = ui.agent.value;
+ui.agent.onchange = () => {
+  const to = ui.agent.value, from = activeAgent;
+  if (to === from) return;
+  if ((session && session.busy) || buttonJob) { ui.agent.value = from; addMessage("assistant error", "Wait for " + agentName(from) + " to finish (or press Stop) before switching."); return; }
+  parked[from] = { session, nodes: [...ui.messages.childNodes], model: ui.model.value, resumeId: null };
+  session = null; liveMessage = null; lastPayload = "";
+  try { localStorage.setItem("agent", to); } catch (_) {}
+  activeAgent = to;
+  fillModels();
+  const p = parked[to]; parked[to] = null;
+  ui.messages.replaceChildren(...(p ? p.nodes : []));
+  ui.messages.scrollTop = ui.messages.scrollHeight;
+  if (p && p.model && [...ui.model.options].some((o) => o.value === p.model)) ui.model.value = p.model;
+  if (p && p.session) { session = p.session; setStatus("Ready · " + modelLabel(ui.model.value)); setBusy(false); return; }
+  restartSession(p ? p.resumeId : undefined);
+};
 
 boot();
