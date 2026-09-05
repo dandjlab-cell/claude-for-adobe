@@ -87,10 +87,15 @@
 
     #messages { overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
     #messages:empty { display: none; }
+    /* Landing page: only when no chat is open. Not a message; the chat UI is hidden under it. */
     #starter { display: none; padding: 28px 16px 16px; }
-    #messages:empty + #starter { display: block; overflow-y: auto; }
+    body.landing #starter { display: block; overflow-y: auto; }
+    body.landing .composer, body.landing #selection-bar, body.landing .scripts, body.landing #messages { display: none; }
+    body.landing #view-chat.active { grid-template-rows: minmax(0, 1fr); }
     #starter h1 { font-size: 20px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 6px; }
-    #starter p { margin: 0 0 18px; color: var(--ink-60); max-width: 44ch; }
+    #starter p { margin: 0 0 14px; color: var(--ink-60); max-width: 48ch; }
+    #starter ol { margin: 0 0 18px; padding-left: 20px; color: var(--ink-60); max-width: 48ch; }
+    #starter ol li { margin: 0 0 8px; } #starter ol b { color: var(--ink); font-weight: 500; }
     #starter .chips { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     #starter .chips button { font-weight: 500; text-align: left; }
     #starter .chips button:hover { border-color: var(--accent); color: var(--ink); background: var(--accent-tint); }
@@ -183,8 +188,12 @@
       <div id="starter">
         <img src="docs/demo.gif" alt="Open a chat, click the folder, ask for the edit" style="width:100%;max-width:480px;border:1px solid var(--line);display:block;margin-bottom:14px">
         <h1>Claude and Codex, inside your timeline.</h1>
-        <p>Open a chat with <b>+ Claude</b> or <b>+ Codex</b> above, click the folder you want to work on, then ask. Or pick a start below and a Claude chat opens.</p>
-        <p class="muted">Tip: keep b-roll in a separate folder from the talking head. It helps Claude a lot.</p>
+        <ol>
+          <li><b>Open a chat</b> with + Claude or + Codex above. Every chat is a tab; keep as many as you like and switch any time.</li>
+          <li><b>They see what you click.</b> Select a folder in the Project panel, or clips on the timeline, and the chat knows it. The line above the message box shows what is selected right now, and the open timeline is always in view.</li>
+          <li><b>Keep b-roll in its own folder</b>, apart from the talking head. It helps Claude and Codex a lot.</li>
+        </ol>
+        <p>Or pick a start; it opens a chat for you.</p>
         <div class="chips">
           <button type="button" data-prompt="Edit what I have selected.">Edit this</button>
           <button type="button" data-prompt="Organize my project.">Organize my project</button>

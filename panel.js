@@ -1531,7 +1531,8 @@ ui.btnRunCut.onclick = () => { toggleCutOptions(false); runCutButton(removeSilen
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 
-document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { ui.input.value = b.dataset.prompt; ui.input.focus(); }; });
+// Landing-page chips: open a chat (the agent used last) with the prompt ready to send.
+document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { if (!activeChat) newChat(ui.agent.value === "codex" ? "codex" : "claude"); ui.input.value = b.dataset.prompt; ui.input.focus(); }; });
 // Whisper model row: the one big download, visible and under the user's control. Also tells Claude what is available.
 function whisperState() { const inst = installedModels(); return (modelReady() ? "ready (" + currentModel() + ")" : "not downloaded (" + currentModel() + " chosen)") + (inst.length && !modelReady() ? "; installed: " + inst.join(", ") : ""); }
 function renderModelRow() {
@@ -1739,6 +1740,7 @@ ui.model.onchange = () => restartSession(session && session.sessionId);
 // (its session stays alive) and shows another. New chats open next to it. Not while a turn is running.
 const chats = []; let chatSeq = 0; let activeChat = null;
 function renderTabs() {
+  document.body.classList.toggle("landing", !activeChat); // no chat open: the landing page, not the chat UI
   const tabs = chats.map((c) => {
     const b = document.createElement("button"); b.type = "button"; b.textContent = c.label;
     b.classList.toggle("active", chatView && c === activeChat);
