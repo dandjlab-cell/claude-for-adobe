@@ -17,7 +17,7 @@ The order is fixed. Do not start a later step until the earlier one is right.
 
 ## 2. Captions
 
-`caption_style` moves the band (`y`, a fraction of frame height, negative = up; -0.053 is Premiere's default at the bottom zone, -0.29 is about a third up) and sets the size. It works through the saved project file: checkpoint, rewrite, reopen, read back. Put the band at the bottom safe-zone line, as low as it fits, clear of everything; then `find_on_screen` with a caption word to measure where it landed, and adjust once. If a caption sits over the subject after step 1, move the caption, never the subject.
+The caption band is a Premiere track setting the panel cannot move yet. Say once, in one line: put it at the bottom safe-zone line, as low as it fits, clear of everything (Captions panel: track style or position). If a caption sits over the subject after step 1, that is the caption's problem: say so and leave the framing alone. `find_on_screen` with a caption word measures where the band sits.
 
 ## 3. Graphics
 
