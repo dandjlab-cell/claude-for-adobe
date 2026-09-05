@@ -45,7 +45,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -2081,6 +2081,7 @@ async function closeChat(c) {
   if (next) showChat(next); else { setStatus("Ready"); setBusy(false); showView("chat"); }
   renderTabs();
 }
+ui.newChat.onclick = () => newChat(activeChat ? activeChat.agent : ui.agent.value); // same agent as the chat on screen
 ui.newClaude.onclick = () => newChat("claude");
 ui.newCodex.onclick = () => newChat("codex");
 showView("chat");
