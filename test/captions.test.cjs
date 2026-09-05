@@ -16,3 +16,17 @@ test("cuesFromWords breaks at sentence ends and gaps, wraps to two lines, writes
   assert.match(srt, /^1\n00:00:00,000 --> 00:00:01,900\nWelcome to four\nextraordinary homes\.\n\n2\n00:00:03,000/);
   assert.deepEqual(wrap("a b c", 32, 2), ["a b c"]);
 });
+
+test("wrap honours maxLines above 2 and one-word cues never overlap", () => {
+  const long = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen";
+  const three = wrap(long, 32, 3);
+  assert.equal(three.length, 3);
+  three.forEach((l) => assert.ok(l.length <= 32, l));
+  assert.equal(three.join(" "), long);
+  assert.equal(wrap(long, 32, 1).length, 1);
+  const w = (text, start, end) => ({ text, start, end });
+  const cues = cuesFromWords([w("a", 0, 0.1), w("b", 0.1, 0.2), w("c", 0.2, 0.3), w("d", 0.3, 2)], { maxWords: 1 });
+  assert.equal(cues.length, 4);
+  for (let i = 1; i < cues.length; i++) assert.ok(cues[i - 1].end < cues[i].start, "cue " + i + " overlaps the previous one");
+  assert.equal(cues[3].end, 2);
+});

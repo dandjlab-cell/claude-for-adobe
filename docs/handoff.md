@@ -75,8 +75,8 @@ Private, per-machine notes under `~/.claude/projects/<this repo's scope>/memory/
 
 ## What's Next
 
-1. **Re-test the 4:5 reframe on 0.1.68** with a title and captions present; confirm the snapshot moments include the title fully on and the caption band, and that Claude nudges rather than asks. If captions still overlap and the band itself is wrong, that is a Premiere track setting the panel cannot script; document that limit in how-to-use.
-2. **Codex review of everything after 0.1.47** (tools added since: snapshot_moments, frames_across, nudge_clip, place_broll rewrite, transcribe_timeline, create_captions, remove_fillers, set_sequence_size graphics-fit). Same format as `docs/codex-review-log.md`; edits, tests, and publish in separate commands.
+1. **Re-test the 4:5 reframe on the DEV panel** (`sh scripts/install.sh`, restart Premiere: the host script changed) with a title and captions present. The 2026-09-05 review fixes changed the graphics-fit scale to an absolute value and made `nudge_clip` refuse ambiguous times, so confirm: title fits inside 4:5 at a sane size, Claude passes a track when nudging the graphic, nothing covers the face. Then bump to **0.1.69** (manifest + package.json), `sh scripts/package.sh`, `gh release create`.
+2. **Review follow-ups** (see the last entry in `docs/codex-review-log.md`): `create_captions` stacks a new caption track per run (needs a replace-or-skip rule); the caption band position is a Premiere track setting the panel cannot script (document in how-to-use). A Codex pass over the 2026-09-05 review fixes themselves is still owed under the AGENTS.md rule for host-script changes.
 3. **Speaker separation** (sherpa-onnx, models on first use) and **prosody** (port VO Studio's per-word RMS/pitch/pause from `vo_engine/audio_prosody.py` to JS, summaries not raw numbers) so `list_analysis` files can carry them; the "metadata first" rule already reads whatever is there.
 4. **B-roll analysis**: cheap motion/brightness pass from frame differencing, Apple Vision optical flow later (Swift helper).
 5. **After Effects panel** and **Codex as an alternative agent** (README promises both).
@@ -85,6 +85,7 @@ Private, per-machine notes under `~/.claude/projects/<this repo's scope>/memory/
 
 ## Known Issues
 
+- Privacy guard: `test/privacy.test.cjs` scans tracked files for home paths, `/Volumes/` paths (except the `/Volumes/X` fixture), emails, and any term listed in `~/.claude-for-adobe-private-words` (one per line, outside the repo on purpose). `.githooks/pre-push` runs it; `scripts/install.sh` sets `core.hooksPath`. Public repo history was rewritten on 2026-09-05 to remove client paths; GitHub may still serve the old commits by hash.
 - Premiere keeps a closed panel alive; only reload (which updates do) or a Premiere restart loads new code. The dev panel needs close/reopen after edits, Premiere restart for host script changes.
 - `overwriteClip`, `Track.setLocked`, `TrackItem.end`/`inPoint` assignments and `exportAsMediaDirect` are verified only in the user's Premiere 26.3.2; watch for version differences.
 - Transitions are invisible to the panel (not in the ExtendScript surface we use).

@@ -81,6 +81,10 @@ const rejectionPatterns = [
   ["`this` and escape sequences are not allowed.", /\bthis\b|\\[ux0-7]/],
   ["Preprocessor directives are not allowed.", /^\s*#\s*(?:include|includepath|target|script|strict)\b/m],
   ["Asynchronous execution is not allowed.", /\.\s*scheduleTask\s*\(/],
+  // `obj[k]()` can name any method at runtime (k built from unescape, fromCharCode, join...), so the
+  // receiver-agnostic name checks above would never see it. Methods must be named in the source.
+  ["Computed method calls are not allowed: name the method (obj.method()).", /\]\s*\(/],
+  ["String-building functions are not allowed.", /\b(?:unescape|escape|decodeURI(?:Component)?|encodeURI(?:Component)?|fromCharCode|charCodeAt)\b/],
 ];
 
 const warningPatterns = [
@@ -107,7 +111,8 @@ function isReadOnlyScript(src) {
 }
 
 const mutationPatterns = [
-  /\.\s*(?:add|attach|change|clear|create|delete|execute|import|insert|move|overwrite|remove|rename|set)\w*\s*\(/i,
+  // Includes the editing verbs the premiere-scripting skill teaches (QE extract/razor/lift/rippleDelete, clone).
+  /\.\s*(?:add|attach|change|clear|clone|close|create|cut|delete|duplicate|execute|extract|import|insert|lift|link|lock|move|mute|nudge|overwrite|paste|razor|remove|rename|ripple|set|split|swap|trim|unlink|unlock|unmute)\w*\s*\(/i,
   /(?:\.|\])\s*[A-Za-z_$][\w$]*\s*(?:[+\-*\/%&|^]?=|<<=|>>>?=|\+\+|--)(?!=)/,
   /(?:\+\+|--)\s*(?:[A-Za-z_$][\w$]*\s*\.|[^;\n]*\])\s*[A-Za-z_$][\w$]*/,
   /\]\s*(?:[+\-*\/%&|^]?=|<<=|>>>?=|\+\+|--)(?!=)/,

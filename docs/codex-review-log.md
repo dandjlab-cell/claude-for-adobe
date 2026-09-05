@@ -102,3 +102,27 @@ Status: fix applied with a regression test; Round 4 (final) requested.
 Verdict: **APPROVED**. resizeSequence defined once and exported; host script parses; all 21 exports resolve; all 20 host calls map; export and function sets match the known-good 0.1.44. One LOW (test did not check uniqueness or a baseline) addressed: the test now rejects duplicate definitions and a shrinking export table.
 
 **Final status:** 0.1.47 is the release to use. 0.1.45 and 0.1.46 were withdrawn.
+
+## Post-0.1.47 tools review (2026-09-05, Claude code-review, 15 verifier agents; not a Codex round)
+
+Scope: everything added after 0.1.47 (snapshot_moments, frames_across, nudge_clip, place_broll, transcribe_timeline, create_captions, remove_fillers, set_sequence_size graphics-fit), the script guard, the updater, and a private-data scan. Verdict: NOT APPROVED as shipped; 15 findings, 12 confirmed. All fixed the same day (commit "review fixes"); to ship as 0.1.69 once the user has re-run the 4:5 reframe on the dev panel (host script and scale math changed).
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| 1 | CRITICAL | Personal and client paths in `docs/handoff.md` on the public repo | History rewritten (two commits squashed, force-pushed); specifics moved to a private memory note; `test/privacy.test.cjs` + `.githooks/pre-push` refuse home paths, drive paths, emails, and terms from `~/.claude-for-adobe-private-words` |
+| 2 | HIGH | Captions button hangs forever without the Whisper model (prompt rendered into a detached node under the quiet card) | `askInline` always renders; the quiet card is set only after the prompt |
+| 3 | HIGH | `create_captions` skipped the working copy; non-undoable caption track landed on the original | `ensureWorkingCopy()` before the checkpoint, like every other mutator |
+| 4 | HIGH | Guard bypass: `app.project[unescape("%73ave")]()` and friends classed as non-mutating | Hard rejections for computed method calls (`](`) and string-building functions; six probes in `test/guards.test.cjs` |
+| 5 | HIGH | QE `extract`/`razor`/`lift`/`rippleDelete`/`clone` not classed as mutating | Added to the mutation verb list; test |
+| 6 | HIGH | `transcribe_timeline` ran whisper via `spawnSync` before the MCP reply; panel froze; completion nudge dropped while Claude was busy | whisper.cpp spawned async; the job starts from a timer; nudges queue until `turn_done` |
+| 7 | HIGH | Graphics-fit scale multiplied the current scale by a normaliser that assumed the old fill factor; extension-based graphic split misclassified nested sequences and alpha titles | Scale set absolutely (`100 × min/max(newW/srcW, newH/srcH)`); `isGraphicItem` uses `isSequence()`, the Video Info "Alpha" flag, then extension |
+| 8 | HIGH | `nudge_clip` without a track took the first V1 clip, moving the subject instead of the graphic | Multiple clips at that time now return an error naming them; schema and system prompt say to pass the track |
+| 9 | MEDIUM | Sequence names with `/` or `:` broke transcript, mix and SRT paths | One `seqFile()` helper for all five sites |
+| 10 | MEDIUM | Cut silences and Captions could run concurrently and both owned the quiet card | `beginButtonJob`/`endButtonJob` mutual exclusion; chat waits too |
+| 11 | MEDIUM | Caption wrap ignored `max_lines` above 2; one-word cues overlapped | N-line balanced wrap; end clamped to the next cue's start; test |
+| 12 | MEDIUM | `applyCuts` reported the batch size and ignored `extracted=X/Y … ERRORS` | Parses the host count and stops on errors |
+| 13 | LOW | Stale `.mix.wav` reused when a re-export failed silently | Unlinked before every export |
+| 14 | LOW | Motion position unit heuristic flipped to pixels past 1.5 | Threshold 4, shared `isNormalized` |
+| 15 | LOW | Updater: `zipinfo` regex could miss `..` in names with spaces; double failure deleted the only backup | Names from `zipinfo -1`; on double failure the backup is kept next to the install and named in the error |
+
+Not fixed (follow-ups): a new caption track is stacked on every `create_captions` run (no lifecycle); the prompt cannot move the caption band.

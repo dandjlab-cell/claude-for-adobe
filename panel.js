@@ -132,7 +132,10 @@ const err = (card, text) => { card.done(text, false); return { text: "CLAUDE_FOR
 // Resolves true / false, or the string "all" when an `allLabel` third button is offered and chosen.
 function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "") {
   return new Promise((resolve) => {
+    // A question must always be visible, even while a button job is keeping notes inside its card.
+    const q = quietCard; quietCard = null;
     const el = addMessage("assistant muted", text + "\n");
+    quietCard = q;
     const row = document.createElement("div");
     row.className = "row";
     const yes = document.createElement("button"); yes.textContent = yesLabel;
@@ -484,8 +487,10 @@ async function applyCuts(card, cuts, dryRun, summary) {
     setStatus("Cutting " + Math.min(i + batch.length, ordered.length) + " / " + ordered.length + " ranges…");
     card.progress(i, ordered.length, "cutting ");
     raw = await host("extractRanges", JSON.stringify(batch.map((c) => [c.start, c.end])));
-    ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error.";
-    if (ok) doneRanges += batch.length;
+    // The host reports "extracted=X/Y ... [ERRORS: ...]": count what it actually did, and stop on any error.
+    const m = /extracted=(\d+)\/(\d+)/.exec(raw);
+    ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && !!m && m[1] === m[2] && raw.indexOf(" ERRORS:") < 0;
+    if (m) doneRanges += Number(m[1]);
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
@@ -599,7 +604,17 @@ function wavPreset() {
   return "";
 }
 
-function timelineTranscriptPath() { return path.join(analysisDir(), (project.sequence || "sequence") + ".timeline.json"); }
+// Every per-sequence analysis file goes through here so a name like "9/16 social" maps to the same path everywhere.
+const seqFile = (suffix) => path.join(analysisDir(), (project.sequence || "sequence").replace(/[\/\\:]/g, "_") + suffix);
+function timelineTranscriptPath() { return seqFile(".timeline.json"); }
+// Nudges from background jobs (transcription, downloads, the save watcher) wait for Claude's turn to end.
+const queuedNudges = [];
+function nudge(text) {
+  if (!session) return;
+  if (session.busy) { queuedNudges.push(text); return; }
+  setBusy(true); setStatus("Thinking…");
+  try { session.send(text); } catch (_) { setBusy(false); }
+}
 function freshTimelineWords(snap) {
   try { const j = JSON.parse(fs.readFileSync(timelineTranscriptPath(), "utf8")); return j.fingerprint === timelineFingerprint(snap) ? j : null; } catch (_) { return null; }
 }
@@ -622,12 +637,13 @@ async function transcribeTimeline({ language = "en" } = {}) {
   if (!modelReady()) {
     const go = await askInline("Transcribing the timeline needs the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one time). Download it now?", "Download", "Not now");
     if (!go) return err(card, "The user chose not to download the Whisper model now.");
-    downloadWhisperModel().then((ok) => { if (ok && session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[The Whisper model finished installing. Continue: transcribe_timeline.]"); } catch (_) { setBusy(false); } } });
+    downloadWhisperModel().then((ok) => { if (ok) nudge("[The Whisper model finished installing. Continue: transcribe_timeline.]"); });
     card.done("download started", true);
     return { text: "Whisper model download started; tell the user in one line and stop. You will be told when it is installed." };
   }
-  const wav = path.join(analysisDir(), (project.sequence || "sequence") + ".mix.wav");
+  const wav = seqFile(".mix.wav");
   fs.mkdirSync(analysisDir(), { recursive: true });
+  try { fs.unlinkSync(wav); } catch (_) {} // never transcribe a stale render if the export fails silently
   card.progress(0, 3, "rendering timeline audio ");
   setStatus("Rendering timeline audio…");
   const preset = wavPreset();
@@ -636,16 +652,15 @@ async function transcribeTimeline({ language = "en" } = {}) {
   if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return err(card, "audio render failed: " + out.replace(/^ERR:/, ""));
   card.progress(1, 3, "transcribing ");
   setStatus("Whisper: timeline…");
-  // Runs outside the tool call; nudges Claude when done.
-  (async () => {
+  // Runs outside the tool call (a timer, so this reply reaches Claude first); nudges Claude when done.
+  setTimeout(async () => {
     try {
       const { words, md } = await transcribeRenderedTimeline(wav, snap, language);
-      const r = { words };
-      card.done(r.words.length + " words -> " + md, true);
+      card.done(words.length + " words -> " + md, true);
       setStatus("Ready");
-      if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[Timeline transcription finished: " + r.words.length + " words, written to " + md + ". Timestamps are sequence seconds. Continue with the task; read_transcript / find_in_transcript / remove_fillers now use this exact transcript.]"); } catch (_) { setBusy(false); } }
-    } catch (error) { card.done("transcription failed: " + error.message, false); setStatus("Ready"); if (session && !session.busy) { setBusy(true); try { session.send("[Timeline transcription failed: " + error.message + "]"); } catch (_) { setBusy(false); } } }
-  })();
+      nudge("[Timeline transcription finished: " + words.length + " words, written to " + md + ". Timestamps are sequence seconds. Continue with the task; read_transcript / find_in_transcript / remove_fillers now use this exact transcript.]");
+    } catch (error) { card.done("transcription failed: " + error.message, false); setStatus("Ready"); nudge("[Timeline transcription failed: " + error.message + "]"); }
+  }, 0);
   return { text: "Timeline audio rendered; transcription started (" + currentModel() + "). Tell the user in one line and stop; you will be told when it is done." };
 }
 
@@ -696,7 +711,7 @@ function waitForSavedTranscript() {
     if (!n) return;
     clearInterval(saveWatcher); saveWatcher = null;
     addMessage("assistant muted", "Project saved with " + n + " transcript" + (n === 1 ? "" : "s") + ". Continuing.");
-    if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[The user transcribed in Premiere and saved the project. Continue with the task using read_transcript.]"); } catch (_) { setBusy(false); } }
+    nudge("[The user transcribed in Premiere and saved the project. Continue with the task using read_transcript.]");
   }, 2000);
 }
 
@@ -719,7 +734,7 @@ async function runTranscriptionJob(card, media, { language, vad, write_transcrip
   }
   card.done(lines.join("\n"), true);
   setStatus("Ready");
-  if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); try { session.send("[Transcription finished:\n" + lines.join("\n") + "\nContinue with the task; call transcribe_whisper again to read the cached results or use read_transcript with source=whisper.]"); } catch (_) { setBusy(false); } }
+  nudge("[Transcription finished:\n" + lines.join("\n") + "\nContinue with the task; call transcribe_whisper again to read the cached results or use read_transcript with source=whisper.]");
 }
 
 async function transcribeWhisper({ language = "en", write_transcript_json = true, vad = true } = {}) {
@@ -740,11 +755,7 @@ async function transcribeWhisper({ language = "en", write_transcript_json = true
       return { text: "The user will transcribe in Premiere's Text panel and press Cmd+S. Tell them in one line: Text panel > Transcribe, then Cmd+S, and that you will continue automatically once the save lands. Then stop." };
     }
     setStatus("Downloading the Whisper model (one time)…");
-    downloadWhisperModel().then((ok) => {
-      if (!ok || !session || session.busy) return;
-      setBusy(true); setStatus("Thinking…");
-      try { session.send("[The Whisper model finished installing. Continue with the transcription the user asked for.]"); } catch (_) { setBusy(false); }
-    });
+    downloadWhisperModel().then((ok) => { if (ok) nudge("[The Whisper model finished installing. Continue with the transcription the user asked for.]"); });
     card.done("download started", true);
     return { text: "Whisper model download started (" + WHISPER_MODELS[currentModel()].mb + " MB). Tell the user in one line that it is downloading in the Settings tab and that you will continue automatically when it is installed. Then stop; do not call transcribe_whisper again until then." };
   }
@@ -1049,14 +1060,16 @@ async function createCaptions({ max_words, max_chars = 32, max_lines, max_second
   if (!words.length) return err(card, "no words to caption; run transcribe_timeline first");
   const cues = cuesFromWords(words, { maxChars: Number(max_chars), maxLines: Number(max_lines), maxSeconds: Number(max_seconds), maxWords: Number(max_words) });
   const srt = writeAnalysis((project.sequence || "sequence") + ".srt", toSRT(cues));
-  let cp = "";
+  // A caption track is not undoable, so like every other edit it lands on the working copy, then a checkpoint.
+  let cp = "", copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before adding captions: " + error.message); }
   try { await saveProject(); const entry = createCheckpoint(project.path, "before caption import"); renderCheckpoints(); cp = " Checkpoint " + entry.id + " saved first (import is not undoable)."; }
   catch (error) { return err(card, "Caption import blocked: it cannot be undone and a checkpoint was not possible: " + error.message); }
   const raw = await host("importCaptions", srt);
   const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
   card.done((ok ? cues.length + " captions, " : "") + raw + cp, ok);
   timeline = await readSnapshot().catch(() => timeline);
-  return { text: (ok ? cues.length + " captions added as a caption track (from " + (tl ? "the exact timeline transcript" : "per-clip transcripts") + "). SRT: " + srt + "." : "CLAUDE_FOR_ADOBE_ERROR:" + raw) + cp, isError: !ok };
+  return { text: copyNote + (ok ? cues.length + " captions added as a caption track (from " + (tl ? "the exact timeline transcript" : "per-clip transcripts") + "). SRT: " + srt + "." : "CLAUDE_FOR_ADOBE_ERROR:" + raw) + cp, isError: !ok };
 }
 
 // Reframe check-and-fix: move a clip's picture by a fraction of the frame, optionally scale. Verify with preview_frames.
@@ -1097,7 +1110,7 @@ function keyMoments(snap, max = 12, cues = null) {
 function captionCuesForSequence(snap) {
   try {
     const tl = freshTimelineWords(snap);
-    const srt = path.join(analysisDir(), (project.sequence || "sequence") + ".srt");
+    const srt = seqFile(".srt");
     if (!fs.existsSync(srt)) return null;
     // parse our own SRT back into cues
     const cues = []; const blocks = fs.readFileSync(srt, "utf8").split(/\n\n+/);
@@ -1191,7 +1204,7 @@ const TOOL_DEFS = [
   { name: "frames_across", description: "Look closer: 2-6 frames evenly spaced across a time range (one clip, one graphic, the seconds around a suspect moment). Use when a snapshot leaves a question, e.g. is the head cropped for the whole clip or only at the start, does the graphic move, is the subject drifting. Answer the question from these frames before deciding.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, count: { type: "number", description: "default 4, max 6" }, max_px: { type: "number" } }, required: ["start_seconds", "end_seconds"] } },
   { name: "nudge_clip", description: "After a reframe: move the picture of the video clip at a sequence time by a fraction of the frame (dx right, dy down; e.g. dx -0.1 pushes it left by 10% of the width) and optionally scale it (1.1 = 10% bigger). Use with preview_frames: look, nudge, look again.",
-    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track; omit to find the clip on any track" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" } }, required: ["at_seconds"] } },
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" } }, required: ["at_seconds"] } },
   { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked. THEN LOOP: snapshot_moments (it picks the moments); nudge_clip anything off-centre, cropped or misplaced; snapshot_moments again; repeat until all moments are right. Do not stop at describing what needs repositioning.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
@@ -1247,6 +1260,7 @@ function onEvent(event) {
     const used = (event.modelsUsed || []).map(modelLabel).join(" + ");
     setStatus("Ready" + (used ? " · " + used : "") + (event.costUsd ? " · $" + event.costUsd.toFixed(3) + " this session" : ""));
     setBusy(false);
+    if (queuedNudges.length) nudge(queuedNudges.shift()); // a job finished while Claude was busy
   }
   else if (event.kind === "log") log(event.text);
   else if (event.kind === "exit") {
@@ -1293,6 +1307,7 @@ function restartSession(resumeSessionId) {
 async function sendMessage() {
   const text = ui.input.value.trim() || (attachments.length ? "(see the attached image" + (attachments.length > 1 ? "s" : "") + ")" : "");
   if (!text || !session || session.busy) return;
+  if (buttonJob) { addMessage("assistant error", "Wait for the running job (" + buttonJob + ") to finish first."); return; }
   addMessage("user", text + (attachments.length ? "\n[" + attachments.length + " image" + (attachments.length > 1 ? "s" : "") + " attached]" : ""));
   ui.input.value = "";
   liveMessage = null;
@@ -1345,9 +1360,18 @@ async function boot() {
 }
 
 // Buttons: the same scripts the tools run, with no model in the loop. Plan, confirm, apply.
+// One button job at a time: they share the quiet card and the active sequence, and chat waits too.
+let buttonJob = "";
+function beginButtonJob(label) {
+  if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return false; }
+  if (buttonJob) { addMessage("assistant error", "Wait for the running job (" + buttonJob + ") to finish first."); return false; }
+  buttonJob = label;
+  [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = true; });
+  return true;
+}
+function endButtonJob() { buttonJob = ""; quietCard = null; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = false; }); }
 async function runCutButton(tool, params, label) {
-  if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
-  ui.btnCut.disabled = ui.btnRunCut.disabled = true;
+  if (!beginButtonJob(label)) return;
   const card = addTool(label, "");
   card.open();
   quietCard = card;
@@ -1365,7 +1389,7 @@ async function runCutButton(tool, params, label) {
       ? result.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "")
       : m[1] + " silences removed, " + m[2] + "s cut, " + m[3] + "s -> " + m[4] + "s" + where + ". Cmd+Z undoes one range at a time.", !result.isError);
     setStatus("Ready");
-  } finally { quietCard = null; ui.btnCut.disabled = ui.btnRunCut.disabled = false; }
+  } finally { endButtonJob(); }
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
 // Captions button toggles the options strip under the toolbar; Make captions runs the job.
@@ -1373,22 +1397,24 @@ function syncStrips() { const open = [ui.cutOptions, ui.captionOptions].filter((
 function toggleCaptionOptions(show) { ui.captionOptions.hidden = show === undefined ? !ui.captionOptions.hidden : !show; syncStrips(); if (!ui.captionOptions.hidden) ui.capWords.focus(); }
 function toggleCutOptions(show) { ui.cutOptions.hidden = show === undefined ? !ui.cutOptions.hidden : !show; syncStrips(); if (!ui.cutOptions.hidden) ui.minSilence.focus(); }
 async function runCaptionsButton() {
-  if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return; }
+  if (!beginButtonJob("Captions")) return;
   toggleCaptionOptions(false);
   const opts = captionSettings();
-  ui.btnCaptions.disabled = true;
-  const card = addTool("Captions", ""); card.open(); quietCard = card;
+  const card = addTool("Captions", ""); card.open();
   try {
     if (!modelReady()) {
+      // Asked before the quiet card takes over, so the Download / Not now buttons are on screen.
       const go = await askInline("Captions need the Whisper model (" + currentModel() + ", " + WHISPER_MODELS[currentModel()].mb + " MB, one time; change the model in Settings). Download it now?", "Download", "Not now");
       if (!go) { card.done("cancelled: Whisper model not installed", false); return; }
       if (!await downloadWhisperModel()) { card.done("model download failed", false); return; }
     }
+    quietCard = card;
     let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { card.done(error.message, false); return; }
     if (!freshTimelineWords(snap)) {
       card.progress(0, 3, "rendering timeline audio ");
-      const wav = path.join(analysisDir(), (project.sequence || "sequence") + ".mix.wav");
+      const wav = seqFile(".mix.wav");
       fs.mkdirSync(analysisDir(), { recursive: true });
+      try { fs.unlinkSync(wav); } catch (_) {}
       const preset = wavPreset();
       if (!preset) { card.done("could not find Premiere's WAV export preset under /Applications", false); return; }
       const out = await host("exportSequenceAudio", wav, preset);
@@ -1401,7 +1427,7 @@ async function runCaptionsButton() {
     card.done(r.isError ? r.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "") : r.text, !r.isError);
     setStatus("Ready");
   } catch (error) { card.done(error.message, false); }
-  finally { quietCard = null; ui.btnCaptions.disabled = false; }
+  finally { endButtonJob(); }
 }
 ui.btnCaptions.onclick = () => toggleCaptionOptions();
 ui.btnMakeCaptions.onclick = runCaptionsButton;

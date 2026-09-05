@@ -304,3 +304,30 @@ test("a rejection names the line and the offending text", () => {
   const r = inspectExtendScript("var a = 1;\nvar b = 2;\napp.project.save();");
   assert.match(r.rejection, /line 3: `\.save`/);
 });
+
+test("round-5 probes: computed method names cannot smuggle save/quit/import past the name checks", () => {
+  const { inspectExtendScript } = require("../src/core.cjs");
+  const probes = [
+    'var k = unescape("%73ave"); app.project[k]();',
+    'app.project[["sa","ve"].join("")]();',
+    'app[String.fromCharCode(113,117,105,116)]();',
+    'app.project[unescape("%69mportFiles")](["/tmp/x.srt"]);',
+    'var st = s.getSettings(); s[unescape("%73etSettings")](st);',
+    'var k = "sa"; k = k + "ve"; app.project[k]();',
+  ];
+  for (const p of probes) assert.ok(inspectExtendScript(p).rejection, "not rejected: " + p);
+  // Ordinary indexing and indexed reads stay allowed.
+  const ok = inspectExtendScript("var t = app.project.activeSequence.videoTracks[0]; var c = t.clips[i]; c.name.length");
+  assert.equal(ok.rejection, null);
+});
+
+test("editing verbs from the scripting skill (QE extract, razor, lift, rippleDelete, clone) are mutating", () => {
+  const { inspectExtendScript } = require("../src/core.cjs");
+  for (const s of [
+    "app.enableQE(); qe.project.getActiveSequence().extract(); 1",
+    "app.project.activeSequence.clone(); 1",
+    'app.enableQE(); qe.project.getActiveSequence().getVideoTrackAt(0).razor("00:00:01:00"); 1',
+    "app.enableQE(); qe.project.getActiveSequence().lift(); 1",
+    "app.enableQE(); qe.project.getActiveSequence().rippleDelete(); 1",
+  ]) { const r = inspectExtendScript(s); assert.equal(r.rejection, null, s); assert.equal(r.mutating, true, "not mutating: " + s); }
+});

@@ -10,7 +10,7 @@ const os = require("node:os");
 const ROOT = path.join(__dirname, "..");
 const PATTERNS = [
   [/\/Users\/[A-Za-z0-9_.-]+/g, "home path"],
-  [/\/Volumes\/(?!X\/)[^\s"'`)]+/g, "mounted drive path"],
+  [/\/Volumes\/(?!X\b)[^\s"'`)]+/g, "mounted drive path"],
   [/[A-Za-z0-9._%+-]+@(?!anthropic\.com)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "email"],
 ];
 // Client and project names are private themselves, so they live OUTSIDE the repo: one term per line in

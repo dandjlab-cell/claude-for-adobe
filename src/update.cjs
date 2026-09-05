@@ -108,11 +108,12 @@ async function installUpdate({ url, digest }, root) {
     // Inspect the archive listing before anything is extracted: no absolute or parent paths, no symlinks.
     const listing = spawnSync("/usr/bin/zipinfo", [zip], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
     if (listing.status !== 0) throw new Error("could not read the update archive");
-    for (const line of listing.stdout.split("\n").slice(1)) {
-      const m = /^([-dl][rwxst-]{9}).*\s(\S.*)$/.exec(line);
-      if (!m) continue;
-      if (m[1][0] === "l") throw new Error("update archive contains a symlink (" + m[2] + "); not installing");
-      if (m[2].startsWith("/") || m[2].split("/").includes("..")) throw new Error("update archive contains an unsafe path (" + m[2] + "); not installing");
+    for (const line of listing.stdout.split("\n").slice(1)) if (/^l[rwxst-]{9}/.test(line)) throw new Error("update archive contains a symlink; not installing");
+    // Names come from `zipinfo -1` (one per line, nothing else), so a name with spaces cannot hide a `..`.
+    const names = spawnSync("/usr/bin/zipinfo", ["-1", zip], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    if (names.status !== 0) throw new Error("could not list the update archive");
+    for (const name of names.stdout.split("\n").filter(Boolean)) {
+      if (name.startsWith("/") || name.split("/").includes("..")) throw new Error("update archive contains an unsafe path (" + name + "); not installing");
     }
     const un = spawnSync("/usr/bin/ditto", ["-x", "-k", zip, stage], { encoding: "utf8" });
     if (un.status !== 0) throw new Error("could not unpack the update: " + (un.stderr || "").trim());
@@ -126,7 +127,12 @@ async function installUpdate({ url, digest }, root) {
     const sync = spawnSync("/usr/bin/rsync", ["-a", "--delete", "--ignore-times", manifestDir + "/", root + "/"], { encoding: "utf8" });
     if (sync.status !== 0) {
       const restore = spawnSync("/usr/bin/rsync", ["-a", "--delete", "--ignore-times", backup + "/", root + "/"], { encoding: "utf8" });
-      if (restore.status !== 0) throw new Error("update failed AND the previous version could not be restored; reinstall from the release zip. " + (sync.stderr || "").trim());
+      if (restore.status !== 0) {
+        // Both copies failed: keep the backup next to the install instead of letting `finally` delete it.
+        const keep = root + ".backup-" + Date.now();
+        try { fs.renameSync(backup, keep); } catch (_) {}
+        throw new Error("update failed AND the previous version could not be restored. The previous version is saved at " + keep + "; reinstall from the release zip. " + (sync.stderr || "").trim());
+      }
       throw new Error("could not copy the update into place (previous version restored): " + (sync.stderr || "").trim());
     }
     spawnSync("/usr/bin/xattr", ["-dr", "com.apple.quarantine", root]);

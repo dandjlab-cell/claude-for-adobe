@@ -3,7 +3,19 @@
 // Recipe mirrors VO Studio's: 16 kHz mono, VAD in front (bundled Silero) so silence never becomes words,
 // temperature 0 with no fallback, no context carried between segments. Word timing comes from whisper.cpp's
 // per-token timestamps (one word per segment), roughly tens of milliseconds.
-const { spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
+// Async spawn so a minutes-long transcription never blocks the panel's event loop (the MCP reply, the UI).
+function run(bin, args) {
+  return new Promise((resolve) => {
+    let stdout = "", stderr = "";
+    let p;
+    try { p = spawn(bin, args); } catch (e) { resolve({ status: -1, stdout, stderr: String(e) }); return; }
+    p.stdout.on("data", (d) => { stdout += d; });
+    p.stderr.on("data", (d) => { stderr += d; });
+    p.on("error", (e) => resolve({ status: -1, stdout, stderr: String(e) }));
+    p.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const https = require("node:https");
@@ -110,7 +122,7 @@ async function transcribe(mediaPath, { language = "en", onLog = () => {}, onProg
     onLog("whisper: transcribing " + path.basename(mediaPath));
     const args = ["-m", modelPath(), "-f", wav, "-l", language || "auto", "-t", String(Math.max(2, Math.min(8, os.cpus().length - 2))),
       "--vad", "-vm", VAD_MODEL, "-vt", "0.5", "-ml", "1", "-sow", "-oj", "-of", outBase, "-np", ...KNOBS];
-    const r = spawnSync(BIN, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    const r = await run(BIN, args);
     if (r.status !== 0) throw new Error("whisper failed: " + (r.stderr || r.stdout || "").trim().slice(-400));
     const json = JSON.parse(fs.readFileSync(outBase + ".json", "utf8"));
     const result = { words: wordsFromWhisperCpp(json), language: (json.result && json.result.language) || language || "en", model: current, knobs: KNOBS.join(" "), vad: true, createdAt: new Date().toISOString() };

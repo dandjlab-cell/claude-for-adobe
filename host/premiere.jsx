@@ -454,18 +454,17 @@ var PCX = (function () {
             if (!motion) { skipped++; continue; }
             var pos = motion.properties[0], scale = motion.properties[1];
             // Source frame from the clip's metadata: "1920 x 1080 (1.0)"; fall back to the old sequence size.
-            var srcW = oldW, srcH = oldH;
-            try { var vi = String(cl.projectItem.getProjectColumnsMetadata()); var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); } } catch (e0) {}
+            var srcW = oldW, srcH = oldH, vi = "";
+            try { vi = String(cl.projectItem.getProjectColumnsMetadata()); var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); } } catch (e0) {}
             var fx = w / srcW, fy = h / srcH;
             // Footage fills the new frame; graphics, stills and titles FIT it (never blown up past the edges).
-            var isGraphicClip = false;
-            try { var mpath = cl.projectItem ? String(cl.projectItem.getMediaPath()) : ""; isGraphicClip = !mpath || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(mpath); } catch (eg) { isGraphicClip = true; }
+            var isGraphicClip = isGraphicItem(cl.projectItem, vi);
             var factor = (mode === "fill" && !isGraphicClip) ? Math.max(fx, fy) : Math.min(fx, fy);
-            var cur = num(scale.getValue());
-            scale.setValue(cur * factor / Math.max(oldW / srcW, oldH / srcH), true);
+            // Scale 100 = source pixels, so the target is absolute (source size vs the new frame); the clip's
+            // previous zoom is not carried over, which is what a reframe means.
+            scale.setValue(100 * factor, true);
             var p = pos.getValue();
-            var normalized = p && p.length === 2 && p[0] <= 1.5 && p[1] <= 1.5;
-            pos.setValue(normalized ? [0.5, 0.5] : [w / 2, h / 2], true);
+            pos.setValue(isNormalized(p) ? [0.5, 0.5] : [w / 2, h / 2], true);
             done++;
           } catch (e1) { skipped++; }
         }
@@ -474,6 +473,19 @@ var PCX = (function () {
     var fin = s.getSettings();
     return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + ", graphics fit, all centred)" + (skipped ? ", " + skipped + " skipped" : "") : "");
   }
+
+  // Graphics, stills, titles and alpha media FIT a new frame; footage and nested sequences FILL it. One place
+  // for the rule: project item type first, then the Video Info column ("1920 x 1080 (1.0), Alpha"), then extension.
+  function isGraphicItem(pi, videoInfo) {
+    if (!pi) return true;
+    try { if (typeof pi.isSequence === "function" && pi.isSequence()) return false; } catch (e0) {}
+    if (/alpha/i.test(String(videoInfo || ""))) return true;
+    var mp = ""; try { mp = String(pi.getMediaPath() || ""); } catch (e1) {}
+    return !mp || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(mp);
+  }
+  // Motion position is 0-1 fractions in some Premiere builds and pixels in others. A fraction pushed off frame
+  // can pass 1.5, so the cut is at 4: no pixel position of a real clip sits inside (0..4, 0..4).
+  function isNormalized(p) { return !!(p && p.length === 2 && Math.abs(p[0]) <= 4 && Math.abs(p[1]) <= 4); }
 
   function findItemByMedia(mediaPath) {
     function walk(b) { for (var k = 0; k < b.children.numItems; k++) { var c = b.children[k]; if (c.type === 2) { var r = walk(c); if (r) return r; } else { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp === mediaPath) return c; } } return null; }
@@ -569,18 +581,23 @@ var PCX = (function () {
     if (!s) return "ERR:no active sequence";
     var at = Number(atSec), idx = Number(trackIndex);
     var st = s.getSettings(); var W = num(st.videoFrameWidth), H = num(st.videoFrameHeight);
-    var found = null, tIdx = -1;
-    var order = [];
-    if (!isNaN(idx) && idx >= 0) order.push(idx);
-    for (var t = 0; t < s.videoTracks.numTracks; t++) if (t !== idx) order.push(t);
-    for (var o = 0; o < order.length && !found; o++) { var tr = s.videoTracks[order[o]]; for (var c = 0; c < tr.clips.numItems; c++) { var cl = tr.clips[c]; var a = num(cl.start.ticks) / T, b = num(cl.end.ticks) / T; if (at >= a - 0.001 && at < b) { found = cl; tIdx = order[o]; break; } } }
-    if (!found) return "ERR:no video clip at " + at.toFixed(2) + "s";
+    // Without a track, every video track is searched; more than one hit (a graphic over the subject) is an
+    // error that names them, so the caller says which one instead of the tool guessing V1.
+    var hits = [];
+    for (var t = 0; t < s.videoTracks.numTracks; t++) {
+      if (!isNaN(idx) && idx >= 0 && t !== idx) continue;
+      var tr = s.videoTracks[t];
+      for (var c = 0; c < tr.clips.numItems; c++) { var cl = tr.clips[c]; var a = num(cl.start.ticks) / T, b = num(cl.end.ticks) / T; if (at >= a - 0.001 && at < b) { hits.push({ clip: cl, t: t }); break; } }
+    }
+    if (!hits.length) return "ERR:no video clip at " + at.toFixed(2) + "s" + (!isNaN(idx) && idx >= 0 ? " on V" + (idx + 1) : "");
+    if (hits.length > 1) { var names = []; for (var hh = 0; hh < hits.length; hh++) names.push("V" + (hits[hh].t + 1) + " \"" + hits[hh].clip.name + "\""); return "ERR:" + hits.length + " clips at " + at.toFixed(2) + "s (" + names.join(", ") + "); pass track to say which one"; }
+    var found = hits[0].clip, tIdx = hits[0].t;
     var motion = null;
     for (var k = 0; k < found.components.numItems; k++) { var comp = found.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") { motion = comp; break; } }
     if (!motion) return "ERR:no Motion component on " + found.name;
     var pos = motion.properties[0], scale = motion.properties[1];
     var p = pos.getValue();
-    var normalized = p && p.length === 2 && p[0] <= 1.5 && p[1] <= 1.5;
+    var normalized = isNormalized(p);
     var nx = normalized ? p[0] + Number(dx || 0) : p[0] + Number(dx || 0) * W;
     var ny = normalized ? p[1] + Number(dy || 0) : p[1] + Number(dy || 0) * H;
     try { pos.setValue([nx, ny], true); } catch (e) { return "ERR:position " + e; }
