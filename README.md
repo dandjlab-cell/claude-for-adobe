@@ -1,6 +1,6 @@
 # Claude for Adobe
 
-Claude Code, inside Premiere Pro. Talk to it about your timeline, let it make the cuts, remove silences, ask what was said. Free, open source, runs on your Mac with your own Claude account.
+Claude Code and Codex, inside Premiere Pro. Talk to it about your timeline, let it make the cuts, remove silences, ask what was said. Free, open source, runs on your Mac with your own Claude and Codex account.
 
 **Install:** [download ClaudeForAdobe.zip](https://github.com/dandjlab-cell/claude-for-adobe/releases/latest/download/ClaudeForAdobe.zip), double-click it to unzip, right-click `Install.command` > Open, restart Premiere, then **Window > Extensions > Claude for Premiere**. You need the Claude desktop app signed in (open Claude Code in it once) or the Claude Code CLI. Updates come through a button in the panel.
 
