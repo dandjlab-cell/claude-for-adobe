@@ -1018,13 +1018,20 @@ async function subjectPath({ track = 1, max_keys = 40 } = {}) {
   const rows = raw.split(ROW).map((r) => r.split(COL));
   const [, name, w, h] = rows[0];
   if (rows[1] && rows[1][0] === "NONE") { const text = "No keyframes on any of the " + rows[1][1] + " clip(s) of V" + track + " in \"" + name + "\"" + (Number(rows[1][2]) ? " (" + rows[1][2] + " parameter(s) could not be read)" : "") + ". Auto Reframe has not run here, or its analysis is still going (reframe reports when it is done)."; card.done(text, true); return { text }; }
-  let seqTime = 0, clipTime = 0;
-  const lines = rows.slice(1).map(([tr, idx, clip, comp, param, n, start, inPt, samples]) => {
-    const first = Number((samples.split(" ")[0] || "").split("=")[0]);
-    if (Number.isFinite(first)) { if (Math.abs(first - Number(start)) < 1) seqTime++; else if (first < Number(start) - 1) clipTime++; }
-    return tr + " clip " + idx + " \"" + clip + "\" (starts " + start + "s, in " + inPt + "s): " + comp + " > " + param + ", " + n + " keys\n    " + samples;
+  // Verified 2026-09-05 on 26.3.2: Auto Reframe keys are on the "Auto Reframe" component (Position and Generated
+  // Keyframes, identical), values are frame fractions, key times are SOURCE time (first key = in point + 5 frames).
+  // Convert to timeline time so the agent never has to: seq = clipStart + (key - clipIn).
+  let source = 0, sequence = 0;
+  const lines = rows.slice(1).filter((r) => !/Generated Keyframes/.test(r[4])).map(([tr, idx, clip, comp, param, n, start, inPt, samples]) => {
+    const st = Number(start), ip = Number(inPt);
+    const pts = samples.split(" ").map((x) => { const [t, v] = x.split("="); return [Number(t), v]; }).filter((x) => Number.isFinite(x[0]));
+    const first = pts.length ? pts[0][0] : NaN;
+    const isSource = Number.isFinite(first) && Math.abs(first - ip) < 1 && !(Math.abs(first - st) < Math.abs(first - ip));
+    if (isSource) source++; else sequence++;
+    const out = pts.map(([t, v]) => (isSource ? st + (t - ip) : t).toFixed(2) + "s=" + v).join(" ");
+    return tr + " clip " + idx + " \"" + clip + "\" (" + st.toFixed(2) + "s to timeline): " + comp + " > " + param + ", " + n + " keys, timeline time = x,y (frame fractions; 0.5,0.5 = centre)\n    " + out;
   });
-  const text = name + " " + w + "x" + h + ", V" + track + ": " + lines.length + " keyframed parameter(s)\n" + lines.join("\n") + "\nCHECK key times: " + (seqTime && !clipTime ? "sequence time (first key at the clip's start)" : clipTime && !seqTime ? "clip-relative time (first key before the clip's sequence start; add clipStart - in to place them)" : "undetermined; compare the first key with the clip start yourself") + ".";
+  const text = name + " " + w + "x" + h + ", V" + track + ": " + lines.length + " keyframed parameter(s)\n" + lines.join("\n") + "\nCHECK key times: " + (source && !sequence ? "source time from Premiere, converted to timeline time above (PASS)" : !source && sequence ? "already timeline time (unexpected on this build; not converted)" : "mixed; converted only the source-time ones") + ". Where x stays 0.500 Auto Reframe moved the shot vertically only.";
   card.done(text, true);
   return { text };
 }

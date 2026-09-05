@@ -18,7 +18,7 @@ told to do from a panel, or for numbers Premiere does not give back.
 | Place b-roll | overwrite edit | `place_broll` (Premiere's overwriteClip, other tracks locked) | | Premiere's. |
 | A frame as an image | Export Frame | `preview_frames`, `snapshot_moments`, `frames_across`, `layer_frames`, `seam_frames` | | Premiere's renderer, always. |
 | Audio of the timeline | Export with Premiere's preset | `transcribe_timeline`, `analyze_audio` | | Premiere's renderer. |
-| Where a subject is over time | Auto Reframe's generated Motion keyframes | `clip_transforms` (static values today); the keyframe read exists on 26.3.2 (`qeComponent.getParamKeyframes`, `param.getKeys`) and is the first thing to verify | none yet | Premiere's. Reading keyframes is the next step; a face detector would be the fallback, not the first choice. |
+| Where a subject is over time | Auto Reframe's keyframes | `subject_path` (verified): the subject's x,y per key in timeline time, per clip | none | Premiere's. Read it before judging head room from frames; a face detector is never needed. |
 | Text on screen, when it appears | none | | `find_on_screen` (macOS's text recognizer) | Ours, built on macOS. |
 | Speech coverage, talking head vs b-roll | none | | `classify_clips` (voice detection) | Ours. |
 | Scene cuts inside one clip | Scene Edit Detection | `Sequence.performSceneEditDetectionOnSelection` is on 26.3.2 ExtendScript (listed, not yet run from here) | none | Premiere's. Until verified: editor's click (clip right-click > Scene Edit Detection); then the cuts are clips and `seam_frames` sees them. |

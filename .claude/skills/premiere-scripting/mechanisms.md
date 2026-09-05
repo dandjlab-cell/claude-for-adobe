@@ -29,7 +29,7 @@ Two facts that decide the shape of everything below:
 |---|---|---|---|---|
 | Reframe to 9:16, 4:5, 1:1 | Auto Reframe effect (Sensei subject tracking) per clip | verified | `reframe` tool: `qeClip.addVideoEffect(qe.project.getVideoEffectByName("Auto Reframe"))` on every footage clip, then `seq.isDoneAnalyzingForVideoEffects()` | applied/verified counts; the agent judges only the returned visible-moment frames |
 | Reframe as a new sequence | `Sequence.autoReframeSequence(num, den, preset, name, nest)` | verified (builds a new sequence; needs a source sequence, so `reframe` uses the effect instead) | | |
-| Where the subject is over time | Auto Reframe's Motion keyframes | listed | `qeComponent.getParamKeyframes(paramName)` on the clip's Auto Reframe / Motion component; ExtendScript `param.getKeys()` + `getValueAtKey()` | replaces every "look at the frame and judge head room" step once read |
+| Where the subject is over time | Auto Reframe's keyframes | verified 2026-09-05 (`subject_path`) | ExtendScript `param.getKeys()` + `getValueAtKey()` on the clip's **Auto Reframe** component (params "Position" and "Generated Keyframes", identical); values are frame fractions; key times are **source time** (first key = in point + 5 frames), the tool converts to timeline time | key count and time base; the agent reads the path instead of judging head room from frames |
 | Cut a clip at scene changes | `Sequence.performSceneEditDetectionOnSelection(action, linkedAudio, sensitivity)` | listed (present on 26.3.2 ExtendScript; the old note said UXP-only) | select the clip (`clip.setSelected(1,1)`), call it, count clips before/after | clips after > before; the cuts are then clips for `seam_frames` |
 | Stabilise | Warp Stabilizer effect | listed | `qeClip.addVideoEffect(getVideoEffectByName("Warp Stabilizer"))`, wait on `isDoneAnalyzingForVideoEffects()` | component present on the clip; analysis done |
 | Fit / fill frame | `qeClip.setScaleToFrameSize()`, `projectItem.setScaleToFrameSize()` | listed | | Motion Scale read-back |
@@ -117,7 +117,7 @@ Two facts that decide the shape of everything below:
 
 ## The next five to verify, in order (one at a time, on a working copy, with a read-back)
 
-1. **Auto Reframe keyframe read** (`getParamKeyframes` / `getKeys`): removes eye-work from the reframe skill.
+1. ~~Auto Reframe keyframe read~~ verified 2026-09-05: `subject_path`.
 2. **Scene Edit Detection** (`performSceneEditDetectionOnSelection`): a screen recording becomes cuts without OCR.
 3. **Morph Cut by QE** (`addTransition`): the jump cut after every pause and filler removal, fixed by Premiere.
 4. **Razor / ripple delete by QE**: closes the two "no" rows in reference.md (split, move to track).
