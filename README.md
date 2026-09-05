@@ -8,7 +8,9 @@ Claude Code and Codex, inside Premiere Pro. Talk to it about your timeline, let 
 
 Click the folder you want to work on, then ask Claude to edit it. Tip: keep b-roll in a separate folder from the talking head; it helps Claude a lot. Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
 
-Updated regularly; the panel tells you when a new version is ready and installs it in one click. Coming next: After Effects, and Codex as an alternative to Claude.
+**Codex instead of Claude:** pick it in the dropdown at the top. It needs the Codex CLI signed in (`npm i -g @openai/codex`, then `codex login`). Same tools, same rules, same skills; what Codex reads goes to OpenAI under your account.
+
+Updated regularly; the panel tells you when a new version is ready and installs it in one click. Coming next: After Effects.
 
 
 A personal CEP panel that runs **Claude Code inside Adobe Premiere Pro 2026**. Claude gets four

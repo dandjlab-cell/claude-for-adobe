@@ -8,6 +8,7 @@ const { buildExtendScriptWrapper, inspectExtendScript } = require(path.join(exte
 const { createCheckpoint, createHoldingCopy, listCheckpoints, revertCheckpoint } = require(path.join(extensionRoot, "src", "checkpoint.cjs"));
 const { createMcpServer } = require(path.join(extensionRoot, "src", "mcp-http.cjs"));
 const { createClaudeSession, availableModels, readClaudeJson } = require(path.join(extensionRoot, "src", "claude-session.cjs"));
+const { createCodexSession, codexModels, readCodexCatalog, readCodexConfig } = require(path.join(extensionRoot, "src", "codex-session.cjs"));
 const { checkForUpdate, currentVersion, installUpdate } = require(path.join(extensionRoot, "src", "update.cjs"));
 const { classifyMedia, formatClassification } = require(path.join(extensionRoot, "src", "classify.cjs"));
 const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captions.cjs"));
@@ -42,7 +43,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -80,14 +81,18 @@ function log(text) {
 }
 
 const MODEL_FALLBACK = "claude-sonnet-5";
-// Fill the model dropdown from the CLI's own account cache, so it matches what /model shows in Claude Code.
-(function fillModels() {
-  const { models, defaultModel } = availableModels(readClaudeJson());
+// Agent: Claude (default) or Codex. Same tools, same rulebook, same skills; only the process behind the chat differs.
+const agentName = () => (ui.agent.value === "codex" ? "Codex" : "Claude");
+try { const a = localStorage.getItem("agent"); if (a === "codex" || a === "claude") ui.agent.value = a; } catch (_) {}
+// Fill the model dropdown from each CLI's own account cache, so it matches what the CLI's /model picker shows.
+function fillModels() {
+  const { models, defaultModel } = ui.agent.value === "codex" ? codexModels(readCodexCatalog(), readCodexConfig()) : availableModels(readClaudeJson());
   if (!models.length) return;
   ui.model.innerHTML = "";
   models.forEach((m) => { const o = document.createElement("option"); o.value = m.value; o.textContent = m.label; ui.model.appendChild(o); });
   ui.model.value = defaultModel;
-})();
+}
+fillModels();
 const modelLabel = (id) => { const o = [...ui.model.options].find((x) => x.value === id); return o ? o.text : id; };
 let lastPayload = "";
 let pendingProjectRestart = false; // the project changed mid-turn: restart (new read path) when the turn ends
@@ -1284,7 +1289,7 @@ const TOOL_DEFS = [
 // ---- claude session ---------------------------------------------------------------------------
 
 function onEvent(event) {
-  if (event.kind === "ready") { log("claude session " + event.sessionId + " · " + event.model); if (event.model) setStatus("Ready · " + modelLabel(event.model)); }
+  if (event.kind === "ready") { log(agentName().toLowerCase() + " session " + event.sessionId + " · " + event.model); if (event.model) setStatus("Ready · " + modelLabel(event.model)); }
   else if (event.kind === "delta") {
     if (!liveMessage) liveMessage = addMessage("assistant", "");
     liveMessage.textContent += event.text;
@@ -1296,7 +1301,7 @@ function onEvent(event) {
     liveMessage = null;
     readSnapshot().then((snap) => { timeline = snap; }).catch(() => {});
     const modelError = event.isError && /issue with the selected model|not have access|unrecognized_model|model .*not (found|available)/i.test(event.text || "");
-    if (modelError && ui.model.value !== MODEL_FALLBACK && lastPayload) {
+    if (modelError && ui.agent.value !== "codex" && ui.model.value !== MODEL_FALLBACK && lastPayload) {
       addMessage("assistant muted", modelLabel(ui.model.value) + " isn't available on this account. Switching to " + modelLabel(MODEL_FALLBACK) + " and sending your message again.");
       ui.model.value = MODEL_FALLBACK;
       const payload = lastPayload;
@@ -1330,15 +1335,19 @@ function restartSession(resumeSessionId) {
     session = null;
     sessionGen += 1;
     const gen = sessionGen;
-    setStatus("Starting Claude…");
+    setStatus("Starting " + agentName() + "…");
     setBusy(true);
     if (old) await old.stop();
     try {
-      const next = createClaudeSession({
-        mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId, cwd: extensionRoot, readPaths: [analysisDir(), path.join(extensionRoot, ".claude", "skills")],
+      const skillsDir = path.join(extensionRoot, ".claude", "skills");
+      const common = {
+        mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId,
         capabilities: (ui.dupSequence.checked ? "" : "WARNING: the editor turned off duplicate-sequence protection; edits hit the ORIGINAL sequence. Confirm before any edit. ") + "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
         onEvent: (event) => { if (gen === sessionGen) onEvent(event); },
-      });
+      };
+      const next = ui.agent.value === "codex"
+        ? createCodexSession({ ...common, skillsDir })
+        : createClaudeSession({ ...common, cwd: extensionRoot, readPaths: [analysisDir(), skillsDir] });
       if (gen !== sessionGen) { next.stop(); return; }
       session = next;
       setStatus("Ready · " + ui.model.value);
@@ -1648,5 +1657,7 @@ ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventD
 ui.stop.onclick = () => restartSession(session && session.sessionId);
 ui.restart.onclick = () => { ui.messages.innerHTML = ""; allowScriptsThisSession = false; restartSession(); };
 ui.model.onchange = () => restartSession(session && session.sessionId);
+// Switching agent starts a fresh conversation: Claude and Codex cannot resume each other's threads.
+ui.agent.onchange = () => { try { localStorage.setItem("agent", ui.agent.value); } catch (_) {} fillModels(); restartSession(); };
 
 boot();

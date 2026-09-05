@@ -4,7 +4,7 @@
 **Worktree:** ~/DevApps/claude-for-adobe
 **Date:** 2026-09-05
 **Branch:** `main`
-**Last commit:** `ea7dd8d` 0.1.68: reframe fits graphics/stills/titles instead of filling; Copy log and Clear buttons in Settings
+**Last commit:** see `git log -1` (0.1.68 was `ea7dd8d`; everything after it is unreleased main)
 **Role:** BUILDER (make changes, run tests, ship releases; VERIFIER = reproduce and confirm without editing. Default here is BUILDER; confirm with the user before a release.)
 
 ---
@@ -27,7 +27,9 @@ A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that
 
 ## Current State
 
-Working end to end on the user's Mac (Apple Silicon, Premiere 26.3.2): install, self-update, chat, cut silences, captions button, reframe with the look-fix-look loop, b-roll placement, organizing. 74 tests pass (`node --test test/*.test.cjs`), including a host-script integrity test that guards the export table (two releases shipped broken on 2026-09-04 before it existed; 0.1.45 and 0.1.46 were deleted).
+Working end to end on the user's Mac (Apple Silicon, Premiere 26.3.2): install, self-update, chat, cut silences, captions button, reframe with the look-fix-look loop, b-roll placement, organizing. 83 tests pass (`node --test test/*.test.cjs`), including a host-script integrity test that guards the export table (two releases shipped broken on 2026-09-04 before it existed; 0.1.45 and 0.1.46 were deleted).
+
+**Codex as an alternative agent (2026-09-05, in main, untested in the panel).** `src/codex-session.cjs` gives the same session interface as the Claude module: one `codex exec --json` process per turn, `resume <thread>` for follow-ups, the panel's MCP server configured with `-c mcp_servers.premiere.url/bearer_token_env_var/default_tools_approval_mode="approve"/tool_timeout_sec=3600` (without the approval mode every tool call fails with "requires approval"), `-s read-only` sandbox, images via `-i`. One rulebook: `buildSystemPrompt(capabilities, agentName)` is Claude's system prompt and is written to `AGENTS.md` in a per-process temp folder that Codex uses as its cwd, with `.agents/skills` symlinked to the panel's `.claude/skills`, so both agents follow the same rules and skills. Agent dropdown next to the model dropdown; models come from `~/.codex/models_cache.json` and the default from `~/.codex/config.toml`. Verified outside Premiere with a standalone MCP server: skills listed, tool called, resumed turn remembered context. Codex also sees the user's global `~/.agents/skills` and runs read-only shell commands to read SKILL.md files (expected). Not yet exercised inside the panel.
 
 Last observed run (0.1.66): 9:16 to 4:5 reframe worked, but the title graphic and captions still overlapped the face. 0.1.67 (graphic-aware snapshots, on-screen layer list per frame, "nothing covers a face" rule) and 0.1.68 (graphics fit instead of fill) address it but have NOT been re-tested by the user yet.
 
@@ -80,9 +82,10 @@ Private, per-machine notes under `~/.claude/projects/<this repo's scope>/memory/
 2. **Review follow-ups** (see the last entry in `docs/codex-review-log.md`): `create_captions` stacks a new caption track per run (needs a replace-or-skip rule); the caption band position is a Premiere track setting the panel cannot script (document in how-to-use). A Codex pass over the 2026-09-05 review fixes themselves is still owed under the AGENTS.md rule for host-script changes.
 3. **Speaker separation** (sherpa-onnx, models on first use) and **prosody** (port VO Studio's per-word RMS/pitch/pause from `vo_engine/audio_prosody.py` to JS, summaries not raw numbers) so `list_analysis` files can carry them; the "metadata first" rule already reads whatever is there.
 4. **B-roll analysis**: cheap motion/brightness pass from frame differencing, Apple Vision optical flow later (Swift helper).
-5. **After Effects panel** and **Codex as an alternative agent** (README promises both).
-6. **ZXP signing** to drop the PlayerDebugMode requirement.
-7. **(Different repo: premiere-map, not this one.)** Round 248 rev 6 is written in the ASI-Evolve harness and unclicked; write-up pending. Only pick this up if the user asks. See `~/DevApps/premiere-map/docs/handoff.md`.
+5. **Codex in the panel**: test on the dev panel (agent dropdown, `codex login` present): a chat turn, a tool call, a second turn, an image attachment, Stop mid-turn. Then a Codex-specific pass over the rulebook voice (the system prompt was tuned against Claude). Codex has no subagents, so long transcripts are read by the main model.
+6. **After Effects panel** (README promises it).
+7. **ZXP signing** to drop the PlayerDebugMode requirement.
+8. **(Different repo: premiere-map, not this one.)** Round 248 rev 6 is written in the ASI-Evolve harness and unclicked; write-up pending. Only pick this up if the user asks. See `~/DevApps/premiere-map/docs/handoff.md`.
 
 ## Known Issues
 
