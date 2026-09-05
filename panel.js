@@ -495,6 +495,8 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const ordered = cuts.slice().sort((a, b) => b.start - a.start);
   const BATCH = 8;
   let doneRanges = 0, ok = true, raw = "";
+  const durBefore = (await readSnapshot().catch(() => ({ duration: NaN }))).duration;
+  const planned = cuts.reduce((s, c) => s + Math.max(0, Math.min(c.end, durBefore || c.end) - c.start), 0);
   const t0 = Date.now();
   for (let i = 0; i < ordered.length && ok; i += BATCH) {
     const batch = ordered.slice(i, i + BATCH);
@@ -508,10 +510,18 @@ async function applyCuts(card, cuts, dryRun, summary) {
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
-  card.done(raw, ok);
   setStatus("Thinking…");
   timeline = await readSnapshot();
-  return { text: copyNote + (ok ? raw + "\nUndo: Cmd+Z once per extracted range (" + cuts.length + " ranges). Nothing else was changed." : "CLAUDE_FOR_ADOBE_ERROR:" + raw), isError: !ok };
+  // Post-condition: the sequence shortened by what was planned (each range lands on frame boundaries, so allow
+  // one frame per range plus a little). A mismatch is reported as a FAIL the model must relay.
+  let check = "";
+  if (ok && Number.isFinite(durBefore) && Number.isFinite(timeline.duration)) {
+    const removed = durBefore - timeline.duration, tol = cuts.length * 0.05 + 0.1;
+    check = "\nCHECK " + (Math.abs(removed - planned) <= tol ? "PASS" : "FAIL") + ": sequence " + durBefore.toFixed(2) + "s -> " + timeline.duration.toFixed(2) + "s, removed " + removed.toFixed(2) + "s, planned " + planned.toFixed(2) + "s";
+    if (Math.abs(removed - planned) > tol) ok = false;
+  }
+  card.done(raw + check, ok);
+  return { text: copyNote + (ok ? raw + check + "\nUndo: Cmd+Z once per extracted range (" + cuts.length + " ranges). Nothing else was changed." : "CLAUDE_FOR_ADOBE_ERROR:" + raw + check), isError: !ok };
 }
 
 // Silence removal. method "vad" (default): Silero VAD finds speech on every audio clip; everything outside
@@ -1018,11 +1028,41 @@ async function setSequenceSize({ preset, aspect, width, height, fps, reframe = "
   let cp = "";
   try { await saveProject(); const entry = createCheckpoint(project.path, "before sequence resize"); renderCheckpoints(); cp = " File checkpoint " + entry.id + " saved first (this is not undoable with Cmd+Z)."; }
   catch (error) { return err(card, "Resize blocked: it cannot be undone and a checkpoint was not possible: " + error.message); }
+  const before = await readTransforms().catch(() => null);
   const raw = await host("resizeSequence", String(width || ""), String(height || ""), String(fps || ""), reframe);
-  const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
-  card.done(raw + cp, ok);
+  let ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
+  // Post-condition, computed, not believed: frame size as asked; every graphic's position fraction kept and its
+  // scale followed the width; footage centred. The model reports what this says, not what it expects.
+  let check = "";
+  if (ok && before) {
+    const after = await readTransforms().catch(() => null);
+    if (after) {
+      const fails = [];
+      if (width && height && (after.w !== Number(width) || after.h !== Number(height))) fails.push("frame is " + after.w + "x" + after.h + ", asked " + width + "x" + height);
+      const ratio = after.w / before.w;
+      after.rows.forEach((r) => {
+        const b = before.rows.find((x) => x.key === r.key); if (!b || !r.x) return;
+        if (r.graphic) {
+          if (Math.abs(r.x - b.x) > 0.002 || Math.abs(r.y - b.y) > 0.002) fails.push(r.track + " \"" + r.name + "\" moved " + b.x.toFixed(3) + "," + b.y.toFixed(3) + " -> " + r.x.toFixed(3) + "," + r.y.toFixed(3));
+          if (reframe !== "none" && Math.abs(r.scale - b.scale * ratio) > Math.max(0.5, b.scale * 0.01)) fails.push(r.track + " \"" + r.name + "\" scale " + b.scale.toFixed(1) + " -> " + r.scale.toFixed(1) + ", expected " + (b.scale * ratio).toFixed(1));
+        } else if (reframe !== "none" && (Math.abs(r.x - 0.5) > 0.002 || Math.abs(r.y - 0.5) > 0.002)) fails.push(r.track + " \"" + r.name + "\" not centred (" + r.x.toFixed(3) + "," + r.y.toFixed(3) + ")");
+      });
+      const graphics = after.rows.filter((r) => r.graphic).length;
+      check = "\nCHECK " + (fails.length ? "FAIL: " + fails.join("; ") : "PASS: frame " + after.w + "x" + after.h + ", " + graphics + " graphic(s) kept in place, footage centred (read back from Premiere)");
+      if (fails.length) ok = false;
+    }
+  }
+  card.done(raw + check + cp, ok);
   timeline = await readSnapshot().catch(() => timeline);
-  return { text: copyNote + raw + cp, isError: !ok };
+  return { text: copyNote + raw + check + cp, isError: !ok };
+}
+// Motion Position/Scale of every video clip as numbers, keyed by track and index (see clipTransforms).
+async function readTransforms(sequence = "") {
+  const raw = await host("clipTransforms", sequence);
+  if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") throw new Error(raw);
+  const rows = raw.split(ROW);
+  const [, , w, h] = rows[0].split(COL);
+  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic] = r.split(COL); return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1" }; }) };
 }
 
 // Basic audio clean-up from the transcript: ums, uhs, stutters, repeated words. Plan, then cut with the range engine.

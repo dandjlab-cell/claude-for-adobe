@@ -657,7 +657,12 @@ var PCX = (function () {
     var finalScale = num(scale.getValue());
     if (!isNaN(sa) && sa > 0) { try { scale.setValue(sa, true); finalScale = sa; } catch (e3) { return "ERR:scale " + e3; } }
     else if (sm && sm !== 1) { try { finalScale = finalScale * sm; scale.setValue(finalScale, true); } catch (e2) { return "ERR:scale " + e2; } }
-    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position " + (normalized ? nx.toFixed(3) + "," + ny.toFixed(3) + " (fraction)" : Math.round(nx) + "," + Math.round(ny) + " px (" + (nx / W).toFixed(3) + "," + (ny / H).toFixed(3) + ")") + ", scale " + finalScale.toFixed(1);
+    // Read back what Premiere actually stored: the report is a fact, not the intent.
+    var rp = pos.getValue(), rs = num(scale.getValue());
+    var rx = normalized ? rp[0] : rp[0] / W, ry = normalized ? rp[1] : rp[1] / H;
+    var wanted = [normalized ? nx : nx / W, normalized ? ny : ny / H];
+    var okPos = Math.abs(rx - wanted[0]) < 0.002 && Math.abs(ry - wanted[1]) < 0.002, okScale = Math.abs(rs - finalScale) < 0.05;
+    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position now " + rx.toFixed(3) + "," + ry.toFixed(3) + " (frame fractions), scale now " + rs.toFixed(1) + (okPos && okScale ? " | CHECK PASS (read back)" : " | CHECK FAIL: asked " + wanted[0].toFixed(3) + "," + wanted[1].toFixed(3) + " scale " + finalScale.toFixed(1));
   }
 
   return {
