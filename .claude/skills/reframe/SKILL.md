@@ -23,6 +23,16 @@ The caption band is a Premiere track setting; the panel cannot move it. Say once
 
 `set_sequence_size` kept every graphic, title and guide where the editor put it (position fraction kept, scale following the frame width) and listed each one's before/after. Read that list and `clip_transforms`. Move a graphic only if the crop pushed it out of the safe zone, with `nudge_clip` and its track (absolute `x`/`y` from `clip_transforms`). A title over a face is the editor's call: say it in one line, do not move it unasked. Guides (a mask, placement or safe-zone clip spanning the sequence) are never judged and never moved. Never re-place a graphic by eye; see `graphics-and-titles.md`.
 
+## Named action (screen recordings, "make sure they see the dropdown")
+
+When the editor names what the viewer must see, placement is arithmetic, not eye-work:
+1. `list_analysis`: read the project's RULE files (safe-zone measurements, procedures). Print the safe rect in one line.
+2. Find the beat: `find_on_screen` with the label that appears ("Codex"), then a smaller step around the span for the exact frame. `find_in_transcript` if it is spoken.
+3. Define the region: the panel or window that holds the control, cursor travel and any open menu, in source pixels (from `clip_transforms`' source size and one look at a frame). Tight vs whole panel is the editor's call; default whole panel.
+4. `fit_region` with that region and the safe band as target, `max_scale` 100 so text keeps its size. It applies the transform, reads it back, and reports CHECK and any blank canvas. Never nudge by eye after it; if CHECK fails, change the region or the cap.
+5. Cut with `keep_only` around the beat (place first, then cut, so check frames are in final time).
+6. `frames_across` at: before the beat, menu open, selection landing, after. Frames confirm; they do not measure.
+
 ## 4. Report
 
 One line: what frame it is now, which copy it is on, and that the original is untouched.

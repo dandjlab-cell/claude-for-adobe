@@ -16,6 +16,7 @@ const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
+const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, fillerRanges, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
 const { MODELS: WHISPER_MODELS, cachedWords, currentModel, ensureModel, installedModels, modelReady, setModel, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
@@ -1001,8 +1002,8 @@ async function listAnalysis() {
   const dir = analysisDir();
   let rows = [];
   const fp = timelineFingerprint(timeline || (await readSnapshot().catch(() => null)));
-  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); let stale = ""; if (f.endsWith(".transcript.md")) { const head = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400); const m = /<!-- timeline ([^>]*) -->/.exec(head); if (m && m[1] !== fp) stale = "  STALE (timeline changed since; call read_transcript again)"; } return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " ") + stale; }); } catch (_) {}
-  const text = rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir;
+  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); let stale = ""; if (f.endsWith(".transcript.md")) { const head = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400); const m = /<!-- timeline ([^>]*) -->/.exec(head); if (m && m[1] !== fp) stale = "  STALE (timeline changed since; call read_transcript again)"; } let head = ""; if (/safe-zone|procedure|rule|notes|handoff/i.test(f) && f.endsWith(".md")) { try { const first = fs.readFileSync(path.join(dir, f), "utf8").split("\n").find((l) => l.trim()) || ""; head = "  | RULE: " + first.replace(/^#+\s*/, "").slice(0, 140); } catch (_) {} } return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " ") + stale + head; }); } catch (_) {}
+  const text = (rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir) + (rows.some((r) => r.includes("| RULE:")) ? "\nFiles marked RULE are this project's rules (safe zones, procedures, approved placements): READ them before framing or cutting here; they are not optional." : "");
   card.done(text, true);
   return { text: text + (rows.length ? "\n(read any of these with a subagent; prosody / diarization / notes may come from other tools)" : "") };
 }
@@ -1149,7 +1150,82 @@ async function readTransforms(sequence = "") {
   if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") throw new Error(raw);
   const rows = raw.split(ROW);
   const [, , w, h] = rows[0].split(COL);
-  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic] = r.split(COL); return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1" }; }) };
+  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH] = r.split(COL); return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null }; }) };
+}
+
+// Place a region of a clip's SOURCE (the action: a control, a face, a panel) inside a target rectangle of the
+// frame (a safe band) by arithmetic, apply it, and assert from what Premiere stored. No eye-work for placement.
+async function fitRegionTool({ at_seconds, track, roi, roi_units = "px", target, max_scale = 100, margin = 0.03 } = {}) {
+  const card = addTool("fit_region @" + Number(at_seconds).toFixed(2) + "s V" + track, JSON.stringify({ roi, target }));
+  if (!Number.isFinite(Number(at_seconds)) || !track) return err(card, "at_seconds and track are required");
+  if (!roi || [roi.x0, roi.y0, roi.x1, roi.y1].some((v) => !Number.isFinite(Number(v)))) return err(card, "roi {x0,y0,x1,y1} is required: source pixels, or fractions with roi_units 'fraction'");
+  const tgt = target && Number.isFinite(Number(target.x0)) ? { x0: +target.x0, y0: +target.y0, x1: +target.x1, y1: +target.y1 } : { x0: 0.05, y0: 0.05, x1: 0.95, y1: 0.95 };
+  let tr; try { tr = await readTransforms(); } catch (error) { return err(card, error.message); }
+  const t0 = Number(at_seconds), row = tr.rows.find((r) => r.track === "V" + Number(track) && t0 >= r.start && t0 < r.end);
+  if (!row) return err(card, "no clip on V" + track + " at " + t0.toFixed(2) + "s");
+  if (!row.srcW || !row.srcH) return err(card, "no source size known for \"" + row.name + "\" (media_info / not footage?)");
+  const R = roi_units === "fraction" ? { x0: roi.x0 * row.srcW, y0: roi.y0 * row.srcH, x1: roi.x1 * row.srcW, y1: roi.y1 * row.srcH } : { x0: +roi.x0, y0: +roi.y0, x1: +roi.x1, y1: +roi.y1 };
+  const fit = fitRegion({ srcW: row.srcW, srcH: row.srcH, frameW: tr.w, frameH: tr.h, roi: R, target: tgt, maxScale: Number(max_scale) || 0, margin: Number(margin) || 0 });
+  let copyNote = ""; try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const out = await host("nudgeClip", String(t0), String(Number(track) - 1), "0", "0", "1", String(fit.x), String(fit.y), String(fit.scale));
+  if (out.indexOf("ERR:") === 0 || out === "EvalScript error.") return err(card, out.replace(/^ERR:/, ""));
+  let after; try { after = await readTransforms(); } catch (error) { return err(card, error.message); }
+  const now = after.rows.find((r) => r.key === row.key) || row;
+  const placed = roiInFrame({ srcW: row.srcW, srcH: row.srcH, frameW: after.w, frameH: after.h, x: now.x, y: now.y, scale: now.scale }, R);
+  const ok = rectInside(placed, tgt, 0.005);
+  const f = (r) => r.x0.toFixed(3) + "," + r.y0.toFixed(3) + " to " + r.x1.toFixed(3) + "," + r.y1.toFixed(3);
+  const blank = Object.entries(fit.blank).filter(([, v]) => v > 0.005).map(([k, v]) => k + " " + Math.round(v * 100) + "%").join(", ");
+  const capped = Number(max_scale) && fit.scale >= Number(max_scale) - 0.01;
+  const text = copyNote + "fit_region V" + track + " \"" + row.name + "\": position " + now.x.toFixed(3) + "," + now.y.toFixed(3) + ", scale " + now.scale.toFixed(1) + (capped ? " (capped at " + max_scale + "%)" : "")
+    + "\nregion now at frame " + f(placed) + "; target " + f(tgt)
+    + "\nCHECK " + (ok ? "PASS: region inside the target (read back from Premiere)" : "FAIL: region outside the target; " + (fit.fits ? "Premiere stored something else" : "it does not fit at scale <= " + max_scale + "%: raise max_scale or tighten the roi"))
+    + (blank ? "\nblank canvas: " + blank + " (disclose it to the editor)" : "")
+    + "\nUndo: Cmd+Z. Confirm with frames_across at the moment; frames confirm, they do not measure.";
+  card.done(text, ok);
+  return { text: ok ? text : "CLAUDE_FOR_ADOBE_ERROR:" + text, isError: !ok };
+}
+
+// Where text appears on screen, from sampled frames read by macOS's built-in recognizer (bin/ocr). The
+// on-screen twin of find_in_transcript: "when does 'Codex' show up" answered by timecodes, not by looking.
+const OCR_BIN = path.join(extensionRoot, "bin", "ocr");
+async function findOnScreen({ text, start_seconds = 0, end_seconds, step_seconds = 1 } = {}) {
+  const card = addTool("find_on_screen \"" + text + "\"", "");
+  const needle = String(text || "").trim().toLowerCase();
+  if (!needle) return err(card, "text is required");
+  if (!fs.existsSync(OCR_BIN)) return err(card, "text recognition helper missing (bin/ocr)");
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const a = Math.max(0, Number(start_seconds) || 0), b = Math.min(snap.duration, Number(end_seconds) > 0 ? Number(end_seconds) : snap.duration);
+  const step = Math.max(0.2, Number(step_seconds) || 1);
+  const times = []; for (let t = a; t < b && times.length < 120; t += step) times.push(Number(t.toFixed(3)));
+  if (!times.length) return err(card, "empty range");
+  card.open();
+  const hits = [];
+  for (let i = 0; i < times.length; i += 6) {
+    const batch = times.slice(i, i + 6);
+    card.progress(i, times.length, "reading frames ");
+    setStatus("Reading text on screen " + Math.min(i + 6, times.length) + " / " + times.length + "…");
+    const base = path.join(os.tmpdir(), "claude-for-adobe-ocr-" + Date.now().toString(36));
+    const raw = await host("frames", JSON.stringify(batch), base, "");
+    if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
+    const files = raw.split(ROW).map((row) => { const [f] = row.split(COL); return [f + ".png", f].find((p) => fs.existsSync(p)) || null; });
+    let out = "";
+    try { out = require("node:child_process").execFileSync(OCR_BIN, files.filter(Boolean), { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }); } catch (error) { return err(card, "text recognition failed: " + error.message); }
+    const byFile = new Map(out.split("\n").filter(Boolean).map((l) => { try { const j = JSON.parse(l); return [j.file, j.items || []]; } catch (_) { return [null, []]; } }));
+    files.forEach((f, j) => {
+      const items = f ? byFile.get(f) || [] : [];
+      const m = items.find((it) => String(it.text).toLowerCase().includes(needle));
+      if (m) hits.push({ t: batch[j], box: m.box, seen: m.text });
+      try { if (f) fs.unlinkSync(f); } catch (_) {}
+    });
+  }
+  const spans = [];
+  hits.forEach((h) => { const last = spans[spans.length - 1]; if (last && h.t - last.last <= step * 1.5) { last.last = h.t; last.n++; } else spans.push({ first: h.t, last: h.t, n: 1, box: h.box, seen: h.seen }); });
+  const lines = spans.map((s) => tc(s.first) + " to " + tc(Math.min(b, s.last + step)) + " (seen \"" + s.seen + "\" at frame x " + s.box[0].toFixed(2) + "-" + s.box[2].toFixed(2) + ", y " + s.box[1].toFixed(2) + "-" + s.box[3].toFixed(2) + ")");
+  const result = "\"" + text + "\" on screen (sampled every " + step + "s, " + times.length + " frames" + (times.length >= 120 ? ", capped at 120" : "") + "): " + (spans.length ? "\n" + lines.join("\n") : "not found")
+    + "\nTimes are timeline seconds; boxes are frame fractions, origin top-left. For the exact frame, call again with a smaller step_seconds around a span.";
+  card.done(result, true);
+  setStatus("Thinking…");
+  return { text: result };
 }
 
 // Basic audio clean-up from the transcript: ums, uhs, stutters, repeated words. Plan, then cut with the range engine.
@@ -1234,8 +1310,13 @@ async function clipTransforms({ sequence = "" } = {}) {
   if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return err(card, raw.replace(/^ERR:/, ""));
   const rows = raw.split(ROW);
   const [, name, w, h] = rows[0].split(COL);
-  const lines = rows.slice(1).map((r) => { const [track, idx, clipName, px, py, sc, graphic, a, b] = r.split(COL); return track + " #" + idx + " \"" + clipName + "\" " + tc(Number(a)) + "-" + tc(Number(b)) + (graphic === "1" ? " GRAPHIC" : " footage") + (px ? " position " + px + "," + py + " scale " + sc : " (no Motion)"); });
-  const text = "\"" + name + "\" " + w + "x" + h + " (positions are frame fractions: 0.5,0.5 = centre; scale is % of native)\n" + lines.join("\n");
+  const lines = rows.slice(1).map((r) => {
+    const [track, idx, clipName, px, py, sc, graphic, a, b, srcW, srcH] = r.split(COL);
+    let vis = "";
+    if (px && Number(srcW) && Number(srcH)) { const v = visibleSourceRect({ srcW: Number(srcW), srcH: Number(srcH), frameW: Number(w), frameH: Number(h), x: Number(px), y: Number(py), scale: Number(sc) }); vis = "; source " + srcW + "x" + srcH + ", visible source px x " + Math.round(v.x0) + "-" + Math.round(v.x1) + ", y " + Math.round(v.y0) + "-" + Math.round(v.y1); }
+    return track + " #" + idx + " \"" + clipName + "\" " + tc(Number(a)) + "-" + tc(Number(b)) + (graphic === "1" ? " GRAPHIC" : " footage") + (px ? " position " + px + "," + py + " scale " + sc + vis : " (no Motion)");
+  });
+  const text = "\"" + name + "\" " + w + "x" + h + " (positions are frame fractions: 0.5,0.5 = centre; scale is % of native; 'visible source px' is the window of the source you can see, past the source edges = blank canvas)\n" + lines.join("\n");
   card.done(text, true);
   return { text };
 }
@@ -1373,7 +1454,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1408,6 +1489,10 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, count: { type: "number", description: "default 4, max 6" }, max_px: { type: "number" }, solo_track: { type: "number", description: "1-based video track to render alone; default the composite." } }, required: ["start_seconds", "end_seconds"] } },
   { name: "nudge_clip", description: "Move or scale the video clip at a sequence time. Deltas: dx right, dy down as fractions of the frame (dx -0.1 = 10% left), scale as a multiplier (1.1 = 10% bigger). Absolutes: x, y as frame fractions (0.5,0.5 = centre) and scale_to as a percentage, for restoring a known placement in one call (from clip_transforms). Absolutes win over deltas. Undoable. Use with preview_frames: look, nudge, look again.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" } }, required: ["at_seconds"] } },
+  { name: "fit_region", description: "Place the action by arithmetic, not by eye: give a rectangle of the clip's SOURCE (the control, the panel, the face: source pixels, or fractions with roi_units 'fraction') and a target rectangle of the frame (a safe band from the project's safe-zone note; default the frame with a 5% margin). The tool computes the one position and scale that put the region inside the target (capped at max_scale, default 100 so text keeps its size), applies it, reads Premiere back and returns CHECK PASS/FAIL plus any blank canvas to disclose. Your judgment is only WHICH region; then frames_across to confirm.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track" }, roi: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, required: ["x0", "y0", "x1", "y1"] }, roi_units: { type: "string", enum: ["px", "fraction"] }, target: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, description: "frame fractions, e.g. the upper safe band" }, max_scale: { type: "number", description: "default 100 (never enlarge)" }, margin: { type: "number", description: "breathing room inside the target, fraction of it; default 0.03" } }, required: ["at_seconds", "track", "roi"] } },
+  { name: "find_on_screen", description: "The on-screen twin of find_in_transcript: when does a word or label appear on screen? Samples frames of the active sequence (every step_seconds, up to 120) and reads their text with macOS's built-in recognizer; returns the spans (timeline seconds) where the text is visible and where in the frame. Use it to find the beat in a screen recording ('when does it say Codex') instead of scanning frames by eye; then a smaller step around a span for the exact frame.",
+    inputSchema: { type: "object", properties: { text: { type: "string" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum" } }, required: ["text"] } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
   { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass using Premiere's own Auto Reframe (Premiere tracks the subject and keyframes the motion) into a new '<name> <aspect> [Claude]' sequence; the original is untouched. From a bin, the raw footage is laid in a matching sequence first. Graphics, titles and guides are put back where the editor had them. Then it returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = the panel's fill-and-centre instead of tracking.",

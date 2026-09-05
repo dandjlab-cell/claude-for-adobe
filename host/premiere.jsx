@@ -545,7 +545,8 @@ var PCX = (function () {
         var x = "", y = "", sc = "";
         if (motion) { try { var p = motion.properties[0].getValue(); var n = isNormalized(p); x = (n ? p[0] : p[0] / W).toFixed(4); y = (n ? p[1] : p[1] / H).toFixed(4); sc = num(motion.properties[1].getValue()).toFixed(2); } catch (e0) {} }
         var vi = ""; try { vi = String(cl.projectItem.getProjectColumnsMetadata()); } catch (e1) {}
-        rows.push(["V" + (t + 1), c, cl.name, x, y, sc, isGraphicItem(cl.projectItem, vi) ? 1 : 0, (num(cl.start.ticks) / T).toFixed(2), (num(cl.end.ticks) / T).toFixed(2)].join(COL));
+        var srcW = "", srcH = ""; var mm = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (mm) { srcW = mm[1]; srcH = mm[2]; }
+        rows.push(["V" + (t + 1), c, cl.name, x, y, sc, isGraphicItem(cl.projectItem, vi) ? 1 : 0, (num(cl.start.ticks) / T).toFixed(2), (num(cl.end.ticks) / T).toFixed(2), srcW, srcH].join(COL));
       }
     }
     return rows.join(ROW);

@@ -20,7 +20,7 @@ if (fs.existsSync(PRIVATE_WORDS)) {
   const terms = fs.readFileSync(PRIVATE_WORDS, "utf8").split("\n").map((t) => t.trim()).filter(Boolean);
   if (terms.length) PATTERNS.push([new RegExp(terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi"), "private term"]);
 }
-const TEXT = /\.(cjs|js|jsx|json|md|sh|command|html|css|txt|xml|yml|yaml)$/i;
+const TEXT = /\.(cjs|js|jsx|json|md|sh|command|html|css|txt|xml|yml|yaml|swift)$/i;
 
 test("no private paths, emails, or client names in tracked files", () => {
   const files = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).split("\n").filter((f) => f && TEXT.test(f) && f !== "test/privacy.test.cjs");
