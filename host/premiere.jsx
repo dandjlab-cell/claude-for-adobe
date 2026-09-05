@@ -847,8 +847,128 @@ var PCX = (function () {
     return "nudged " + found.name + " on V" + (tIdx + 1) + ": position now " + rx.toFixed(3) + "," + ry.toFixed(3) + " (frame fractions), scale now " + rs.toFixed(1) + (siblings ? "; same placement applied to " + siblings + " other clip(s) of the same source on V" + (tIdx + 1) : "") + (sibFail ? "; " + sibFail + " sibling(s) failed" : "") + (okPos && okScale ? " | CHECK PASS (read back)" : " | CHECK FAIL: asked " + wanted[0].toFixed(3) + "," + wanted[1].toFixed(3) + " scale " + finalScale.toFixed(1));
   }
 
+  // Read-only inventory of what this Premiere build exposes to a panel: every method/property name on each object
+  // type the panel touches (ExtendScript reflection + for-in), and QE's effect/transition lists. Nothing is called
+  // except getters and list functions. Rows: label|kind|comma-separated names (or ERR:...).
+  function enumerateSurface() {
+    var rows = [];
+    function names(o) {
+      var seen = {}, r = [];
+      try { var ms = o.reflect.methods; for (var i = 0; i < ms.length; i++) seen["m:" + ms[i].name] = 1; } catch (e0) {}
+      try { var ps = o.reflect.properties; for (var j = 0; j < ps.length; j++) seen["p:" + ps[j].name] = 1; } catch (e1) {}
+      try { for (var k in o) { if (!seen["m:" + k] && !seen["p:" + k]) { var kind = "p"; try { kind = typeof o[k] === "function" ? "m" : "p"; } catch (e2) {} seen[kind + ":" + k] = 1; } } } catch (e3) {}
+      for (var n in seen) r.push(n);
+      r.sort();
+      return r;
+    }
+    function add(label, getter) {
+      var o = null;
+      try { o = getter(); } catch (e) { rows.push(label + COL + "ERR" + COL + e); return null; }
+      if (o === null || o === undefined) { rows.push(label + COL + "null" + COL); return null; }
+      var cls = ""; try { cls = o.reflect.name; } catch (e4) { cls = typeof o; }
+      rows.push(label + COL + cls + COL + names(o).join(","));
+      return o;
+    }
+    function list(label, getter) {
+      var v = null;
+      try { v = getter(); } catch (e) { rows.push(label + COL + "ERR" + COL + e); return; }
+      if (v === null || v === undefined) { rows.push(label + COL + "null" + COL); return; }
+      var items = [];
+      try {
+        if (typeof v === "string") items = v.split(/\r?\n|,/);
+        else if (v.length !== undefined) { for (var i = 0; i < v.length; i++) items.push(String(v[i])); }
+        else if (v.numItems !== undefined) { for (var j = 0; j < v.numItems; j++) items.push(String(v[j] && v[j].name !== undefined ? v[j].name : v[j])); }
+        else items = [String(v)];
+      } catch (e5) { rows.push(label + COL + "ERR" + COL + e5); return; }
+      rows.push(label + COL + "list" + COL + items.join(","));
+    }
+    rows.push("app.version" + COL + "value" + COL + app.version);
+    try { rows.push("app.build" + COL + "value" + COL + app.build); } catch (eb) {}
+    var p = add("app", function () { return app; });
+    add("app.project", function () { return app.project; });
+    add("app.projects", function () { return app.projects; });
+    add("app.encoder", function () { return app.encoder; });
+    add("app.sourceMonitor", function () { return app.sourceMonitor; });
+    add("app.properties", function () { return app.properties; });
+    add("app.anywhere", function () { return app.anywhere; });
+    add("app.production", function () { return app.production; });
+    add("app.metadata", function () { return app.metadata; });
+    add("app.userGuid", function () { return app.userGuid; });
+    var root = add("ProjectItem(root)", function () { return app.project.rootItem; });
+    add("ProjectItemCollection", function () { return app.project.rootItem.children; });
+    var footage = null, bin = null;
+    (function walk(item, depth) {
+      if (!item || depth > 4 || (footage && bin)) return;
+      for (var i = 0; item.children && i < item.children.numItems; i++) {
+        var c = item.children[i];
+        if (c.type === 2 && !bin) bin = c;
+        if (c.type === 1 && !footage) { try { if (c.getMediaPath()) footage = c; } catch (e6) {} }
+        if (c.type === 2) walk(c, depth + 1);
+      }
+    }(root, 0));
+    add("ProjectItem(bin)", function () { return bin; });
+    var f = add("ProjectItem(footage)", function () { return footage; });
+    add("ProjectItem.getFootageInterpretation()", function () { return footage.getFootageInterpretation(); });
+    add("ProjectItem.getProjectMetadata()", function () { return { s: footage.getProjectMetadata() }; });
+    add("ProjectItem.getColorSpace()", function () { return footage.getColorSpace(); });
+    add("ProjectItem.getInPoint()", function () { return footage.getInPoint(); });
+    var s = add("Sequence", function () { return app.project.activeSequence; });
+    add("Sequence.getSettings()", function () { return s.getSettings(); });
+    add("Sequence.projectItem", function () { return s.projectItem; });
+    add("TrackCollection(video)", function () { return s.videoTracks; });
+    var vt = add("Track(video)", function () { return s.videoTracks[0]; });
+    add("Track(audio)", function () { return s.audioTracks[0]; });
+    add("TrackItemCollection", function () { return vt.clips; });
+    var clip = null;
+    for (var t = 0; s && t < s.videoTracks.numTracks && !clip; t++) { try { if (s.videoTracks[t].clips.numItems) clip = s.videoTracks[t].clips[0]; } catch (e7) {} }
+    add("TrackItem(video)", function () { return clip; });
+    add("Time", function () { return clip.start; });
+    add("ComponentCollection", function () { return clip.components; });
+    add("Component", function () { return clip.components[0]; });
+    add("ComponentParamCollection", function () { return clip.components[0].properties; });
+    add("ComponentParam", function () { return clip.components[0].properties[0]; });
+    add("ComponentParam(keyframed?)", function () { for (var i = 0; i < clip.components.numItems; i++) for (var j = 0; j < clip.components[i].properties.numItems; j++) { var pp = clip.components[i].properties[j]; try { if (pp.isTimeVarying()) return pp; } catch (e8) {} } return null; });
+    add("MarkerCollection", function () { return s.markers; });
+    add("Marker", function () { return s.markers.numMarkers ? s.markers.getFirstMarker() : null; });
+    add("Marker(clip)", function () { return clip.projectItem.getMarkers().numMarkers ? clip.projectItem.getMarkers().getFirstMarker() : null; });
+    add("Sequence.getSelection()", function () { return s.getSelection(); });
+    add("Sequence.getExportFileExtension", function () { return { s: s.getExportFileExtension("") }; });
+    // QE
+    try { app.enableQE(); } catch (eq) { rows.push("qe" + COL + "ERR" + COL + eq); }
+    var q = add("qe", function () { return qe; });
+    add("qe.project", function () { return qe.project; });
+    add("qe.source", function () { return qe.source; });
+    add("qe.ea", function () { return qe.ea; });
+    var qs = add("qe.Sequence", function () { return qe.project.getActiveSequence(); });
+    var qt = add("qe.Track(video)", function () { return qs.getVideoTrackAt(0); });
+    add("qe.Track(audio)", function () { return qs.getAudioTrackAt(0); });
+    var qi = null;
+    for (var qk = 0; qs && qk < qs.numVideoTracks && !qi; qk++) { try { var tr = qs.getVideoTrackAt(qk); for (var qc = 0; qc < tr.numItems; qc++) { var it = tr.getItemAt(qc); if (it && it.type !== "Empty") { qi = it; break; } } } catch (e9) {} }
+    add("qe.TrackItem(video)", function () { return qi; });
+    add("qe.Component", function () { return qi.getComponentAt(0); });
+    add("qe.ComponentParam", function () { return qi.getComponentAt(0).getParamAt(0); });
+    add("qe.ProjectItem", function () { return qe.project.getItemAt(0); });
+    add("qe.VideoEffect", function () { return qe.project.getVideoEffectByName("Auto Reframe"); });
+    add("qe.VideoTransition", function () { return qe.project.getVideoTransitionByName("Cross Dissolve"); });
+    add("qe.AudioTransition", function () { return qe.project.getAudioTransitionByName("Constant Power"); });
+    list("qe.getVideoEffectList()", function () { return qe.project.getVideoEffectList(); });
+    list("qe.getVideoEffectList(1)", function () { return qe.project.getVideoEffectList(1); });
+    list("qe.getAudioEffectList()", function () { return qe.project.getAudioEffectList(); });
+    list("qe.getAudioEffectList(1)", function () { return qe.project.getAudioEffectList(1); });
+    list("qe.getVideoTransitionList()", function () { return qe.project.getVideoTransitionList(); });
+    list("qe.getVideoTransitionList(1)", function () { return qe.project.getVideoTransitionList(1); });
+    list("qe.getAudioTransitionList()", function () { return qe.project.getAudioTransitionList(); });
+    list("qe.getAudioTransitionList(1)", function () { return qe.project.getAudioTransitionList(1); });
+    list("qe.getPresetList()", function () { return qe.project.getPresetList(); });
+    list("qe.getSequencePresetList()", function () { return qe.project.getSequencePresetList(); });
+    list("qe.getExportPresetList()", function () { return qe.project.getExportPresetList(); });
+    list("app.encoder.getExporters()", function () { return app.encoder.getExporters(); });
+    list("qe.getFontList()", function () { return qe.project.getFontList ? qe.project.getFontList() : null; });
+    return rows.join(ROW);
+  }
+
   return {
-    nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

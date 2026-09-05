@@ -45,7 +45,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -1910,6 +1910,33 @@ async function installDevPending() {
   } catch (error) { addMessage("assistant error", "Pull failed: " + error.message + " Reloading the panel as it is."); setTimeout(() => location.reload(), 1500); }
 }
 setVersionRow(devRepo ? "dev" : "v" + currentVersion(extensionRoot));
+
+// Dev: inventory what this Premiere build exposes (host reflection + QE lists) and copy the .kys shortcut files
+// next to it, so the native-mechanism catalog is written from what is actually there, not from memory.
+async function dumpSurface() {
+  ui.dumpSurface.disabled = true; ui.dumpSurface.textContent = "Dumping…";
+  try {
+    const raw = await host("enumerateSurface");
+    if (!raw || raw.indexOf("ERR:") === 0) throw new Error(raw || "empty result");
+    const rows = raw.split(ROW).map((r) => { const [label, kind, names] = r.split(COL); return { label, kind, names: names ? names.split(",") : [] }; });
+    const version = (rows.find((r) => r.label === "app.version") || {}).names.join(",") || "unknown";
+    const dir = path.join(os.homedir(), "Library", "Application Support", "claude-for-adobe", "surface");
+    fs.mkdirSync(dir, { recursive: true });
+    const out = path.join(dir, "premiere-" + version + ".json");
+    fs.writeFileSync(out, JSON.stringify({ version, date: new Date().toISOString(), rows }, null, 1));
+    let kys = 0;
+    const docs = path.join(os.homedir(), "Documents", "Adobe", "Premiere Pro");
+    for (const v of fs.existsSync(docs) ? fs.readdirSync(docs) : []) {
+      const mac = path.join(docs, v);
+      const walk = (d, depth) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory() && depth < 3) walk(f, depth + 1); else if (/\.kys$/i.test(e.name)) { fs.copyFileSync(f, path.join(dir, v + "-" + e.name)); kys++; } } };
+      try { walk(mac, 0); } catch (_) {}
+    }
+    addMessage("assistant muted", "Premiere " + version + ": " + rows.length + " objects/lists written to " + out + (kys ? ", " + kys + " shortcut file(s) copied beside it" : "") + ".");
+    log("surface dump " + out + " rows=" + rows.length + " kys=" + kys);
+  } catch (error) { addMessage("assistant error", "Surface dump failed: " + error.message); }
+  ui.dumpSurface.disabled = false; ui.dumpSurface.textContent = "Dump Premiere surface";
+}
+if (devRepo) { ui.dumpSurface.hidden = false; ui.dumpSurface.addEventListener("click", dumpSurface); }
 ui.checkUpdates.onclick = () => (devRepo ? installDevPending() : (pendingUpdate ? installPending() : checkUpdates(true)));
 // Checked at launch, then every 20 minutes and whenever the panel gets focus again (at most every 5 minutes),
 // so "up to date" never stays on screen after a release without anyone pressing the button.
