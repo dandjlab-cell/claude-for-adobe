@@ -1616,31 +1616,32 @@ async function checkDevUpdates(announce) {
     const behind = Number(gitDev("rev-list", "--count", "HEAD..@{u}")) || 0;
     pendingUpdate = behind ? { dev: true, behind } : null;
     setVersionRow("dev " + local + " (" + branch + ") · " + (behind ? behind + " commit" + (behind === 1 ? "" : "s") + " behind" : "up to date"));
-    ui.checkUpdates.textContent = behind ? "Pull " + behind + " commit" + (behind === 1 ? "" : "s") : "Check for updates";
+    // Premiere keeps a closed panel alive, so reopening never loads new code: the button always reloads.
+    ui.checkUpdates.textContent = behind ? "Pull " + behind + " commit" + (behind === 1 ? "" : "s") + " & reload" : "Reload panel";
     ui.checkUpdates.className = behind ? "accent" : "utility";
     tabSettings.textContent = behind ? "Settings · update" : "Settings"; tabSettings.classList.toggle("attention", !!behind);
     if (announce && behind) addMessage("assistant muted", behind + " new commit" + (behind === 1 ? "" : "s") + " in the repo. Use the Pull button at the bottom.");
     log("dev repo " + local + (behind ? " is " + behind + " behind" : " up to date"));
-  } catch (error) { log("dev update check failed: " + error.message); ui.checkUpdates.textContent = "Check for updates"; if (announce) addMessage("assistant muted", "Could not check the repo: " + error.message); }
+  } catch (error) { log("dev update check failed: " + error.message); ui.checkUpdates.textContent = "Reload panel"; if (announce) addMessage("assistant muted", "Could not check the repo: " + error.message); }
   ui.checkUpdates.disabled = false;
 }
+// Dev: pull if behind (fast-forward only), then reload the panel either way.
 async function installDevPending() {
-  if (session && session.busy) { addMessage("assistant muted", "Wait for " + agentName() + " to finish (or press Stop), then pull."); return; }
-  ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Pulling…";
+  if (session && session.busy) { addMessage("assistant muted", "Wait for " + agentName() + " to finish (or press Stop), then reload."); return; }
+  ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = pendingUpdate ? "Pulling…" : "Reloading…";
   try {
     try { if (session) { const old = session; session = null; await old.stop(); } } catch (_) {}
     try { if (mcp) mcp.close(); } catch (_) {}
-    const before = gitDev("rev-parse", "HEAD");
-    gitDev("pull", "--ff-only", "--quiet");
-    const changed = gitDev("diff", "--name-only", before, "HEAD");
+    let changed = "";
+    if (pendingUpdate) { const before = gitDev("rev-parse", "HEAD"); gitDev("pull", "--ff-only", "--quiet"); changed = gitDev("diff", "--name-only", before, "HEAD"); }
     pendingUpdate = null;
     if (/^host\//m.test(changed)) { addMessage("assistant error", "The host script changed: restart Premiere to load it. Reloading the panel now."); setTimeout(() => location.reload(), 2500); return; }
-    setVersionRow("dev " + gitDev("rev-parse", "--short", "HEAD") + " pulled, restarting");
-    setTimeout(() => location.reload(), 400);
-  } catch (error) { addMessage("assistant error", "Pull failed: " + error.message + " Restarting the panel as it is."); setTimeout(() => location.reload(), 1500); }
+    setVersionRow("dev " + gitDev("rev-parse", "--short", "HEAD") + " reloading");
+    setTimeout(() => location.reload(), 300);
+  } catch (error) { addMessage("assistant error", "Pull failed: " + error.message + " Reloading the panel as it is."); setTimeout(() => location.reload(), 1500); }
 }
 setVersionRow(devRepo ? "dev" : "v" + currentVersion(extensionRoot));
-ui.checkUpdates.onclick = () => (devRepo ? (pendingUpdate ? installDevPending() : checkDevUpdates(true)) : (pendingUpdate ? installPending() : checkUpdates(true)));
+ui.checkUpdates.onclick = () => (devRepo ? installDevPending() : (pendingUpdate ? installPending() : checkUpdates(true)));
 setTimeout(() => (devRepo ? checkDevUpdates(false) : checkUpdates(false)), 4000);
 // Persistent choice: ask before scripts (default on).
 try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
