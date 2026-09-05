@@ -267,6 +267,8 @@ async function ensureWorkingCopy() {
   if (!ui.dupSequence.checked) return "";
   const p = await readProject();
   if (!p.sequenceId) throw new Error("no active sequence");
+  // A copy the editor renamed (no more "[Claude]") is theirs now: forget it, so the next edit gets a fresh copy.
+  if (workingCopies.has(p.sequenceId) && !/ \[Claude\]$/.test(p.sequence)) { workingCopies.delete(p.sequenceId); renderCopies(); log("working copy renamed by the editor, released: " + p.sequence); }
   if (workingCopies.has(p.sequenceId) || / \[Claude\]$/.test(p.sequence)) return "";
   const existing = [...workingCopies.entries()].find(([, c]) => c.originalId === p.sequenceId);
   if (existing) {

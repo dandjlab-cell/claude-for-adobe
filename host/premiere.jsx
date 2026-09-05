@@ -146,6 +146,17 @@ var PCX = (function () {
       var a = Math.ceil(R[i][0] / F - 0.000001) * F;
       var b = Math.floor(R[i][1] / F + 0.000001) * F;
       if (b - a < F * 0.5) continue;
+      var endNow = num(s.end) / T;
+      if (b >= endNow - F * 0.5) {
+        // Extract with the out point on the sequence's last frame takes the WHOLE timeline (reproduced
+        // 2026-09-05 on three fresh copies). A range that reaches the end is a tail trim, not an extract.
+        var d0t = num(s.end);
+        trimTail(s, a);
+        var removedT = (d0t - num(s.end)) / T, wantT = endNow - a;
+        if (Math.abs(removedT - wantT) > 2 * F + 0.01) { errs.push(a.toFixed(2) + "-end: tail trim removed " + removedT.toFixed(2) + "s instead of " + wantT.toFixed(2) + "s; stopped"); break; }
+        done++;
+        continue;
+      }
       try {
         s.setInPoint(a);
         s.setOutPoint(b);
@@ -173,6 +184,26 @@ var PCX = (function () {
     var vt = s.videoTracks[0], at = s.audioTracks[0];
     for (var j = 0; j < Math.min(vt.clips.numItems, at.clips.numItems); j++) if (vt.clips[j].start.ticks !== at.clips[j].start.ticks) mismatches++;
     return "extracted=" + done + "/" + R.length + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
+  }
+
+  // Everything from `a` to the end goes: clips starting at or after `a` are removed, clips spanning `a` are
+  // trimmed to end there. Video and audio alike; nothing ripples because nothing follows.
+  function trimTail(s, a) {
+    var n = 0;
+    function walk(list) {
+      for (var t = 0; t < list.numTracks; t++) {
+        var tr = list[t];
+        for (var c = tr.clips.numItems - 1; c >= 0; c--) {
+          var cl = tr.clips[c];
+          var st = num(cl.start.ticks) / T, en = num(cl.end.ticks) / T;
+          if (st >= a - 0.0001) { try { cl.remove(false, false); n++; } catch (e) {} }
+          else if (en > a + 0.0001) { try { var te = new Time(); te.seconds = a; cl.end = te; n++; } catch (e2) {} }
+        }
+      }
+    }
+    walk(s.videoTracks);
+    walk(s.audioTracks);
+    return n;
   }
 
   // Extract leaves an occasional one-frame hole where a range edge rounds to a frame. Find gaps under
