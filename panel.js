@@ -1079,8 +1079,9 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
     timeline = await readSnapshot().catch(() => timeline);
   } else {
     step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
-    if (step.isError) return step;
-    parts.push(step.text);
+    // A CHECK FAIL on the resize is reported, not fatal: the tracking and the frames below still run.
+    if (step.isError && !/CHECK FAIL/.test(step.text || "")) return step;
+    parts.push(step.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, ""));
   }
   if (motion === "track") {
     // Premiere's Auto Reframe as an effect on every footage clip: Premiere analyses each clip's SOURCE and pans
@@ -1313,13 +1314,13 @@ async function createCaptions({ max_words, max_chars = 32, max_lines, max_second
 }
 
 // Reframe check-and-fix: move a clip's picture by a fraction of the frame, optionally scale. Verify with preview_frames.
-async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1, x, y, scale_to } = {}) {
+async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1, x, y, scale_to, same_source = true } = {}) {
   const abs = [x !== undefined ? "x " + x : "", y !== undefined ? "y " + y : "", scale_to !== undefined ? "scale " + scale_to : ""].filter(Boolean).join(" ");
   const card = addTool("nudge_clip @" + Number(at_seconds).toFixed(2) + "s " + (abs || "dx " + dx + " dy " + dy + (scale !== 1 ? " scale x" + scale : "")), "");
   if (!Number.isFinite(Number(at_seconds))) return err(card, "at_seconds is required");
   let copyNote = "";
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
-  const raw = await host("nudgeClip", String(at_seconds), String(track ? Number(track) - 1 : -1), String(dx), String(dy), String(scale), x === undefined ? "" : String(x), y === undefined ? "" : String(y), scale_to === undefined ? "" : String(scale_to));
+  const raw = await host("nudgeClip", String(at_seconds), String(track ? Number(track) - 1 : -1), String(dx), String(dy), String(scale), x === undefined ? "" : String(x), y === undefined ? "" : String(y), scale_to === undefined ? "" : String(scale_to), same_source ? "1" : "0");
   const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
   card.done(raw, ok);
   return { text: copyNote + raw + (ok ? "\nLook at preview_frames at this time to confirm before moving on." : ""), isError: !ok };
@@ -1514,7 +1515,7 @@ const TOOL_DEFS = [
   { name: "frames_across", description: "Look closer: 2-6 frames evenly spaced across a time range (one clip, one graphic, the seconds around a suspect moment). Use when a snapshot leaves a question, e.g. is the head cropped for the whole clip or only at the start, does the graphic move, is the subject drifting. Answer the question from these frames before deciding.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, count: { type: "number", description: "default 4, max 6" }, max_px: { type: "number" }, solo_track: { type: "number", description: "1-based video track to render alone; default the composite." } }, required: ["start_seconds", "end_seconds"] } },
   { name: "nudge_clip", description: "Move or scale the video clip at a sequence time. Deltas: dx right, dy down as fractions of the frame (dx -0.1 = 10% left), scale as a multiplier (1.1 = 10% bigger). Absolutes: x, y as frame fractions (0.5,0.5 = centre) and scale_to as a percentage, for restoring a known placement in one call (from clip_transforms). Absolutes win over deltas. Undoable. Use with preview_frames: look, nudge, look again.",
-    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" } }, required: ["at_seconds"] } },
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" }, same_source: { type: "boolean", description: "default true: the same placement goes to every clip on that track cut from the same source file (a take in pieces is one framing). false = this clip only" } }, required: ["at_seconds"] } },
   { name: "fit_region", description: "Place the action by arithmetic, not by eye: give a rectangle of the clip's SOURCE (the control, the panel, the face: source pixels, or fractions with roi_units 'fraction') and a target rectangle of the frame (a safe band from the project's safe-zone note; default the frame with a 5% margin). The tool computes the one position and scale that put the region inside the target (capped at max_scale, default 100 so text keeps its size), applies it, reads Premiere back and returns CHECK PASS/FAIL plus any blank canvas to disclose. Your judgment is only WHICH region; then frames_across to confirm.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track" }, roi: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, required: ["x0", "y0", "x1", "y1"] }, roi_units: { type: "string", enum: ["px", "fraction"] }, target: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, description: "frame fractions, e.g. the upper safe band" }, max_scale: { type: "number", description: "default 100 (never enlarge)" }, margin: { type: "number", description: "breathing room inside the target, fraction of it; default 0.03" } }, required: ["at_seconds", "track", "roi"] } },
   { name: "find_on_screen", description: "The on-screen twin of find_in_transcript: when do words or labels appear on screen? Samples frames of the active sequence and reads their text with macOS's built-in recognizer; returns, per word, the spans (timeline seconds) where it is visible and where in the frame. Each frame is a Premiere render (seconds each), so: put EVERY word you need in texts[] (one pass reads them all), and narrow start/end before asking for a small step. At most 30 frames per call; the step widens to fit and the result says so.",

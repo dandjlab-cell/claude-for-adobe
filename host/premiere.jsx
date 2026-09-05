@@ -228,7 +228,7 @@ var PCX = (function () {
         if (v === soloIdx) continue;
         var vt = s.videoTracks[v], was = false;
         try { was = !!vt.isMuted(); } catch (e0) {}
-        if (!was) { try { vt.setMute(true); hidden.push(vt); } catch (e1) {} }
+        if (!was) { try { vt.setMute(1); hidden.push(vt); } catch (e1) { try { vt.setMute(true); hidden.push(vt); } catch (e1b) {} } }
       }
     }
     var outs = [];
@@ -240,7 +240,7 @@ var PCX = (function () {
       try { tc = String(q.CTI.timecode); ok = q.exportFramePNG(tc, b); } catch (e) { ok = "ERR " + e; }
       outs.push(b + COL + ok + COL + tc);
     }
-    for (var hi = 0; hi < hidden.length; hi++) { try { hidden[hi].setMute(false); } catch (e2) {} }
+    for (var hi = 0; hi < hidden.length; hi++) { try { hidden[hi].setMute(0); } catch (e2) { try { hidden[hi].setMute(false); } catch (e2b) {} } }
     s.setPlayerPosition(prev);
     return outs.join(ROW);
   }
@@ -466,13 +466,32 @@ var PCX = (function () {
     var st = s.getSettings();
     var oldW = num(st.videoFrameWidth), oldH = num(st.videoFrameHeight);
     if (!(w && h)) { w = oldW; h = oldH; }
+    // Every clip's placement BEFORE the size change: Premiere keeps a clip's pixel offset from centre when the
+    // frame changes, so fractions drift; graphics are written back from these numbers afterwards.
+    var pre = readPlacements(s, oldW, oldH);
     try {
       st.videoFrameWidth = w; st.videoFrameHeight = h;
       if (f) { if (st.videoFrameRate && typeof st.videoFrameRate === "object") st.videoFrameRate.seconds = 1 / f; else st.videoFrameRate = 1 / f; }
       s.setSettings(st);
     } catch (e) { return "ERR:setSettings " + e; }
     if (w === oldW && h === oldH) mode = "none";
-    return "sequence is now " + s.getSettings().videoFrameWidth + "x" + s.getSettings().videoFrameHeight + reframeClips(s, w, h, oldW, oldH, mode);
+    return "sequence is now " + s.getSettings().videoFrameWidth + "x" + s.getSettings().videoFrameHeight + reframeClips(s, w, h, oldW, oldH, mode, pre);
+  }
+
+  // Position fractions and scale per clip, keyed "track:index", read against a given frame size.
+  function readPlacements(s, W, H) {
+    var out = {};
+    for (var t = 0; t < s.videoTracks.numTracks; t++) {
+      var tr = s.videoTracks[t];
+      for (var c = 0; c < tr.clips.numItems; c++) {
+        try {
+          var motion = findMotion(tr.clips[c]); if (!motion) continue;
+          var p = motion.properties[0].getValue(), norm = isNormalized(p);
+          out[t + ":" + c] = { x: norm ? p[0] : p[0] / W, y: norm ? p[1] : p[1] / H, scale: num(motion.properties[1].getValue()), norm: norm };
+        } catch (e) {}
+      }
+    }
+    return out;
   }
 
   // Reframe the ACTIVE sequence's clips at its current size (footage fills or fits and is centred; graphics
@@ -481,10 +500,10 @@ var PCX = (function () {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var st = s.getSettings(), w = num(st.videoFrameWidth), h = num(st.videoFrameHeight);
-    return "sequence " + w + "x" + h + reframeClips(s, w, h, w, h, mode || "fill");
+    return "sequence " + w + "x" + h + reframeClips(s, w, h, w, h, mode || "fill", readPlacements(s, w, h));
   }
 
-  function reframeClips(s, w, h, oldW, oldH, mode) {
+  function reframeClips(s, w, h, oldW, oldH, mode, pre) {
     var done = 0, skipped = 0, kept = [];
     if (mode === "fill" || mode === "fit") {
       for (var t = 0; t < s.videoTracks.numTracks; t++) {
@@ -495,12 +514,13 @@ var PCX = (function () {
             var motion = findMotion(cl);
             if (!motion) { skipped++; continue; }
             var pos = motion.properties[0], scale = motion.properties[1];
-            var p = pos.getValue(), norm = isNormalized(p), cur = num(scale.getValue());
+            var was = pre[t + ":" + c], p = pos.getValue(), norm = was ? was.norm : isNormalized(p);
             var vi = ""; try { vi = String(cl.projectItem.getProjectColumnsMetadata()); } catch (e0) {}
             if (isGraphicItem(cl.projectItem, vi)) {
-              // Graphics, titles and guides keep the editor's placement: same position fraction, scale scaled
-              // with the frame WIDTH (text and lower thirds are laid out against the width). Nothing is centred.
-              var fx0 = norm ? p[0] : p[0] / oldW, fy0 = norm ? p[1] : p[1] / oldH;
+              // Graphics, titles and guides keep the editor's placement from BEFORE the resize: same position
+              // fraction, scale following the frame WIDTH (text and lower thirds are laid out against the width).
+              var fx0 = was ? was.x : (norm ? p[0] : p[0] / oldW), fy0 = was ? was.y : (norm ? p[1] : p[1] / oldH);
+              var cur = was ? was.scale : num(scale.getValue());
               var ns = cur * (w / oldW);
               scale.setValue(ns, true);
               pos.setValue(norm ? [fx0, fy0] : [fx0 * w, fy0 * h], true);
@@ -722,7 +742,9 @@ var PCX = (function () {
   // video track that has a clip there). dx/dy are fractions of the frame (+x right, +y down); scale is a multiplier
   // (1 = keep). Uses the Motion component; position units are detected (0-1 or pixels). Undo: Cmd+Z.
   // Absolute targets (x, y as frame fractions; scaleAbs as a percentage) win over the deltas when given.
-  function nudgeClip(atSec, trackIndex, dx, dy, scaleMul, x, y, scaleAbs) {
+  // sameSource "1": the same placement goes to every clip on that track from the same source file (a take cut
+  // into pieces is one framing problem, not five).
+  function nudgeClip(atSec, trackIndex, dx, dy, scaleMul, x, y, scaleAbs, sameSource) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var at = Number(atSec), idx = Number(trackIndex);
@@ -757,7 +779,25 @@ var PCX = (function () {
     var rx = normalized ? rp[0] : rp[0] / W, ry = normalized ? rp[1] : rp[1] / H;
     var wanted = [normalized ? nx : nx / W, normalized ? ny : ny / H];
     var okPos = Math.abs(rx - wanted[0]) < 0.002 && Math.abs(ry - wanted[1]) < 0.002, okScale = Math.abs(rs - finalScale) < 0.05;
-    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position now " + rx.toFixed(3) + "," + ry.toFixed(3) + " (frame fractions), scale now " + rs.toFixed(1) + (okPos && okScale ? " | CHECK PASS (read back)" : " | CHECK FAIL: asked " + wanted[0].toFixed(3) + "," + wanted[1].toFixed(3) + " scale " + finalScale.toFixed(1));
+    // The other clips of the same source on this track get the same absolute placement.
+    var siblings = 0, sibFail = 0;
+    if (String(sameSource) === "1") {
+      var mp = ""; try { mp = found.projectItem ? String(found.projectItem.getMediaPath()) : ""; } catch (e6) {}
+      var trk = s.videoTracks[tIdx];
+      for (var sc = 0; sc < trk.clips.numItems && mp; sc++) {
+        var other = trk.clips[sc]; if (other === found || other.nodeId === found.nodeId) continue;
+        var omp = ""; try { omp = other.projectItem ? String(other.projectItem.getMediaPath()) : ""; } catch (e7) {}
+        if (omp !== mp) continue;
+        try {
+          var om = findMotion(other); if (!om) continue;
+          var op = om.properties[0].getValue(), on = isNormalized(op);
+          om.properties[0].setValue(on ? [rx, ry] : [rx * W, ry * H], true);
+          om.properties[1].setValue(rs, true);
+          siblings++;
+        } catch (e8) { sibFail++; }
+      }
+    }
+    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position now " + rx.toFixed(3) + "," + ry.toFixed(3) + " (frame fractions), scale now " + rs.toFixed(1) + (siblings ? "; same placement applied to " + siblings + " other clip(s) of the same source on V" + (tIdx + 1) : "") + (sibFail ? "; " + sibFail + " sibling(s) failed" : "") + (okPos && okScale ? " | CHECK PASS (read back)" : " | CHECK FAIL: asked " + wanted[0].toFixed(3) + "," + wanted[1].toFixed(3) + " scale " + finalScale.toFixed(1));
   }
 
   return {
