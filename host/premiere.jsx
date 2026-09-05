@@ -458,6 +458,19 @@ var PCX = (function () {
       s.setSettings(st);
     } catch (e) { return "ERR:setSettings " + e; }
     if (w === oldW && h === oldH) mode = "none";
+    return "sequence is now " + s.getSettings().videoFrameWidth + "x" + s.getSettings().videoFrameHeight + reframeClips(s, w, h, oldW, oldH, mode);
+  }
+
+  // Reframe the ACTIVE sequence's clips at its current size (footage fills or fits and is centred; graphics
+  // untouched). For a sequence just built from raw footage of another shape.
+  function reframeActive(mode) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var st = s.getSettings(), w = num(st.videoFrameWidth), h = num(st.videoFrameHeight);
+    return "sequence " + w + "x" + h + reframeClips(s, w, h, w, h, mode || "fill");
+  }
+
+  function reframeClips(s, w, h, oldW, oldH, mode) {
     var done = 0, skipped = 0, kept = [];
     if (mode === "fill" || mode === "fit") {
       for (var t = 0; t < s.videoTracks.numTracks; t++) {
@@ -492,8 +505,7 @@ var PCX = (function () {
         }
       }
     }
-    var fin = s.getSettings();
-    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + " and centred; " + kept.length + " graphic(s) kept in place)" + (skipped ? ", " + skipped + " skipped" : "") + (kept.length ? "\n" + kept.join("\n") : "") : "");
+    return (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + " and centred; " + kept.length + " graphic(s) kept in place)" + (skipped ? ", " + skipped + " skipped" : "") + (kept.length ? "\n" + kept.join("\n") : "") : "");
   }
 
   function findMotion(cl) {
@@ -666,7 +678,7 @@ var PCX = (function () {
   }
 
   return {
-    nudgeClip: nudgeClip, clipTransforms: clipTransforms, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

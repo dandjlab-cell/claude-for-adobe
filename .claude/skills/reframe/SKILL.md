@@ -9,8 +9,8 @@ The order is fixed. Do not start a later step until the earlier one is right.
 
 ## 1. Picture first, visible frames only
 
-1. `set_sequence_size` with the aspect asked for (footage fills, graphics fit; the panel checkpoints first).
-2. `snapshot_moments`. It only picks moments where a shot is the visible picture. A talking head buried under b-roll is not judged there; its own visible moments are.
+1. `reframe` with the aspect asked for, and `bin` when building from raw footage. One call: it creates or resizes, footage fills and is centred, graphics keep their placement, the panel checkpoints first, and it returns the visible moments and the seams with CHECK lines. (`set_sequence_size`, `snapshot_moments`, `seam_frames` are its parts; use them alone only for a re-check.)
+2. Read the moments it returned. It only picks moments where a shot is the visible picture. A talking head buried under b-roll is not judged there; its own visible moments are.
 3. For each footage track that has clips (V1, V2...): `layer_frames` with that track. That is the layer alone: judge its placement for the shot alone. Subject where it belongs for the shape, head room, nothing cropped. Fix with `nudge_clip` and always pass the track. Look again.
 4. `seam_frames`: the frame just before and just after every cut where the picture changes. The subject must not jump across a cut. Fix the shot that is off, not both.
 5. Ignore captions and graphics in this step. Never move the subject to dodge a caption band or a title.

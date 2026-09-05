@@ -1056,6 +1056,34 @@ async function setSequenceSize({ preset, aspect, width, height, fps, reframe = "
   timeline = await readSnapshot().catch(() => timeline);
   return { text: copyNote + raw + check + cp, isError: !ok };
 }
+// The one call for any shape request: "make it 9:16", "4:5 from this bin", "16:9 version". Creates the sequence
+// from the bin (raw footage) or resizes the open one; footage fills, graphics stay; then the visible moments and
+// the seams come back as frames with a checklist. The model's only work afterwards is judging and nudging.
+async function reframeTool({ aspect, preset, width, height, fps, bin, name, reframe = "fill", max = 8, max_px = 512 } = {}) {
+  const parts = [], content = [];
+  let step;
+  if (bin) {
+    if (!name) { const sz = preset && SEQUENCE_PRESETS[preset] ? preset : (aspect || (width && height ? width + "x" + height : "")); name = path.basename(bin) + (sz ? " " + sz : ""); }
+    step = await createSequence({ name, bin, width, height, fps, preset, aspect, insert_clips: true });
+    if (step.isError) return step;
+    parts.push(step.text);
+    const raw = await host("reframeActive", reframe);
+    if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return { text: "CLAUDE_FOR_ADOBE_ERROR:" + raw.replace(/^ERR:/, ""), isError: true };
+    parts.push(raw);
+    timeline = await readSnapshot().catch(() => timeline);
+  } else {
+    step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
+    if (step.isError) return step;
+    parts.push(step.text);
+  }
+  const snap = await snapshotMoments({ max, max_px });
+  if (snap.isError) return snap;
+  if (snap.content) content.push(...snap.content);
+  const seam = await seamFrames({ max_px });
+  if (seam.content) content.push(...seam.content); else if (seam.text) content.push({ type: "text", text: seam.text });
+  content.unshift({ type: "text", text: parts.join("\n") + "\n\nReframe done and checked. Now judge the PICTURE in each moment for the shot alone (placed? head room? cropped?) and fix only those with nudge_clip and its track; then the seams. Captions and graphics were not touched: say in one line if a caption or title sits badly, do not move the subject for them. Finish with snapshot_moments once more." });
+  return { content };
+}
 // Motion Position/Scale of every video clip as numbers, keyed by track and index (see clipTransforms).
 async function readTransforms(sequence = "") {
   const raw = await host("clipTransforms", sequence);
@@ -1286,7 +1314,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1323,7 +1351,9 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" } }, required: ["at_seconds"] } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
-  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe the FOOTAGE: fill (scale to cover, centred; the default), fit, or none. Graphics, titles and guides are NOT re-placed: they keep their position fraction and their proportion (scale follows the frame width); the result lists each one's before/after. The panel saves and checkpoints first. Just do it when asked, then follow the reframe skill: picture first on visible frames (snapshot_moments, nudge_clip footage only where the crop cuts something), seam_frames, captions, graphics last and only if the crop pushed one out of the safe zone.",
+  { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass: creates the sequence from the bin (raw footage laid in order) or resizes the open timeline; footage fills the frame and is centred, graphics/titles/guides keep their placement; the panel checkpoints and works on a duplicate; then it returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. Prefer this over set_sequence_size + separate calls.",
+    inputSchema: { type: "object", properties: { aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9, 2.39:1 ..." }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, bin: { type: "string", description: "bin path of raw footage to build a NEW sequence from; omit to reframe the open timeline" }, name: { type: "string", description: "name for the new sequence (with bin); default '<bin> <aspect>'" }, reframe: { type: "string", enum: ["fill", "fit", "none"], description: "footage: fill (default) or fit" }, max: { type: "number", description: "moments to render, default 8" } } } },
+  { name: "set_sequence_size", description: "Lower-level than reframe (use reframe). Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe the FOOTAGE: fill (scale to cover, centred; the default), fit, or none. Graphics, titles and guides are NOT re-placed: they keep their position fraction and their proportion (scale follows the frame width); the result lists each one's before/after. The panel saves and checkpoints first. Just do it when asked, then follow the reframe skill: picture first on visible frames (snapshot_moments, nudge_clip footage only where the crop cuts something), seam_frames, captions, graphics last and only if the crop pushed one out of the safe zone.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
