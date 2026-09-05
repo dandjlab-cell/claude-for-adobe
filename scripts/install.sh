@@ -12,6 +12,7 @@ ln -s "$ROOT/.git" "$DEST/.git"   # marks it as a checkout: the updater will ref
 sed -e "s/com\.claude-for-adobe\.premiere/$ID/g" -e 's/<Menu>Claude for Premiere<\/Menu>/<Menu>Claude for Premiere (dev)<\/Menu>/' -e 's/ExtensionBundleName="Claude for Adobe"/ExtensionBundleName="Claude for Adobe (dev)"/' "$ROOT/CSXS/manifest.xml" > "$DEST/CSXS/manifest.xml"
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<ExtensionList>\n  <Extension Id="%s">\n    <HostList>\n      <Host Name="PPRO" Port="9296"/>\n    </HostList>\n  </Extension>\n</ExtensionList>\n' "$ID" > "$DEST/.debug"
 for v in 11 12 13; do defaults write com.adobe.CSXS.$v PlayerDebugMode 1; done
+git -C "$ROOT" config core.hooksPath .githooks   # pre-push privacy scan (test/privacy.test.cjs)
 echo "Dev panel installed -> $DEST"
 echo "Restart Premiere, then Window > Extensions > Claude for Premiere (dev). DevTools: http://localhost:9296"
 echo "Reload after edits: close and reopen the dev panel, or restart Premiere for host script changes."
