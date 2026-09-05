@@ -60,8 +60,10 @@ function prepareWorkspace({ systemPrompt, skillsDir, root = os.tmpdir() }) {
 // `-c` values are TOML: strings quoted, numbers bare. The prompt comes on stdin ("-" as the last argument).
 function buildCodexArgs({ model, mcpUrl, workDir, resumeSessionId, images = [] }) {
   const c = (key, value) => ["-c", "mcp_servers." + MCP_SERVER_NAME + "." + key + "=" + value];
+  // --ignore-user-config: the panel is self-contained; the user's own config.toml (its MCP servers, hooks) would
+  // otherwise start on every turn (measured: 3 s of a 7 s turn). Login (auth.json) is separate and still used.
   const args = [
-    "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "-C", workDir, "-m", model,
+    "exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "-s", "read-only", "-C", workDir, "-m", model,
     ...c("url", JSON.stringify(mcpUrl)),
     ...c("bearer_token_env_var", "\"PREMIERE_MCP_TOKEN\""),
     ...c("default_tools_approval_mode", "\"approve\""),

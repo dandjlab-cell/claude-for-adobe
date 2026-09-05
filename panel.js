@@ -1747,6 +1747,10 @@ ui.agent.onchange = () => {
   activeAgent = to;
   fillModels();
   const p = parked[to]; parked[to] = null;
+  log("switched to " + to + ": parked " + from + " chat (" + parked[from].nodes.length + " nodes, session " + (parked[from].session ? "alive" : "none") + "); " + (p ? "restored " + p.nodes.length + " nodes, session " + (p.session ? "alive" : p.resumeId ? "resume " + p.resumeId : "none") : "new chat"));
+  // A tab holding a parked chat is marked, so it is obvious the conversation is still there.
+  tabAgent[from].classList.toggle("attention", parked[from].nodes.length > 0);
+  tabAgent[to].classList.remove("attention");
   ui.messages.replaceChildren(...(p ? p.nodes : []));
   ui.messages.scrollTop = ui.messages.scrollHeight;
   if (p && p.model && [...ui.model.options].some((o) => o.value === p.model)) ui.model.value = p.model;

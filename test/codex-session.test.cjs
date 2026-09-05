@@ -33,7 +33,7 @@ test("reduceCodexEvent maps the recorded stream to panel events", () => {
 test("buildCodexArgs: read-only sandbox, tools auto-approved on the panel's server, prompt on stdin, resume before it", () => {
   const args = buildCodexArgs({ model: "gpt-6-astra", mcpUrl: "http://127.0.0.1:5/mcp", workDir: "/tmp/w", resumeSessionId: "abc", images: ["/tmp/w/i.png"] });
   assert.equal(args[0], "exec");
-  assert.ok(args.includes("--json") && args.includes("--skip-git-repo-check"));
+  assert.ok(args.includes("--json") && args.includes("--skip-git-repo-check") && args.includes("--ignore-user-config"));
   assert.equal(args[args.indexOf("-s") + 1], "read-only");
   assert.equal(args[args.indexOf("-m") + 1], "gpt-6-astra");
   assert.equal(args[args.indexOf("-C") + 1], "/tmp/w");
