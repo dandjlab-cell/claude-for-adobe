@@ -23,6 +23,7 @@ test("buildArgs locks Claude to the premiere MCP tool only", () => {
   assert.equal(args[args.indexOf("--disallowed-tools") + 1], DISALLOWED_TOOLS.join(","));
   assert.equal(args[args.indexOf("--resume") + 1], "s9");
   assert.equal(args[args.indexOf("--permission-mode") + 1], "dontAsk");
+  assert.deepEqual(JSON.parse(args[args.indexOf("--settings") + 1]), { autoCompactEnabled: true }, "auto-compaction is forced on for long sessions");
   assert.ok(!buildArgs({ model: "m", mcpConfigPath: "/tmp/c.json", systemPrompt: "sp" }).includes("--resume"));
 });
 

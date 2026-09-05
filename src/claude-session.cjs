@@ -112,6 +112,9 @@ function buildArgs({ model, mcpConfigPath, systemPrompt, resumeSessionId, readPa
     "--strict-mcp-config",
     "--setting-sources", "project",
     "--include-partial-messages",
+    // A long editing session must never die at the context limit: auto-compaction on, whatever the user's own
+    // settings say (this flag overrides settings.json for this invocation only).
+    "--settings", JSON.stringify({ autoCompactEnabled: true }),
     "--system-prompt", systemPrompt,
   ];
   if (resumeSessionId) args.push("--resume", resumeSessionId);
