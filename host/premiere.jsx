@@ -1023,8 +1023,44 @@ var PCX = (function () {
     return ["ok", name, before, tr.clips.numItems, String(r), sens].join(COL);
   }
 
+  // A transition by name on the seams of one video track, through QE the way shipped panels do it:
+  // qeClip.addTransition(qeTransition, atStart, "HH:MM:SS:FF"). json: {track, seams:[sec...], name, frames}.
+  // Each seam is the end of the outgoing clip (applied outgoing). Returns per-seam rows and the track's
+  // numTransitions before/after as the read-back. Header: OK|name|before|after ; rows: sec|clipName|applied|err
+  function addTransitions(json) {
+    var a = parse(json);
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var q = null; try { app.enableQE(); q = qe.project.getActiveSequence(); } catch (e0) {}
+    if (!q) return "ERR:QE unavailable";
+    var t = num(a.track) - 1;
+    if (!(t >= 0 && t < s.videoTracks.numTracks)) return "ERR:no V" + a.track;
+    var tr = s.videoTracks[t], qt = null; try { qt = q.getVideoTrackAt(t); } catch (e1) {}
+    if (!qt) return "ERR:no QE track V" + a.track;
+    var fx = null; try { fx = qe.project.getVideoTransitionByName(String(a.name), true); } catch (e2) {}
+    if (!fx || !fx.name) return "ERR:no video transition named " + a.name + " (names: surface-26.3.2.md)";
+    var fr = Math.max(1, Math.min(99, Math.round(num(a.frames) || 12)));
+    var dur = "00:00:00:" + (fr < 10 ? "0" : "") + fr;
+    // QE items in order, skipping Empty, align with ExtendScript clips by index (same walk as autoReframeClips).
+    var qItems = [];
+    for (var i = 0; i < qt.numItems; i++) { var qi = null; try { qi = qt.getItemAt(i); } catch (e3) {} if (qi && String(qi.type) !== "Empty") qItems.push(qi); }
+    var before = 0; try { before = num(qt.numTransitions); } catch (e4) {}
+    var rows = [], tol = T / 4;
+    for (var k = 0; k < a.seams.length; k++) {
+      var ticks = num(a.seams[k]) * T, hit = -1, atStart = false;
+      for (var c = 0; c < tr.clips.numItems; c++) { if (Math.abs(num(tr.clips[c].end.ticks) - ticks) <= tol) { hit = c; break; } }
+      if (hit < 0) for (var c2 = 0; c2 < tr.clips.numItems; c2++) { if (Math.abs(num(tr.clips[c2].start.ticks) - ticks) <= tol) { hit = c2; atStart = true; break; } }
+      if (hit < 0 || !qItems[hit]) { rows.push([a.seams[k], "", 0, "no clip edge within a quarter second on V" + a.track].join(COL)); continue; }
+      var ok = false, err = "";
+      try { ok = !!qItems[hit].addTransition(fx, atStart, dur); } catch (e5) { err = String(e5); }
+      rows.push([a.seams[k], tr.clips[hit].name, ok ? 1 : 0, err].join(COL));
+    }
+    var after = 0; try { after = num(qt.numTransitions); } catch (e6) {}
+    return ["OK" + COL + fx.name + COL + before + COL + after + COL + dur].concat(rows).join(ROW);
+  }
+
   return {
-    subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

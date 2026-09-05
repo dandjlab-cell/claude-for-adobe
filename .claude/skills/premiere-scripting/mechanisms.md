@@ -30,7 +30,7 @@ Two facts that decide the shape of everything below:
 | Reframe to 9:16, 4:5, 1:1 | Auto Reframe effect (Sensei subject tracking) per clip | verified | `reframe` tool: `qeClip.addVideoEffect(qe.project.getVideoEffectByName("Auto Reframe"))` on every footage clip, then `seq.isDoneAnalyzingForVideoEffects()` | applied/verified counts; the agent judges only the returned visible-moment frames |
 | Reframe as a new sequence | `Sequence.autoReframeSequence(num, den, preset, name, nest)` | verified (builds a new sequence; needs a source sequence, so `reframe` uses the effect instead) | | |
 | Where the subject is over time | Auto Reframe's keyframes | verified 2026-09-05 (`subject_path`) | ExtendScript `param.getKeys()` + `getValueAtKey()` on the clip's **Auto Reframe** component (params "Position" and "Generated Keyframes", identical); values are frame fractions; key times are **source time** (first key = in point + 5 frames), the tool converts to timeline time | key count and time base; the agent reads the path instead of judging head room from frames |
-| Cut a clip at scene changes | `Sequence.performSceneEditDetectionOnSelection(action, linkedAudio, sensitivity)` | listed (present on 26.3.2 ExtendScript; the old note said UXP-only) | select the clip (`clip.setSelected(1,1)`), call it, count clips before/after | clips after > before; the cuts are then clips for `seam_frames` |
+| Cut a clip at scene changes | `Sequence.performSceneEditDetectionOnSelection("ApplyCuts", true, "MediumSensitivity")` | verified 2026-09-05 (`scene_cuts`): a flattened export of a 5-cut edit came back as 6 clips on the exact cuts | select only that clip (`setSelected(1,1)`), call it, re-count for up to 90 s | clips after > before; the cuts are then clips for `seam_frames` and `morph_cut` |
 | Stabilise | Warp Stabilizer effect | listed | `qeClip.addVideoEffect(getVideoEffectByName("Warp Stabilizer"))`, wait on `isDoneAnalyzingForVideoEffects()` | component present on the clip; analysis done |
 | Fit / fill frame | `qeClip.setScaleToFrameSize()`, `projectItem.setScaleToFrameSize()` | listed | | Motion Scale read-back |
 | Flip, crop, blur, key, colour | effects by name (`surface-26.3.2.md` lists 224 video effects: Crop, Horizontal Flip, Gaussian Blur, Ultra Key, Lumetri Color, Track Matte Key, Transform...) | listed | `addVideoEffect(getVideoEffectByName(name))`, then `qeComponent.setParamValue(param, value)` | `getParamValue` read-back |
@@ -59,7 +59,7 @@ Two facts that decide the shape of everything below:
 | Link / unlink | `seq.linkSelection()`, `unlinkSelection()` | listed | | |
 | Join through edits | `cmd.sequence.jointhroughedits` (unbound) | key | | |
 | Default transition on every cut | `cmd.sequence.applydefaulttransitions` — Shift+D | key | | |
-| Transitions by name | `qeClip.addTransition(transition, ...)`; 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is in the list: Premiere's own fix for the jump cut every filler removal leaves | listed | | `qeTrack.numTransitions` |
+| Transitions by name | `qeClip.addTransition(qe.project.getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")` (the shape shipped panels use); 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is Premiere's own fix for the jump cut every filler removal leaves | tool built (`morph_cut`), awaiting its first run | | `qeTrack.numTransitions` before/after |
 | Remix (retime music) | `cmd.clip.remix.*`, tool `cmd.tools.16Remix` | key | | |
 | Multicam | `qeClip.setMulticam`, `canDoMulticam`; angle switching is not exposed | listed / none | | |
 
@@ -115,11 +115,31 @@ Two facts that decide the shape of everything below:
 | Workspaces / windows | `app.setWorkspace(name)`, `getWorkspaces()`, `isWindowVisible(id)` | listed | | |
 | Feature flags | `qe.isFeatureEnabled(name)` | listed | | |
 
+## When to use which, and in what order
+
+The catalog is the vocabulary; this is the grammar. A job is a chain of Premiere's mechanisms with the agent's
+judgement only at the joints. Each chain names the signal that selects it.
+
+| Signal (what the agent can see) | Chain | Where judgement goes |
+|---|---|---|
+| One long clip whose source is a render or a screen recording (one clip, many shots; `media_info` or the name) | `scene_cuts` first, so shots become clips. Then everything below works per shot. | none until the cuts exist |
+| Asked shape differs from the sequence shape (9:16, 4:5, 1:1) | `reframe` (Auto Reframe per clip) then `subject_path` per footage track, then `layer_frames` only to confirm, `seam_frames` at cuts. | only a y outside the band for the shape, or a jump across a seam; fix with `nudge_clip` |
+| A named action on a screen recording ("they must see the dropdown") | `scene_cuts` (if one clip) then `find_on_screen` for the beat, `fit_region` for the placement, `keep_only` around it, `frames_across` to confirm | region choice and cap; never a nudge by eye |
+| Talking head, "tighten it" / "remove ums" | transcript (`read_transcript` if Premiere's exists, else `transcribe_whisper`) then `remove_pauses` / `remove_fillers`, then `morph_cut` with `all_seams` on the talking-head track | which pauses are breath and which are thought; the tool decides nothing about meaning |
+| A folder of raw footage and a length ("make a 20 s cut") | `create_sequence` from the bin (talking head only; b-roll bin skipped), `classify_clips`, `keep_only` for the ranges, `place_broll` over the talking head, `create_captions` last | which sentences to keep, which b-roll clip covers which sentence |
+| Shaky handheld shot | Warp Stabilizer by name (listed, not yet a tool) | none |
+| Room noise or echo on the voice | audio effect by name: DeNoise, DeReverb (listed, not yet a tool); Enhance Speech is the editor's key | none |
+| Captions asked for | `create_captions` after every cut is final; band position is the editor's Captions panel until the import route is verified | wording only |
+| Anything with a command id and no method | `premiere_shortcut` for the editor's key, one line, continue on the DIRTY event | none |
+
+Order inside a chain is fixed: cut before place, place before frame checks, captions last. A frame is looked at to
+confirm a number Premiere gave, never to invent one.
+
 ## The next five to verify, in order (one at a time, on a working copy, with a read-back)
 
 1. ~~Auto Reframe keyframe read~~ verified 2026-09-05: `subject_path`.
-2. **Scene Edit Detection** (`performSceneEditDetectionOnSelection`): a screen recording becomes cuts without OCR.
-3. **Morph Cut by QE** (`addTransition`): the jump cut after every pause and filler removal, fixed by Premiere.
+2. ~~Scene Edit Detection~~ verified 2026-09-05: `scene_cuts`.
+3. **Morph Cut by QE**: `morph_cut` is built on the shipped-panel call shape; run it once on a talking head after `remove_pauses`.
 4. **Razor / ripple delete by QE**: closes the two "no" rows in reference.md (split, move to track).
 5. **Audio effect by name** (DeNoise, Hard Limiter): sound cleanup as a tool with `numComponents` read-back.
 

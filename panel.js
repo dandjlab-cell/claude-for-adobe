@@ -1010,6 +1010,33 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
   return { text: copyNote + raw, isError: !ok };
 }
 
+// A named transition (default Morph Cut) on cuts of one track, on the working copy, with a transition-count CHECK.
+async function morphCut({ seams, all_seams = false, track = 1, transition = "Morph Cut", frames = 12 } = {}) {
+  const card = addTool("morph_cut " + transition + " V" + track + (all_seams ? " all seams" : " @" + (seams || []).map((x) => Number(x).toFixed(2)).join(", ")), "");
+  let list = Array.isArray(seams) ? seams.map(Number).filter(Number.isFinite) : [];
+  if (all_seams) {
+    const snap = await readSnapshot().catch(() => null);
+    const clips = snap ? snap.clips.filter((c) => c.track === "V" + track).sort((a, b) => a.start - b.start) : [];
+    for (let i = 1; i < clips.length; i++) if (Math.abs(clips[i].start - clips[i - 1].end) < 0.02) list.push(clips[i].start);
+  }
+  list = [...new Set(list.map((x) => Number(x.toFixed(3))))];
+  if (!list.length) return err(card, all_seams ? "No cuts where two clips touch on V" + track : "seams is required (or all_seams)");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const raw = await host("addTransitions", JSON.stringify({ track: Number(track), seams: list, name: transition, frames: Number(frames) }));
+  if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) return err(card, copyNote + (raw.replace(/^ERR:/, "") || "no result"));
+  const rows = raw.split(ROW).map((r) => r.split(COL));
+  const [, name, before, after, dur] = rows[0];
+  const results = rows.slice(1).map(([sec, clip, ok, e]) => Number(sec).toFixed(2) + "s " + (ok === "1" ? "applied after \"" + clip + "\"" : "FAILED" + (clip ? " on \"" + clip + "\"" : "") + (e ? ": " + e : "")));
+  const applied = rows.slice(1).filter((r) => r[2] === "1").length;
+  const delta = Number(after) - Number(before);
+  const ok = applied > 0 && delta >= applied;
+  timeline = await readSnapshot().catch(() => timeline);
+  const text = copyNote + name + " (" + dur + ") on V" + track + ": " + applied + " of " + list.length + " applied\n" + results.join("\n") + "\nTransitions on the track: " + before + " before, " + after + " after | CHECK " + (ok ? "PASS" : "FAIL: the track's transition count rose by " + delta + " for " + applied + " applied; read the frames at a seam") + (name === "Morph Cut" && ok ? ". Morph Cut analyses in the background; frames at a seam show a red bar until it is done." : "");
+  card.done(text, ok);
+  return { text, isError: !ok };
+}
+
 // Auto Reframe's subject path (and any other keyframes) on one track. Read-only.
 async function subjectPath({ track = 1, max_keys = 40 } = {}) {
   const card = addTool("subject_path V" + track, "");
@@ -1554,7 +1581,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1603,6 +1630,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
+    inputSchema: { type: "object", properties: { seams: { type: "array", items: { type: "number" }, description: "cut times in seconds (end of the outgoing clip)" }, all_seams: { type: "boolean", description: "every cut on the track where clips touch" }, track: { type: "number", description: "1-based video track, default 1" }, transition: { type: "string", description: "default Morph Cut" }, frames: { type: "number", description: "duration in frames, default 12" } }, required: [] } },
   { name: "subject_path", description: "Where Premiere's Auto Reframe put the subject over time: every keyframed parameter on every clip of one video track, sampled (time=x,y in frame fractions). Read this instead of judging head room from frames. Read-only. Key times are as Premiere returns them; the result says whether they read as sequence or clip time.",
     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1" }, max_keys: { type: "number", description: "samples per parameter, default 40" } }, required: [] } },
   { name: "scene_cuts", description: "Premiere's own Scene Edit Detection: cuts the clip under a time on a track at every scene change (linked audio follows). Use it on a screen recording or any single clip that holds several shots, before find_on_screen or frames. Runs on the working copy. Returns clips before/after as the CHECK.",
