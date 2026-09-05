@@ -1709,14 +1709,18 @@ function writeAnalysis(name, text) {
   const f = path.join(dir, name.replace(/[\/\\:]/g, "_")); fs.writeFileSync(f, text); return f;
 }
 // Chat / Settings tabs.
-const tabChat = document.getElementById("tab-chat"), tabSettings = document.getElementById("tab-settings");
+// Tabs: one chat per agent (Claude, Codex) plus Settings. The chat tabs ARE the agent switch.
+const tabAgent = { claude: document.getElementById("tab-claude"), codex: document.getElementById("tab-codex") }, tabSettings = document.getElementById("tab-settings");
 function showView(which) {
   document.getElementById("view-chat").classList.toggle("active", which === "chat");
   document.getElementById("view-settings").classList.toggle("active", which === "settings");
-  tabChat.classList.toggle("active", which === "chat"); tabSettings.classList.toggle("active", which === "settings");
+  Object.keys(tabAgent).forEach((a) => tabAgent[a].classList.toggle("active", which === "chat" && a === ui.agent.value));
+  tabSettings.classList.toggle("active", which === "settings");
   if (which === "chat") ui.input.focus();
 }
-tabChat.onclick = () => showView("chat"); tabSettings.onclick = () => showView("settings");
+Object.keys(tabAgent).forEach((a) => { tabAgent[a].onclick = () => { if (ui.agent.value !== a) { ui.agent.value = a; ui.agent.onchange(); } showView("chat"); }; });
+tabSettings.onclick = () => showView("settings");
+showView("chat");
 // Copy the log for support: system clipboard via pbcopy (reliable inside CEP), with the browser API as fallback.
 document.getElementById("copy-log").onclick = () => {
   const text = ui.log.textContent || "";

@@ -144,8 +144,8 @@
     <header>
       <span id="project-name">Reading project…</span>
       <span id="status">Starting…</span>
-      <nav class="tabs"><button id="tab-chat" type="button" class="active">Chat</button><button id="tab-settings" type="button">Settings</button></nav>
-      <select id="agent" title="Which agent runs the panel: your Claude Code or your Codex login"><option value="claude" selected>Claude</option><option value="codex">Codex</option></select>
+      <nav class="tabs"><button id="tab-claude" type="button" class="active" title="Chat with Claude (your Claude Code login)">Claude</button><button id="tab-codex" type="button" title="Chat with Codex (your Codex login)">Codex</button><button id="tab-settings" type="button">Settings</button></nav>
+      <select id="agent" hidden><option value="claude" selected>Claude</option><option value="codex">Codex</option></select>
       <select id="model" title="Model for new conversations">
         <option value="claude-fable-5-1">Fable 5.1</option>
         <option value="claude-opus-5" selected>Opus 5</option>
