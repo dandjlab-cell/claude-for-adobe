@@ -909,7 +909,7 @@ var PCX = (function () {
     add("ProjectItem(bin)", function () { return bin; });
     var f = add("ProjectItem(footage)", function () { return footage; });
     add("ProjectItem.getFootageInterpretation()", function () { return footage.getFootageInterpretation(); });
-    add("ProjectItem.getProjectMetadata()", function () { return { s: footage.getProjectMetadata() }; });
+    add("ProjectItem.getProjectMetadata()", function () { var o = new Object(); o.s = footage.getProjectMetadata(); return o; });
     add("ProjectItem.getColorSpace()", function () { return footage.getColorSpace(); });
     add("ProjectItem.getInPoint()", function () { return footage.getInPoint(); });
     var s = add("Sequence", function () { return app.project.activeSequence; });
@@ -932,7 +932,7 @@ var PCX = (function () {
     add("Marker", function () { return s.markers.numMarkers ? s.markers.getFirstMarker() : null; });
     add("Marker(clip)", function () { return clip.projectItem.getMarkers().numMarkers ? clip.projectItem.getMarkers().getFirstMarker() : null; });
     add("Sequence.getSelection()", function () { return s.getSelection(); });
-    add("Sequence.getExportFileExtension", function () { return { s: s.getExportFileExtension("") }; });
+    add("Sequence.getExportFileExtension", function () { var o = new Object(); o.s = s.getExportFileExtension(""); return o; });
     // QE
     try { app.enableQE(); } catch (eq) { rows.push("qe" + COL + "ERR" + COL + eq); }
     var q = add("qe", function () { return qe; });

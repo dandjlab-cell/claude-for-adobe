@@ -1010,6 +1010,21 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
   return { text: copyNote + raw, isError: !ok };
 }
 
+// Which key the editor has for a Premiere command, from their own shortcut sets (read-only).
+async function premiereShortcut({ query = "" } = {}) {
+  const card = addTool("premiere_shortcut " + query, "");
+  if (!query.trim()) return err(card, "query is required");
+  const { userKysFiles, findShortcuts } = require("./src/kys.cjs");
+  const major = (await evalScript("app.version").catch(() => "")).split(".")[0] || "26";
+  const files = userKysFiles(major);
+  const hits = findShortcuts(query, files).slice(0, 40);
+  const text = !files.length ? "No shortcut sets found for Premiere " + major + " under Documents/Adobe/Premiere Pro."
+    : !hits.length ? "No command id contains all of: " + query + ". Try fewer words; the full list is premiere-scripting/commands-26.md."
+    : hits.map((h) => h.command + (Object.keys(h.keys).length ? "  " + Object.entries(h.keys).map(([set, k]) => set + ": " + k.join(", ")).join(" | ") : "  (unbound in every set)")).join("\n") + "\nSets: " + files.map((f) => path.basename(f, ".kys")).join(", ") + ". The active set is whichever the editor chose in Keyboard Shortcuts; [Custom] when they changed anything. Unbound means the editor must use the menu.";
+  card.done(text, true);
+  return { text };
+}
+
 // What analysis already exists for this project, from this panel or from anything else that wrote there.
 async function listAnalysis() {
   const card = addTool("list_analysis", "");
@@ -1494,7 +1509,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1543,6 +1558,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "premiere_shortcut", description: "The editor's own keyboard shortcut for a Premiere command (reads their .kys sets; nothing is pressed). Use it to say the exact key when a job is the editor's click (Transcribe, Delete all pauses, Scene Edit Detection...). Query words match the command id: 'extract', 'ripple delete', 'caption', 'transcribe', 'reframe'. The full id list with default keys is premiere-scripting/commands-26.md.",
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "words that must all appear in the command id" } }, required: ["query"] } },
   { name: "list_analysis", description: "Lists the analysis files next to this project (transcripts, classifications, notes, and anything extracted elsewhere such as prosody or diarization). Check it first; read files with a subagent.",
     inputSchema: { type: "object", properties: {} } },
   { name: "save_notes", description: "Save your notes (shot descriptions per b-roll clip, decisions, selects) as a markdown file next to the project, so later turns and sessions reuse them instead of looking again.",

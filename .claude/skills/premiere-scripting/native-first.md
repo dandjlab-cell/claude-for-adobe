@@ -18,14 +18,15 @@ told to do from a panel, or for numbers Premiere does not give back.
 | Place b-roll | overwrite edit | `place_broll` (Premiere's overwriteClip, other tracks locked) | | Premiere's. |
 | A frame as an image | Export Frame | `preview_frames`, `snapshot_moments`, `frames_across`, `layer_frames`, `seam_frames` | | Premiere's renderer, always. |
 | Audio of the timeline | Export with Premiere's preset | `transcribe_timeline`, `analyze_audio` | | Premiere's renderer. |
-| Where a subject is over time | Auto Reframe's generated Motion keyframes | `clip_transforms` (static values today; keyframe read unverified) | none yet | Premiere's. Reading keyframes is the next step; a face detector would be the fallback, not the first choice. |
+| Where a subject is over time | Auto Reframe's generated Motion keyframes | `clip_transforms` (static values today); the keyframe read exists on 26.3.2 (`qeComponent.getParamKeyframes`, `param.getKeys`) and is the first thing to verify | none yet | Premiere's. Reading keyframes is the next step; a face detector would be the fallback, not the first choice. |
 | Text on screen, when it appears | none | | `find_on_screen` (macOS's text recognizer) | Ours, built on macOS. |
 | Speech coverage, talking head vs b-roll | none | | `classify_clips` (voice detection) | Ours. |
-| Scene cuts inside one clip | Scene Edit Detection | not scriptable (unverified) | none | Editor's click; then the cuts are clips and `seam_frames` sees them. |
-| Sound quality (Enhance Speech, loudness, ducking) | Essential Sound | effects can be added by QE with the editor's click; names must be enumerated first (unverified per effect) | `analyze_audio` for numbers only | Premiere's, applied by the editor or by a QE script after enumeration. |
-| Stabilise, colour, match colour | Warp Stabilizer, Lumetri auto buttons | effect add by QE (unverified); auto buttons not scriptable | none | Premiere's, editor's click. |
+| Scene cuts inside one clip | Scene Edit Detection | `Sequence.performSceneEditDetectionOnSelection` is on 26.3.2 ExtendScript (listed, not yet run from here) | none | Premiere's. Until verified: editor's click (clip right-click > Scene Edit Detection); then the cuts are clips and `seam_frames` sees them. |
+| Sound quality (Enhance Speech, loudness, ducking) | Essential Sound; audio effects | Enhance Speech, ducking, loudness match: editor's click. Effects by name are listed on this build (`qeClip.addAudioEffect`; 94 names in `surface-26.3.2.md`: DeNoise, DeReverb, Hard Limiter, Dynamics...), not yet run from here | `analyze_audio` for numbers only | Premiere's. |
+| Stabilise, colour, match colour | Warp Stabilizer, Lumetri | Warp Stabilizer and Lumetri Color are in the effect list (`addVideoEffect`, listed); `applyLumetriPreset` listed; Auto Color / Auto Tone / Color Match are unbound command ids (click) | none | Premiere's. |
 | Undo | History | every tool step is one History step; non-undoable calls are checkpointed first | file checkpoints | Premiere's; the panel adds checkpoints for what History cannot undo. |
 
-"Cannot be triggered" means: no ExtendScript or QE call reaches it from a panel. Do not write scripts to
-imitate those features; say the click. "Unverified" means: nobody has run it from this panel; enumerate names
-with a read-only script first (premiere-scripting SKILL.md), never guess.
+"Cannot be triggered" means: no ExtendScript or QE call reaches it from a panel (command ids are never callable;
+`commands-26.md`). Do not write scripts to imitate those features; say the key (`premiere_shortcut`) or the menu
+path. "Listed" means: the method exists on this build (`surface-26.3.2.md`) but nobody has run it from this panel;
+run it once on a working copy with a read-back before relying on it. The full catalog by job is `mechanisms.md`.

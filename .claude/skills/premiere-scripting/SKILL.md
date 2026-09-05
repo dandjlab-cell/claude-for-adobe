@@ -12,9 +12,10 @@ escape hatch. Check first: `sequence_overview`, `classify_clips`, `find_in_trans
 `keep_only`, `remove_silences`, `create_sequence`, `project_bins`, `move_to_bin`, `mute_clip_audio`,
 `preview_frames`. Never rebuild what a tool does (cuts, silence removal, bins, sequence creation) with a script.
 
-Premiere first: `native-first.md` is the map of Premiere's own features (Auto Reframe, Speech to Text, Extract,
-Export Frame, Essential Sound...) versus the panel's engines, and which to use when. Read it before deciding
-how to do a job at all.
+Premiere first: `mechanisms.md` is the catalog of Premiere's own mechanisms by job (picture, cut, sound, words,
+project) with a status per row: verified from this panel, listed on this build but not yet run, the editor's key,
+or none. Read it before deciding how to do a job at all; if a row exists, call that, never re-implement it.
+`native-first.md` is the shorter decision table of Premiere's feature versus the panel's engine.
 
 Before writing a script: read `reference.md` for the can/cannot table and the exact property names, then copy
 the closest snippet from `snippets.md` and adapt it. Do not guess API shapes. If a name is uncertain, write a
@@ -50,6 +51,12 @@ read-only script that enumerates `displayName` / `matchName` first, then write t
 
 ## Files
 
+- `mechanisms.md`: Premiere's own mechanisms by job with status (verified / listed / key / none), the exact call,
+  the CHECK, and the next five to verify. The first file to read for "how should this job be done".
+- `surface-26.3.2.md`: every method and property name on every object type (ExtendScript and QE) and the full
+  effect and transition lists, read by reflection from Premiere 26.3.2. Grep it before guessing a name.
+- `commands-26.md`: all 1,231 command ids with default shortcuts. Not callable from a panel; for naming the exact
+  key when a job is the editor's click. `premiere_shortcut` reads the editor's own bindings.
 - `reference.md`: the three API surfaces, object and property names, the can/cannot table by task with
   the exact call and trap per row, what is UXP-only or impossible, and the verification legend.
 - `snippets.md`: twelve complete ES3 scripts that pass the panel's gate (enumerate clips, scale/position,
