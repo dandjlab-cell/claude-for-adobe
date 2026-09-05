@@ -13,7 +13,7 @@
   .tabs span{padding:3px 10px;font-size:11px;color:rgba(237,234,226,.6)}.tabs span.on{background:#e8481b;color:#fff}
   .hdr{display:flex;align-items:center;gap:8px;font:11px "SF Mono",Menlo,monospace;color:rgba(237,234,226,.5);margin-bottom:12px}
   .sq{width:7px;height:7px;border:1px solid rgba(237,234,226,.4)}.sq.busy{background:#e8481b;border-color:#e8481b}
-  .msgs{height:200px;display:flex;flex-direction:column;gap:8px}
+  .msgs{height:176px;display:flex;flex-direction:column;gap:8px}
   .user{background:#1c1a16;border-left:2px solid #e8481b;padding:7px 9px;margin-left:40px;background:#221f1a}
   .ai{border-left:2px solid rgba(237,234,226,.18);padding:7px 9px;color:#edeae2}
   .sel{font:11px "SF Mono",Menlo,monospace;color:rgba(237,234,226,.6);margin:6px 0 4px}.sel b{color:#e8481b;font-weight:500}
@@ -30,7 +30,8 @@
     <div class="folder" id="f2" style="margin-left:22px"><i></i>B-roll</div>
     </div>
   <div class="cursor" id="cur" style="left:246px;top:316px"></div>
-  <div class="pane"><div class="hdr"><span>interview.prproj</span><span class="sq" id="sq"></span><span id="st">Ready</span><span class="tabs"><span class="on">Chat</span><span>Settings</span></span></div>
+  <div class="pane"><div class="hdr" style="margin-bottom:6px"><span>interview.prproj</span><span class="sq" id="sq"></span><span id="st">Ready</span></div>
+    <div class="hdr" style="gap:6px;white-space:nowrap"><span class="tabs" id="tabs" style="margin-left:0"><span class="on" id="tab1">Claude 1</span><span>Settings</span></span><span class="btn" id="newc" style="padding:3px 9px;white-space:nowrap">+ Claude</span><span class="btn" style="padding:3px 9px;white-space:nowrap">+ Codex</span></div>
     <div class="msgs" id="msgs"><div id="chips" style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;margin-top:6px"><span class="btn" id="chip1" style="color:#edeae2">Edit this</span><span class="btn">Organize my project</span><span class="btn">Remove silences</span></div></div>
     <div class="sel" id="sel"><b>Selected in Premiere:</b> bin "Kitchen shoot" (22 items)</div>
     <div class="box" id="box">Ask Claude to inspect or edit the open project.</div>
@@ -39,16 +40,18 @@
 </div>
 <div class="cap" id="cap"></div>
 <script>
+// Frame 0: open a chat with + Claude (or + Codex). Frames 1-7: click the folder, Edit this, send, answer.
 const f = Number(new URLSearchParams(location.search).get("f") || 0);
 const $ = (i) => document.getElementById(i);
-const caps = ["Click the folder you want to work on.", "Click the folder you want to work on.", "Choose Edit this.", "Send it.", "Claude inspects the folder…", "…and asks one question before cutting.", "…and asks one question before cutting."];
+const caps = ["Open a chat: + Claude or + Codex.", "Click the folder you want to work on.", "Click the folder you want to work on.", "Choose Edit this.", "Send it.", "Claude inspects the folder…", "…and asks one question before cutting.", "…and asks one question before cutting."];
 $("cap").textContent = caps[f] || "";
-const pos = [[246,316],[76,64],[380,86],[368,354],[368,354],[368,354],[368,354]];
+const pos = [[0,0],[246,316],[76,64],[380,86],[368,354],[368,354],[368,354],[368,354]];
+if (f === 0) { pos[0] = [446, 60]; $("tab1").style.display = "none"; $("newc").classList.add("sel"); $("chips").style.display = "none"; $("sel").classList.add("hide"); }
 $("cur").style.left = pos[f][0] + "px"; $("cur").style.top = pos[f][1] + "px";
-if (f >= 1) $("f0").classList.add("sel");
-$("sel").classList.toggle("hide", f < 1);
-if (f >= 2) { $("chip1").classList.add("sel"); $("box").textContent = "Edit what I have selected."; $("box").classList.add("typed"); }
-if (f >= 3) { $("chips").style.display = "none"; }
-if (f >= 4) { $("box").textContent = "Ask Claude to inspect or edit the open project."; $("box").classList.remove("typed"); $("msgs").innerHTML = '<div class="user">Edit what I have selected.</div>'; $("sq").classList.add("busy"); $("st").textContent = "Running: classify_clips"; }
-if (f >= 5) { $("msgs").innerHTML += '<div class="ai">22 clips: 8 talking head, 14 b-roll, all 4K @ 23.976. New sequence matching the footage, or 9:16 for social?</div>'; $("sq").classList.remove("busy"); $("st").textContent = "Ready"; }
+if (f >= 2) $("f0").classList.add("sel");
+$("sel").classList.toggle("hide", f < 2);
+if (f >= 3) { $("chip1").classList.add("sel"); $("box").textContent = "Edit what I have selected."; $("box").classList.add("typed"); }
+if (f >= 4) { $("chips").style.display = "none"; }
+if (f >= 5) { $("box").textContent = "Ask Claude to inspect or edit the open project."; $("box").classList.remove("typed"); $("msgs").innerHTML = '<div class="user">Edit what I have selected.</div>'; $("sq").classList.add("busy"); $("st").textContent = "Running: classify_clips"; }
+if (f >= 6) { $("msgs").innerHTML += '<div class="ai">22 clips: 8 talking head, 14 b-roll, all 4K @ 23.976. New sequence matching the footage, or 9:16 for social?</div>'; $("sq").classList.remove("busy"); $("st").textContent = "Ready"; }
 </script></body></html>

@@ -99,7 +99,7 @@ let pendingProjectRestart = false; // the project changed mid-turn: restart (new
 let lastCopyId = null;        // working copy created by the most recent ensureWorkingCopy()
 let allowScriptsThisSession = false; // set by "Run all this session"; cleared on New
 function setStatus(text, cls) { ui.status.textContent = text; ui.status.className = cls || (/^(Ready|Starting)/.test(text) ? "" : "busy"); }
-function setBusy(busy) { ui.send.disabled = busy || !session; ui.stop.disabled = !busy; if (!busy) ui.input.focus(); }
+function setBusy(busy) { ui.send.disabled = busy || (!session && !!activeChat); ui.stop.disabled = !busy; if (!busy) ui.input.focus(); } // no chat: Send opens one
 
 function addMessage(cls, text) {
   if (quietCard && !/error/.test(cls)) return document.createElement("div"); // a button run keeps notes inside its card
@@ -1394,7 +1394,10 @@ function restartSession(resumeSessionId) {
 
 async function sendMessage() {
   const text = ui.input.value.trim() || (attachments.length ? "(see the attached image" + (attachments.length > 1 ? "s" : "") + ")" : "");
-  if (!text || !session || session.busy) return;
+  if (!text) return;
+  // No chat open (start screen): a message opens one with the agent used last, then waits for it to start.
+  if (!activeChat) { newChat(ui.agent.value); if (restarting) await restarting; }
+  if (!session || session.busy) return;
   if (buttonJob) { addMessage("assistant error", "Wait for the running job (" + buttonJob + ") to finish first."); return; }
   addMessage("user", text + (attachments.length ? "\n[" + attachments.length + " image" + (attachments.length > 1 ? "s" : "") + " attached]" : ""));
   ui.input.value = "";
@@ -1440,7 +1443,8 @@ async function boot() {
     await bindHostEvents();
     await snapshotTimeline();
     renderCopies();
-    await restartSession();
+    // No chat until the editor opens one (+ Claude / + Codex, a start chip, or a message): the start screen shows.
+    if (activeChat) await restartSession(); else { setStatus("Ready"); setBusy(false); }
   } catch (error) {
     setStatus(error.message, "error");
     log("boot failed: " + error.message);
@@ -1793,14 +1797,13 @@ async function closeChat(c) {
   chats.splice(idx, 1);
   if (c === activeChat) { activeChat = null; session = null; liveMessage = null; ui.messages.replaceChildren(); }
   if (s) { try { await s.stop(); } catch (_) {} }
+  // Closing the last chat shows the start screen; a new chat opens only on + Claude / + Codex (or a message).
   const next = chats[idx - 1] || chats[0];
-  if (next) showChat(next); else newChat(c.agent);
+  if (next) showChat(next); else { setStatus("Ready"); setBusy(false); showView("chat"); }
   renderTabs();
 }
 ui.newClaude.onclick = () => newChat("claude");
 ui.newCodex.onclick = () => newChat("codex");
-// The first chat uses the agent from last time; boot() starts its session.
-activeChat = makeChat(ui.agent.value);
 showView("chat");
 
 boot();
