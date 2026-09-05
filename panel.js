@@ -1568,9 +1568,48 @@ async function installPending() {
     setTimeout(() => location.reload(), 1500);
   }
 }
-setVersionRow("v" + currentVersion(extensionRoot));
-ui.checkUpdates.onclick = () => (pendingUpdate ? installPending() : checkUpdates(true));
-setTimeout(() => checkUpdates(false), 4000);
+// Dev panel (a git checkout linked into the extensions folder): the same button pulls the repo instead of
+// downloading a release. The repo root is where the linked panel.js really lives.
+const devRepo = (() => { try { return fs.existsSync(path.join(extensionRoot, ".git")) ? path.dirname(fs.realpathSync(path.join(extensionRoot, "panel.js"))) : null; } catch (_) { return null; } })();
+function gitDev(...args) {
+  const r = require("node:child_process").spawnSync("git", ["-C", devRepo, ...args], { encoding: "utf8", env: { ...process.env, PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (process.env.PATH || "") } });
+  if (r.status !== 0) throw new Error((r.stderr || r.stdout || "git failed").trim().slice(-300));
+  return r.stdout.trim();
+}
+async function checkDevUpdates(announce) {
+  ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Checking…";
+  try {
+    gitDev("fetch", "--quiet");
+    const local = gitDev("rev-parse", "--short", "HEAD"), branch = gitDev("rev-parse", "--abbrev-ref", "HEAD");
+    const behind = Number(gitDev("rev-list", "--count", "HEAD..@{u}")) || 0;
+    pendingUpdate = behind ? { dev: true, behind } : null;
+    setVersionRow("dev " + local + " (" + branch + ") · " + (behind ? behind + " commit" + (behind === 1 ? "" : "s") + " behind" : "up to date"));
+    ui.checkUpdates.textContent = behind ? "Pull " + behind + " commit" + (behind === 1 ? "" : "s") : "Check for updates";
+    ui.checkUpdates.className = behind ? "accent" : "utility";
+    tabSettings.textContent = behind ? "Settings · update" : "Settings"; tabSettings.classList.toggle("attention", !!behind);
+    if (announce && behind) addMessage("assistant muted", behind + " new commit" + (behind === 1 ? "" : "s") + " in the repo. Use the Pull button at the bottom.");
+    log("dev repo " + local + (behind ? " is " + behind + " behind" : " up to date"));
+  } catch (error) { log("dev update check failed: " + error.message); ui.checkUpdates.textContent = "Check for updates"; if (announce) addMessage("assistant muted", "Could not check the repo: " + error.message); }
+  ui.checkUpdates.disabled = false;
+}
+async function installDevPending() {
+  if (session && session.busy) { addMessage("assistant muted", "Wait for " + agentName() + " to finish (or press Stop), then pull."); return; }
+  ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Pulling…";
+  try {
+    try { if (session) { const old = session; session = null; await old.stop(); } } catch (_) {}
+    try { if (mcp) mcp.close(); } catch (_) {}
+    const before = gitDev("rev-parse", "HEAD");
+    gitDev("pull", "--ff-only", "--quiet");
+    const changed = gitDev("diff", "--name-only", before, "HEAD");
+    pendingUpdate = null;
+    if (/^host\//m.test(changed)) { addMessage("assistant error", "The host script changed: restart Premiere to load it. Reloading the panel now."); setTimeout(() => location.reload(), 2500); return; }
+    setVersionRow("dev " + gitDev("rev-parse", "--short", "HEAD") + " pulled, restarting");
+    setTimeout(() => location.reload(), 400);
+  } catch (error) { addMessage("assistant error", "Pull failed: " + error.message + " Restarting the panel as it is."); setTimeout(() => location.reload(), 1500); }
+}
+setVersionRow(devRepo ? "dev" : "v" + currentVersion(extensionRoot));
+ui.checkUpdates.onclick = () => (devRepo ? (pendingUpdate ? installDevPending() : checkDevUpdates(true)) : (pendingUpdate ? installPending() : checkUpdates(true)));
+setTimeout(() => (devRepo ? checkDevUpdates(false) : checkUpdates(false)), 4000);
 // Persistent choice: ask before scripts (default on).
 try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
 ui.askScripts.onchange = () => { try { localStorage.setItem("askScripts", ui.askScripts.checked ? "yes" : "no"); } catch (_) {} };
