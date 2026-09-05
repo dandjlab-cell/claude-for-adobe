@@ -1167,7 +1167,15 @@ async function fitRegionTool({ at_seconds, track, roi, roi_units = "px", target,
   let tr; try { tr = await readTransforms(); } catch (error) { return err(card, error.message); }
   const t0 = Number(at_seconds), row = tr.rows.find((r) => r.track === "V" + Number(track) && t0 >= r.start && t0 < r.end);
   if (!row) return err(card, "no clip on V" + track + " at " + t0.toFixed(2) + "s");
-  if (!row.srcW || !row.srcH) return err(card, "no source size known for \"" + row.name + "\" (media_info / not footage?)");
+  if (!row.srcW || !row.srcH) {
+    // Premiere's Video Info column is empty for some media; ask ffprobe instead of sending the model to media_info.
+    try {
+      const clip = (timeline && timeline.clips || []).find((c) => c.track === "V" + Number(track) && t0 >= c.start && t0 < c.end);
+      const m = clip && clip.mediaPath ? /video \S+ (\d+)x(\d+)/.exec(mediaInfo(clip.mediaPath)) : null;
+      if (m) { row.srcW = Number(m[1]); row.srcH = Number(m[2]); }
+    } catch (_) {}
+    if (!row.srcW || !row.srcH) return err(card, "no source size known for \"" + row.name + "\" (not footage, or media offline)");
+  }
   const R = roi_units === "fraction" ? { x0: roi.x0 * row.srcW, y0: roi.y0 * row.srcH, x1: roi.x1 * row.srcW, y1: roi.y1 * row.srcH } : { x0: +roi.x0, y0: +roi.y0, x1: +roi.x1, y1: +roi.y1 };
   const fit = fitRegion({ srcW: row.srcW, srcH: row.srcH, frameW: tr.w, frameH: tr.h, roi: R, target: tgt, maxScale: Number(max_scale) || 0, margin: Number(margin) || 0 });
   let copyNote = ""; try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
@@ -1654,7 +1662,8 @@ async function sendMessage() {
 async function boot() {
   try {
     await loadHostScript();
-    mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: (name, args) => TOOLS[name](args), onLog: log });
+    // Every tool result's first line goes to the log, so a pasted log explains what the model saw, not just what it called.
+    mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: async (name, args) => { const t0 = Date.now(); const out = await TOOLS[name](args); const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; }, onLog: log });
     log("mcp server at " + mcp.url);
     await refreshProject();
     setInterval(() => { refreshProject().catch(() => {}); }, PROJECT_POLL_MS);
