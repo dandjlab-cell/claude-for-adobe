@@ -12,6 +12,10 @@ escape hatch. Check first: `sequence_overview`, `classify_clips`, `find_in_trans
 `keep_only`, `remove_silences`, `create_sequence`, `project_bins`, `move_to_bin`, `mute_clip_audio`,
 `preview_frames`. Never rebuild what a tool does (cuts, silence removal, bins, sequence creation) with a script.
 
+Premiere first: `native-first.md` is the map of Premiere's own features (Auto Reframe, Speech to Text, Extract,
+Export Frame, Essential Sound...) versus the panel's engines, and which to use when. Read it before deciding
+how to do a job at all.
+
 Before writing a script: read `reference.md` for the can/cannot table and the exact property names, then copy
 the closest snippet from `snippets.md` and adapt it. Do not guess API shapes. If a name is uncertain, write a
 read-only script that enumerates `displayName` / `matchName` first, then write the edit.
