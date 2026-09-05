@@ -1000,10 +1000,11 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 async function listAnalysis() {
   const card = addTool("list_analysis", "");
   const dir = analysisDir();
-  let rows = [];
+  let rows = []; const ruleTexts = [];
   const fp = timelineFingerprint(timeline || (await readSnapshot().catch(() => null)));
-  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); let stale = ""; if (f.endsWith(".transcript.md")) { const head = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400); const m = /<!-- timeline ([^>]*) -->/.exec(head); if (m && m[1] !== fp) stale = "  STALE (timeline changed since; call read_transcript again)"; } let head = ""; if (/safe-zone|procedure|rule|notes|handoff/i.test(f) && f.endsWith(".md")) { try { const first = fs.readFileSync(path.join(dir, f), "utf8").split("\n").find((l) => l.trim()) || ""; head = "  | RULE: " + first.replace(/^#+\s*/, "").slice(0, 140); } catch (_) {} } return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " ") + stale + head; }); } catch (_) {}
-  const text = (rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir) + (rows.some((r) => r.includes("| RULE:")) ? "\nFiles marked RULE are this project's rules (safe zones, procedures, approved placements): READ them before framing or cutting here; they are not optional." : "");
+  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); let stale = ""; if (f.endsWith(".transcript.md")) { const head = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400); const m = /<!-- timeline ([^>]*) -->/.exec(head); if (m && m[1] !== fp) stale = "  STALE (timeline changed since; call read_transcript again)"; } let head = ""; if (/safe-zone|procedure|rule|notes|handoff/i.test(f) && f.endsWith(".md")) { try { const body = fs.readFileSync(path.join(dir, f), "utf8"); const first = body.split("\n").find((l) => l.trim()) || ""; head = "  | RULE: " + first.replace(/^#+\s*/, "").slice(0, 140); if (body.length <= 8000) ruleTexts.push("----- " + f + " -----\n" + body.trim()); } catch (_) {} } return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " ") + stale + head; }); } catch (_) {}
+  // Rule files come back in full (no extra reads, no extra turns); only very long ones need a Read.
+  const text = (rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir) + (rows.some((r) => r.includes("| RULE:")) ? "\nFiles marked RULE are this project's rules (safe zones, procedures, approved placements); they are not optional. Their full text follows, so there is nothing to read again:\n\n" + ruleTexts.join("\n\n") : "");
   card.done(text, true);
   return { text: text + (rows.length ? "\n(read any of these with a subagent; prosody / diarization / notes may come from other tools)" : "") };
 }
@@ -1064,12 +1065,14 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
   const parts = [], content = [];
   let step;
   const target = targetSize({ aspect, preset, width, height });
+  let sourceSeqId = null;
   if (bin) {
-    // Raw footage: a sequence that matches the footage first, then the same reframe as an open timeline gets.
+    // Raw footage: Auto Reframe needs a sequence to read from, so one matching the footage is built and,
+    // once the target sequence exists, deleted again. The editor sees one sequence at the shape asked for.
     if (!name) name = path.basename(bin) + (target ? " " + target.label : "");
-    step = await createSequence({ name: name + (target ? " source" : ""), bin, fps, preset: "match", insert_clips: true });
+    step = await createSequence({ name: name + (target && motion === "track" ? " source" : ""), bin, fps, preset: "match", insert_clips: true });
     if (step.isError) return step;
-    parts.push(step.text);
+    sourceSeqId = project.sequenceId;
   }
   if (target && motion === "track") {
     // Premiere's own Auto Reframe: subject tracking by Premiere, a new sequence at the target aspect. The panel's
@@ -1085,19 +1088,20 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
     }
     if (raw === "ANALYZING") return { text: "CLAUDE_FOR_ADOBE_ERROR:Premiere is still analysing the footage for Auto Reframe after 2 minutes; try again in a moment.", isError: true };
     if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) {
-      if (bin || motion === "track") {
-        // Static fallback so the request still completes: fill and centre.
-        parts.push("Auto Reframe unavailable (" + raw.replace(/^ERR:/, "") + "); static reframe instead.");
-        step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
-        if (step.isError) return step;
-        parts.push(step.text);
-      }
+      // Static fallback so the request still completes: the matching sequence (or the open one) is resized, fill and centre.
+      parts.push("Auto Reframe unavailable (" + raw.replace(/^ERR:/, "") + "); static reframe instead.");
+      step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
+      if (step.isError) return step;
+      parts.push(step.text);
     } else {
-      const [, seqName, size] = raw.split(COL);
+      const [newId, seqName, size] = raw.split(COL);
+      if (sourceSeqId) { try { await host("deleteSequence", sourceSeqId, newId); } catch (_) {} }
       await refreshProject();
       timeline = await readSnapshot().catch(() => timeline);
       lastCopyId = null;
-      parts.push("Premiere Auto Reframe made \"" + seqName + "\" (" + size + "), subject tracked by Premiere; the original is untouched.");
+      parts.push(sourceSeqId
+        ? "Built \"" + seqName + "\" (" + size + ") from the bin: laid in order, then Premiere Auto Reframe tracked the subject into the " + target.label + " frame; the temporary matching sequence was removed."
+        : "Premiere Auto Reframe made \"" + seqName + "\" (" + size + "), subject tracked by Premiere; the original is untouched.");
       // Graphics: Auto Reframe treats them like footage; restore the editor's placement (fraction kept, scale by width).
       if (before) {
         const after = await readTransforms().catch(() => null);
