@@ -158,8 +158,19 @@ var PCX = (function () {
         continue;
       }
       try {
+        // Never trust the in/out to have landed: on 2026-09-05 an inner range (23.49-23.87 on a 27 s take)
+        // extracted everything before it. Read both back; retry once in ticks; refuse to extract on a mismatch.
         s.setInPoint(a);
         s.setOutPoint(b);
+        var ri = num(s.getInPoint()), ro = num(s.getOutPoint());
+        if (Math.abs(ri - a) > F || Math.abs(ro - b) > F) {
+          try { s.setInPoint(String(Math.round(a * T))); s.setOutPoint(String(Math.round(b * T))); } catch (eT) {}
+          ri = num(s.getInPoint()); ro = num(s.getOutPoint());
+        }
+        if (Math.abs(ri - a) > F || Math.abs(ro - b) > F) {
+          errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": in/out did not take (Premiere reports " + ri.toFixed(2) + "-" + ro.toFixed(2) + "); stopped before extracting");
+          break;
+        }
         var d0 = num(s.end);
         q.extract();
         var removed = (d0 - num(s.end)) / T, want = b - a;
