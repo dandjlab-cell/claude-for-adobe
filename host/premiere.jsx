@@ -967,8 +967,64 @@ var PCX = (function () {
     return rows.join(ROW);
   }
 
+  // Every keyframed parameter on every clip of one video track, sampled (Auto Reframe writes the subject's path as
+  // keys). Read-only. Header SEQ|name|W|H ; rows: track|clipIdx|name|component|param|nKeys|clipStartSec|clipInSec|
+  // "keySec=value ..." where a 2-vector is frame fractions. Key times are as Premiere returns them; compare with
+  // clipStartSec to learn whether they are sequence or clip time.
+  function subjectPath(trackIndex, maxKeys) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var st = s.getSettings(), W = num(st.videoFrameWidth), H = num(st.videoFrameHeight);
+    var t = num(trackIndex) - 1;
+    if (!(t >= 0 && t < s.videoTracks.numTracks)) return "ERR:no V" + trackIndex;
+    var tr = s.videoTracks[t], rows = ["SEQ" + COL + s.name + COL + W + COL + H], cap = num(maxKeys) || 40, errs = 0;
+    for (var c = 0; c < tr.clips.numItems; c++) {
+      var cl = tr.clips[c];
+      for (var k = 0; k < cl.components.numItems; k++) {
+        var comp = cl.components[k];
+        for (var p = 0; p < comp.properties.numItems; p++) {
+          var prop = comp.properties[p], keys = null;
+          try { if (!prop.isTimeVarying()) continue; keys = prop.getKeys(); } catch (e0) { errs++; continue; }
+          if (!keys || !keys.length) continue;
+          var samples = [], step = Math.max(1, Math.ceil(keys.length / cap));
+          for (var i = 0; i < keys.length; i += step) {
+            var v = "";
+            try { var val = prop.getValueAtKey(keys[i]); v = (val && val.length === 2) ? (isNormalized(val) ? val[0] : val[0] / W).toFixed(4) + "," + (isNormalized(val) ? val[1] : val[1] / H).toFixed(4) : String(val); } catch (e1) { v = "?"; }
+            samples.push((num(keys[i].ticks) / T).toFixed(3) + "=" + v);
+          }
+          rows.push(["V" + (t + 1), c, cl.name, comp.displayName, prop.displayName, keys.length, (num(cl.start.ticks) / T).toFixed(3), (num(cl.inPoint.ticks) / T).toFixed(3), samples.join(" ")].join(COL));
+        }
+      }
+    }
+    if (rows.length === 1) rows.push("NONE" + COL + tr.clips.numItems + COL + errs);
+    return rows.join(ROW);
+  }
+
+  // Premiere's own Scene Edit Detection on the clip under a time on a track: selects only that clip, runs it with
+  // cuts applied (linked audio too), returns "ok|clipName|clipsBefore|clipsAfter|result|sensitivity". The analysis
+  // may finish after this returns; the panel re-counts.
+  function sceneCuts(trackIndex, atSec, sensitivity) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    if (typeof s.performSceneEditDetectionOnSelection !== "function") return "ERR:performSceneEditDetectionOnSelection is not on this build";
+    var t = num(trackIndex) - 1;
+    if (!(t >= 0 && t < s.videoTracks.numTracks)) return "ERR:no V" + trackIndex;
+    var tr = s.videoTracks[t], target = null, ticks = num(atSec) * T;
+    for (var c = 0; c < tr.clips.numItems; c++) { var cl = tr.clips[c]; if (num(cl.start.ticks) <= ticks && ticks < num(cl.end.ticks)) { target = cl; break; } }
+    if (!target) return "ERR:no clip on V" + trackIndex + " at " + atSec + "s";
+    var before = tr.clips.numItems, name = target.name;
+    for (var t2 = 0; t2 < s.videoTracks.numTracks; t2++) for (var c2 = 0; c2 < s.videoTracks[t2].clips.numItems; c2++) { try { s.videoTracks[t2].clips[c2].setSelected(0, 1); } catch (e0) {} }
+    for (var a = 0; a < s.audioTracks.numTracks; a++) for (var c3 = 0; c3 < s.audioTracks[a].clips.numItems; c3++) { try { s.audioTracks[a].clips[c3].setSelected(0, 1); } catch (e1) {} }
+    try { target.setSelected(1, 1); } catch (e2) { return "ERR:setSelected " + e2; }
+    var map = { low: "LowSensitivity", medium: "MediumSensitivity", high: "HighSensitivity" };
+    var sens = map[String(sensitivity || "medium").toLowerCase()] || "MediumSensitivity";
+    var r;
+    try { r = s.performSceneEditDetectionOnSelection("ApplyCuts", true, sens); } catch (e3) { return "ERR:performSceneEditDetectionOnSelection " + e3; }
+    return ["ok", name, before, tr.clips.numItems, String(r), sens].join(COL);
+  }
+
   return {
-    enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

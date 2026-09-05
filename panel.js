@@ -1010,6 +1010,44 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
   return { text: copyNote + raw, isError: !ok };
 }
 
+// Auto Reframe's subject path (and any other keyframes) on one track. Read-only.
+async function subjectPath({ track = 1, max_keys = 40 } = {}) {
+  const card = addTool("subject_path V" + track, "");
+  const raw = await host("subjectPath", String(track), String(max_keys));
+  if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) return err(card, raw.replace(/^ERR:/, "") || "no result");
+  const rows = raw.split(ROW).map((r) => r.split(COL));
+  const [, name, w, h] = rows[0];
+  if (rows[1] && rows[1][0] === "NONE") { const text = "No keyframes on any of the " + rows[1][1] + " clip(s) of V" + track + " in \"" + name + "\"" + (Number(rows[1][2]) ? " (" + rows[1][2] + " parameter(s) could not be read)" : "") + ". Auto Reframe has not run here, or its analysis is still going (reframe reports when it is done)."; card.done(text, true); return { text }; }
+  let seqTime = 0, clipTime = 0;
+  const lines = rows.slice(1).map(([tr, idx, clip, comp, param, n, start, inPt, samples]) => {
+    const first = Number((samples.split(" ")[0] || "").split("=")[0]);
+    if (Number.isFinite(first)) { if (Math.abs(first - Number(start)) < 1) seqTime++; else if (first < Number(start) - 1) clipTime++; }
+    return tr + " clip " + idx + " \"" + clip + "\" (starts " + start + "s, in " + inPt + "s): " + comp + " > " + param + ", " + n + " keys\n    " + samples;
+  });
+  const text = name + " " + w + "x" + h + ", V" + track + ": " + lines.length + " keyframed parameter(s)\n" + lines.join("\n") + "\nCHECK key times: " + (seqTime && !clipTime ? "sequence time (first key at the clip's start)" : clipTime && !seqTime ? "clip-relative time (first key before the clip's sequence start; add clipStart - in to place them)" : "undetermined; compare the first key with the clip start yourself") + ".";
+  card.done(text, true);
+  return { text };
+}
+
+// Premiere's Scene Edit Detection on one clip, on the working copy, with a clip-count CHECK.
+async function sceneCuts({ at_seconds, track = 1, sensitivity = "medium" } = {}) {
+  const card = addTool("scene_cuts V" + track + " @" + Number(at_seconds).toFixed(2) + "s " + sensitivity, "");
+  if (!Number.isFinite(Number(at_seconds))) return err(card, "at_seconds is required");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const raw = await host("sceneCuts", String(track), String(at_seconds), String(sensitivity));
+  if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) return err(card, copyNote + (raw.replace(/^ERR:/, "") || "no result"));
+  const [, name, before, afterNow, result, sens] = raw.split(COL);
+  // The analysis can finish after the call returns: re-count for up to 90 s.
+  let after = Number(afterNow); const t0 = Date.now();
+  while (after <= Number(before) && Date.now() - t0 < 90000) { await new Promise((r) => setTimeout(r, 1500)); const snap = await readSnapshot().catch(() => null); if (!snap) continue; after = snap.clips.filter((c) => c.track === "V" + track).length; card.progress(Math.min(89, Math.round((Date.now() - t0) / 1000)), 90, "waiting for Premiere's analysis "); }
+  timeline = await readSnapshot().catch(() => timeline);
+  const ok = after > Number(before);
+  const text = copyNote + "Scene Edit Detection (" + sens + ") on \"" + name + "\": V" + track + " had " + before + " clip(s), now " + after + (result && result !== "undefined" ? " (result " + result + ")" : "") + (ok ? " | CHECK PASS: " + (after - before) + " cut(s) added; run seam_frames to see them." : " | CHECK FAIL: no new clips after 90 s. Either no scene change was found at this sensitivity (try high), or the call did not run; the editor's route is right-click the clip > Scene Edit Detection.");
+  card.done(text, ok);
+  return { text, isError: !ok };
+}
+
 // Which key the editor has for a Premiere command, from their own shortcut sets (read-only).
 async function premiereShortcut({ query = "" } = {}) {
   const card = addTool("premiere_shortcut " + query, "");
@@ -1509,7 +1547,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1558,6 +1596,10 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "subject_path", description: "Where Premiere's Auto Reframe put the subject over time: every keyframed parameter on every clip of one video track, sampled (time=x,y in frame fractions). Read this instead of judging head room from frames. Read-only. Key times are as Premiere returns them; the result says whether they read as sequence or clip time.",
+    inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1" }, max_keys: { type: "number", description: "samples per parameter, default 40" } }, required: [] } },
+  { name: "scene_cuts", description: "Premiere's own Scene Edit Detection: cuts the clip under a time on a track at every scene change (linked audio follows). Use it on a screen recording or any single clip that holds several shots, before find_on_screen or frames. Runs on the working copy. Returns clips before/after as the CHECK.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track, default 1" }, sensitivity: { type: "string", description: "low | medium | high, default medium" } }, required: ["at_seconds"] } },
   { name: "premiere_shortcut", description: "The editor's own keyboard shortcut for a Premiere command (reads their .kys sets; nothing is pressed). Use it to say the exact key when a job is the editor's click (Transcribe, Delete all pauses, Scene Edit Detection...). Query words match the command id: 'extract', 'ripple delete', 'caption', 'transcribe', 'reframe'. The full id list with default keys is premiere-scripting/commands-26.md.",
     inputSchema: { type: "object", properties: { query: { type: "string", description: "words that must all appear in the command id" } }, required: ["query"] } },
   { name: "list_analysis", description: "Lists the analysis files next to this project (transcripts, classifications, notes, and anything extracted elsewhere such as prosody or diarization). Check it first; read files with a subagent.",
