@@ -196,7 +196,9 @@ var PCX = (function () {
   }
 
   // Render frames of the active sequence via QE to base_<i>.png. Returns rows of base|ok|timecode.
-  function frames(json, base) {
+  // solo: 0-based video track index to render ALONE (every other video track hidden for the render, then restored);
+  // "" or -1 renders the composite. Caption tracks are not video tracks and stay visible either way.
+  function frames(json, base, solo) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var q = null;
@@ -204,6 +206,17 @@ var PCX = (function () {
     if (!q) return "ERR:QE unavailable";
     var secs = parse(json);
     var prev = s.getPlayerPosition().ticks;
+    var soloIdx = (solo === undefined || solo === "" || solo === null) ? -1 : Number(solo);
+    var hidden = [];
+    if (soloIdx >= 0) {
+      if (soloIdx >= s.videoTracks.numTracks) return "ERR:no video track V" + (soloIdx + 1);
+      for (var v = 0; v < s.videoTracks.numTracks; v++) {
+        if (v === soloIdx) continue;
+        var vt = s.videoTracks[v], was = false;
+        try { was = !!vt.isMuted(); } catch (e0) {}
+        if (!was) { try { vt.setMute(true); hidden.push(vt); } catch (e1) {} }
+      }
+    }
     var outs = [];
     for (var i = 0; i < secs.length; i++) {
       s.setPlayerPosition(String(Math.round(secs[i] * T)));
@@ -211,6 +224,7 @@ var PCX = (function () {
       try { tc = String(q.CTI.timecode); ok = q.exportFramePNG(tc, b); } catch (e) { ok = "ERR " + e; }
       outs.push(b + COL + ok + COL + tc);
     }
+    for (var hi = 0; hi < hidden.length; hi++) { try { hidden[hi].setMute(false); } catch (e2) {} }
     s.setPlayerPosition(prev);
     return outs.join(ROW);
   }

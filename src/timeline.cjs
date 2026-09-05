@@ -73,4 +73,34 @@ function summarizeChanges(lines) {
   return out.concat(rest);
 }
 
-module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot };
+// ---- What is visible: the picture is the topmost footage clip at a time; graphics sit over it. ----
+const isGraphic = (c) => !c.mediaPath || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(c.mediaPath);
+const trackNo = (c) => Number(String(c.track).slice(1)) || 0;
+const videoClips = (snap) => snap.clips.filter((c) => c.track[0] === "V");
+// Highest video track with a footage (opaque) clip covering t, or null.
+function topFootageAt(snap, t) {
+  let top = null;
+  videoClips(snap).forEach((c) => { if (!isGraphic(c) && t >= c.start && t < c.end && (!top || trackNo(c) > trackNo(top))) top = c; });
+  return top;
+}
+// First time inside a footage clip where it is the visible picture (not buried under b-roll), or null.
+function firstVisibleTime(snap, c, step = 0.5) {
+  for (let t = c.start + 0.1; t < c.end; t += step) { const top = topFootageAt(snap, t); if (top && top.id === c.id) return t; }
+  return null;
+}
+// Cuts where the visible picture changes: [{ t, from, to }] with the clip names either side, in time order.
+function seams(snap, eps = 0.04) {
+  const times = new Set();
+  videoClips(snap).filter((c) => !isGraphic(c)).forEach((c) => { times.add(Number(c.start.toFixed(3))); times.add(Number(c.end.toFixed(3))); });
+  const out = [];
+  [...times].sort((a, b) => a - b).forEach((t) => {
+    if (t <= 0 || t >= snap.duration) return;
+    const a = topFootageAt(snap, t - eps), b = topFootageAt(snap, t + eps);
+    if ((a && a.id) === (b && b.id)) return;
+    if (out.length && t - out[out.length - 1].t < eps * 2) return;
+    out.push({ t, from: a ? a.track + " \"" + a.name + "\"" : "nothing", to: b ? b.track + " \"" + b.name + "\"" : "nothing" });
+  });
+  return out;
+}
+
+module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot, isGraphic, topFootageAt, firstVisibleTime, seams };

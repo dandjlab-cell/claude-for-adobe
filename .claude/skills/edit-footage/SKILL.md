@@ -15,7 +15,7 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 6. **Decide the story.** From the transcript: what to keep, in what order. This is the judgment step; write it down with `save_notes` (name: selects). Propose it in a few lines with timecodes and wait for the go.
 7. **Cut the talking head.** `keep_only` with the chosen ranges, then `remove_fillers` (ums, stutters, repeats; plan then apply), then `remove_silences` with `preset: "social"` (looser only if asked). Report the new duration.
 8. **Understand the b-roll.** For each b-roll clip, `preview_frames` at one moment (a quarter in) and write one line per clip: what it shows, motion, mood. `save_notes` (name: broll-notes). Reuse these notes next time instead of looking again.
-9. **Check what you made.** `snapshot_moments` after any reframe or b-roll placement; fix with `nudge_clip`; snapshot again until right.
+9. **Check what you made.** After any reframe or b-roll placement, follow the `reframe` skill's order: picture first on visible frames only (`snapshot_moments`, `layer_frames`, `seam_frames`, fix with `nudge_clip`), then captions, then graphics.
 10. **Lay the b-roll.** Where the words call for a picture, `place_broll` on V2, 3-6 s each, sound off, matching the shot to the sentence. Don't cover the first sentence or the last. Say what went where.
 11. **Captions (when asked).** `transcribe_timeline` on the finished cut, then `create_captions`. Plain native captions, editable in the Captions panel.
 12. **Report.** Two or three lines: what the piece is now, duration, and how to undo (Cmd+Z per step; the original sequence is untouched).

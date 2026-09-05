@@ -23,6 +23,25 @@ test("diff reports add, remove, move, trim, sequence switch", () => {
   assert.deepEqual(diffSnapshots(a, snap([], ["Seq B", "id2", 1920, 1080, 10])), ['active sequence is now "Seq B" (1920x1080, 10.00s)']);
 });
 
+test("visibility: top footage, first visible time, seams between cuts", () => {
+  const { topFootageAt, firstVisibleTime, seams, isGraphic } = require("../src/timeline.cjs");
+  // V1 talking head 0-20, V2 b-roll 2-6 and 10-12, V3 title png 0-3 (graphics never hide footage)
+  const s = snap([
+    { id: "th", track: "V1", name: "head", start: 0, end: 20, inPoint: 0, mediaPath: "/m/head.mov" },
+    { id: "b1", track: "V2", name: "broll1", start: 2, end: 6, inPoint: 0, mediaPath: "/m/b1.mov" },
+    { id: "b2", track: "V2", name: "broll2", start: 10, end: 12, inPoint: 0, mediaPath: "/m/b2.mov" },
+    { id: "ti", track: "V3", name: "title", start: 0, end: 3, inPoint: 0, mediaPath: "/m/title.png" },
+  ], ["Seq A", "id1", 1080, 1350, 20]);
+  assert.equal(isGraphic(s.clips[3]), true);
+  assert.equal(topFootageAt(s, 1).id, "th");
+  assert.equal(topFootageAt(s, 3).id, "b1");
+  assert.equal(topFootageAt(s, 25), null);
+  assert.equal(firstVisibleTime(s, s.clips[0]), 0.1);
+  const buried = snap([{ id: "x", track: "V1", name: "x", start: 0, end: 4, inPoint: 0, mediaPath: "/m/x.mov" }, { id: "y", track: "V2", name: "y", start: 0, end: 4, inPoint: 0, mediaPath: "/m/y.mov" }]);
+  assert.equal(firstVisibleTime(buried, buried.clips[0]), null);
+  assert.deepEqual(seams(s).map((x) => [x.t, x.from, x.to]), [[2, 'V1 "head"', 'V2 "broll1"'], [6, 'V2 "broll1"', 'V1 "head"'], [10, 'V1 "head"', 'V2 "broll2"'], [12, 'V2 "broll2"', 'V1 "head"']]);
+});
+
 test("summarizeChanges folds repeated clip ranges into one line", () => {
   const { summarizeChanges } = require("../src/timeline.cjs");
   const lines = ['removed A1 "clip.braw" 374.92s-433.60s', 'removed A1 "clip.braw" 433.60s-466.59s', 'removed A1 "clip.braw" 700.00s-712.47s', 'added V2 "title" 1.00s-2.00s', 'sequence duration 800.00s -> 710.00s'];
