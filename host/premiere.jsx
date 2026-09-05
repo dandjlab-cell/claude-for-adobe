@@ -540,6 +540,56 @@ var PCX = (function () {
     return ns.sequenceID + COL + ns.name + COL + w + "x" + h;
   }
 
+  // Premiere's Auto Reframe as an EFFECT on every footage clip of the active sequence (graphics skipped): the
+  // clip's own source is analysed and panned inside whatever frame the sequence has. No second sequence.
+  function autoReframeClips() {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var q = null; try { app.enableQE(); q = qe.project.getActiveSequence(); } catch (e0) {}
+    if (!q) return "ERR:QE unavailable";
+    var fx = null; try { fx = qe.project.getVideoEffectByName("Auto Reframe"); } catch (e1) {}
+    if (!fx) return "ERR:Auto Reframe effect not found by name";
+    var applied = 0, had = 0, skipped = 0, errs = [];
+    for (var t = 0; t < s.videoTracks.numTracks; t++) {
+      var tr = s.videoTracks[t], qt = null;
+      try { qt = q.getVideoTrackAt(t); } catch (e2) {}
+      if (!qt) { errs.push("V" + (t + 1) + ": no QE track"); continue; }
+      var c = 0;
+      for (var i = 0; i < qt.numItems; i++) {
+        var qi = null; try { qi = qt.getItemAt(i); } catch (e3) {}
+        if (!qi || String(qi.type) === "Empty") continue;
+        var cl = tr.clips[c]; c++;
+        if (!cl) continue;
+        var vi = ""; try { vi = String(cl.projectItem.getProjectColumnsMetadata()); } catch (e4) {}
+        if (isGraphicItem(cl.projectItem, vi)) { skipped++; continue; }
+        var has = false;
+        for (var k = 0; k < cl.components.numItems; k++) { if (cl.components[k].displayName === "Auto Reframe") { has = true; break; } }
+        if (has) { had++; continue; }
+        try { qi.addVideoEffect(fx); applied++; } catch (e5) { errs.push(cl.name + ": " + e5); }
+      }
+    }
+    // Read back: how many footage clips now carry the effect.
+    var verified = 0, footage = 0;
+    for (var t2 = 0; t2 < s.videoTracks.numTracks; t2++) {
+      var tr2 = s.videoTracks[t2];
+      for (var c2 = 0; c2 < tr2.clips.numItems; c2++) {
+        var cl2 = tr2.clips[c2], vi2 = ""; try { vi2 = String(cl2.projectItem.getProjectColumnsMetadata()); } catch (e6) {}
+        if (isGraphicItem(cl2.projectItem, vi2)) continue;
+        footage++;
+        for (var k2 = 0; k2 < cl2.components.numItems; k2++) { if (cl2.components[k2].displayName === "Auto Reframe") { verified++; break; } }
+      }
+    }
+    return "applied=" + applied + " already=" + had + " graphics_skipped=" + skipped + " footage=" + footage + " verified=" + verified + (errs.length ? " ERRORS: " + errs.join("; ") : "");
+  }
+
+  // Has Premiere finished analysing the active sequence's clips for effects like Auto Reframe? "1"/"0"/"unknown".
+  function analysisDone() {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    try { if (typeof s.isDoneAnalyzingForVideoEffects === "function") return s.isDoneAnalyzingForVideoEffects() ? "1" : "0"; } catch (e) {}
+    return "unknown";
+  }
+
   function findMotion(cl) {
     for (var k = 0; k < cl.components.numItems; k++) { var comp = cl.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") return comp; }
     return null;
@@ -711,7 +761,7 @@ var PCX = (function () {
   }
 
   return {
-    nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

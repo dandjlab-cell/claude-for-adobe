@@ -1066,71 +1066,13 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
   const parts = [], content = [];
   let step;
   const target = targetSize({ aspect, preset, width, height });
-  let sourceSeqId = null;
   if (bin) {
-    // Raw footage: Auto Reframe needs a sequence to read from, so one matching the footage is built and,
-    // once the target sequence exists, deleted again. The editor sees one sequence at the shape asked for.
+    // Raw footage goes straight into a sequence at the shape asked for. No intermediate sequence, ever.
     if (!name) name = path.basename(bin) + (target ? " " + target.label : "");
-    step = await createSequence({ name: name + (target && motion === "track" ? " source" : ""), bin, fps, preset: "match", insert_clips: true });
+    step = await createSequence({ name, bin, fps, width: target ? target.w : width, height: target ? target.h : height, preset: target ? undefined : "match", insert_clips: true });
     if (step.isError) return step;
-    sourceSeqId = project.sequenceId;
-  }
-  if (target && motion === "track") {
-    // Premiere's own Auto Reframe: subject tracking by Premiere, a new sequence at the target aspect. The panel's
-    // fill+centre is the static fallback. Graphics are then put back where the editor had them.
-    const before = await readTransforms().catch(() => null);
-    const newName = (project.sequence || "sequence").replace(/ \[Claude\]$/, "").replace(/ source$/, "") + " " + target.label + " [Claude]";
-    let raw = "", waited = 0;
-    while (true) {
-      raw = await host("autoReframe", String(target.num), String(target.den), "default", newName);
-      if (raw !== "ANALYZING" || waited >= 120) break;
-      setStatus("Premiere is analysing the footage for Auto Reframe… " + waited + "s");
-      await new Promise((r) => setTimeout(r, 3000)); waited += 3;
-    }
-    if (raw === "ANALYZING") return { text: "CLAUDE_FOR_ADOBE_ERROR:Premiere is still analysing the footage for Auto Reframe after 2 minutes; try again in a moment.", isError: true };
-    if (raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw) {
-      // Believe it only if the active timeline now has the asked shape.
-      await refreshProject();
-      const check = await readSnapshot().catch(() => null);
-      if (!check || !check.width || Math.abs(check.width / check.height - target.num / target.den) > 0.02) raw = "ERR:active sequence is " + (check ? check.width + "x" + check.height : "unknown") + " after Auto Reframe";
-    }
-    log("auto reframe: " + raw.split(COL).join(" | ").slice(0, 160));
-    if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) {
-      // Static fallback so the request still completes: the matching sequence (or the open one) is resized, fill and centre.
-      parts.push("Auto Reframe unavailable (" + raw.replace(/^ERR:/, "") + "); static reframe instead.");
-      step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
-      if (step.isError) return step;
-      parts.push(step.text);
-    } else {
-      const [newId, seqName, size] = raw.split(COL);
-      if (sourceSeqId) { try { await host("deleteSequence", sourceSeqId, newId); } catch (_) {} }
-      await refreshProject();
-      timeline = await readSnapshot().catch(() => timeline);
-      lastCopyId = null;
-      parts.push(sourceSeqId
-        ? "Built \"" + seqName + "\" (" + size + ") from the bin: laid in order, then Premiere Auto Reframe tracked the subject into the " + target.label + " frame; the temporary matching sequence was removed."
-        : "Premiere Auto Reframe made \"" + seqName + "\" (" + size + "), subject tracked by Premiere; the original is untouched.");
-      // Graphics: Auto Reframe treats them like footage; restore the editor's placement (fraction kept, scale by width).
-      if (before) {
-        const after = await readTransforms().catch(() => null);
-        if (after) {
-          const ratio = after.w / before.w, fixed = [];
-          for (const r of after.rows) {
-            const b = before.rows.find((x) => x.key === r.key); if (!b || !r.graphic || b.x === null) continue;
-            const wantScale = b.scale * ratio;
-            if (Math.abs(r.x - b.x) > 0.002 || Math.abs(r.y - b.y) > 0.002 || Math.abs(r.scale - wantScale) > 0.5) {
-              const clip = timeline.clips.find((c) => c.track === r.track && c.name === r.name);
-              if (!clip) continue;
-              const out = await host("nudgeClip", String(clip.start + 0.01), String(Number(r.track.slice(1)) - 1), "0", "0", "1", String(b.x), String(b.y), String(wantScale));
-              fixed.push(r.track + " \"" + r.name + "\": " + (out.indexOf("ERR:") === 0 ? out : "restored to " + b.x.toFixed(3) + "," + b.y.toFixed(3) + " scale " + wantScale.toFixed(1)));
-            }
-          }
-          parts.push("CHECK " + (fixed.some((f) => /ERR:/.test(f)) ? "FAIL" : "PASS") + ": " + (fixed.length ? fixed.length + " graphic(s) put back where the editor had them\n" + fixed.join("\n") : "graphics already where the editor had them"));
-        }
-      }
-    }
-  } else if (bin) {
-    const raw = await host("reframeActive", reframe);
+    parts.push(step.text);
+    const raw = await host("reframeActive", reframe); // footage fills the frame and is centred; graphics untouched
     if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return { text: "CLAUDE_FOR_ADOBE_ERROR:" + raw.replace(/^ERR:/, ""), isError: true };
     parts.push(raw);
     timeline = await readSnapshot().catch(() => timeline);
@@ -1138,6 +1080,21 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
     step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
     if (step.isError) return step;
     parts.push(step.text);
+  }
+  if (motion === "track") {
+    // Premiere's Auto Reframe as an effect on every footage clip: Premiere analyses each clip's SOURCE and pans
+    // it inside the frame it is in. Fill first so the frame is covered; the effect follows the subject.
+    const raw = await host("autoReframeClips");
+    log("auto reframe effect: " + raw.slice(0, 200));
+    if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) parts.push("Auto Reframe effect not applied (" + raw.replace(/^ERR:/, "") + "); the footage is filled and centred (static).");
+    else {
+      const m = /footage=(\d+) verified=(\d+)/.exec(raw);
+      const missing = m ? Number(m[1]) - Number(m[2]) : 0;
+      parts.push("Premiere Auto Reframe on the footage (" + raw.replace(/ ERRORS:.*/, "") + ")\nCHECK " + (missing ? "FAIL: " + missing + " footage clip(s) without the effect" + (/ERRORS:/.test(raw) ? "; " + raw.replace(/[\s\S]*ERRORS: /, "") : "") : "PASS: every footage clip carries Auto Reframe (read back); graphics untouched"));
+      let waited = 0, done = await host("analysisDone");
+      while (done === "0" && waited < 120) { setStatus("Premiere is analysing the footage for Auto Reframe… " + waited + "s"); await new Promise((r) => setTimeout(r, 3000)); waited += 3; done = await host("analysisDone"); }
+      if (done === "0") parts.push("Premiere was still analysing after 2 minutes; the frames below may not show the final tracking yet.");
+    }
   }
   const snap = await snapshotMoments({ max, max_px });
   if (snap.isError) return snap;
@@ -1194,7 +1151,7 @@ function targetSize({ aspect, preset, width, height }) {
   if (!(w && h) && aspect) { const sz = sizeFromAspect(aspect); if (sz) ({ width: w, height: h } = sz); }
   if (!(w && h)) return null;
   const g = (a, b) => (b ? g(b, a % b) : a), d = g(Number(w), Number(h));
-  return { num: Number(w) / d, den: Number(h) / d, label: aspect || (Number(w) / d) + "x" + (Number(h) / d) };
+  return { num: Number(w) / d, den: Number(h) / d, w: Number(w), h: Number(h), label: aspect || (Number(w) / d) + "x" + (Number(h) / d) };
 }
 // Motion Position/Scale of every video clip as numbers, keyed by track and index (see clipTransforms).
 async function readTransforms(sequence = "") {
@@ -1423,14 +1380,15 @@ function captionCuesForSequence(snap) {
     return cues.length ? cues : null;
   } catch (_) { return null; }
 }
-async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
+// Frames are temporary: read, handed to the model, deleted. `save: true` keeps a contact sheet next to the project.
+async function snapshotMoments({ max = 8, max_px = 512, save = false } = {}) {
   const card = addTool("snapshot_moments", "");
   card.open();
   let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
   const cues = captionCuesForSequence(snap);
   const moments = keyMoments(snap, Math.min(12, Math.max(1, Number(max))), cues);
   if (!moments.length) return err(card, "no video clips in the active sequence");
-  const dir = path.join(analysisDir(), "snapshots", (project.sequence || "sequence").replace(/[\/\\:]/g, "_"));
+  const dir = save ? path.join(analysisDir(), "snapshots", (project.sequence || "sequence").replace(/[\/\\:]/g, "_")) : path.join(os.tmpdir(), "claude-for-adobe-snap-" + Date.now().toString(36));
   fs.mkdirSync(dir, { recursive: true });
   const content = [], index = [];
   for (let i = 0; i < moments.length; i += 6) {
@@ -1452,14 +1410,16 @@ async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
         index.push("- " + tc(m.t) + " (" + tcode + ") " + m.why + " | on screen: " + layers + " -> " + name);
         content.push({ type: "text", text: tc(m.t) + " " + m.why + " | on screen: " + layers });
         content.push({ type: "image", data: fs.readFileSync(file).toString("base64"), mimeType: "image/jpeg" });
+        if (!save) { try { fs.unlinkSync(file); } catch (_) {} }
       } catch (error) { content.push({ type: "text", text: tc(m.t) + ": " + error.message }); }
       try { fs.unlinkSync(src); } catch (_) {}
     });
   }
-  fs.writeFileSync(path.join(dir, "index.md"), "# Snapshots of \"" + (project.sequence || "sequence") + "\"\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.width + "x" + snap.height + ", " + snap.duration.toFixed(1) + "s\n\n" + index.join("\n") + "\n");
-  card.done(index.join("\n") + "\nsaved in " + dir, true);
+  if (save) fs.writeFileSync(path.join(dir, "index.md"), "# Snapshots of \"" + (project.sequence || "sequence") + "\"\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.width + "x" + snap.height + ", " + snap.duration.toFixed(1) + "s\n\n" + index.join("\n") + "\n");
+  else { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+  card.done(index.map((l) => l.replace(/ -> \S+$/, "")).join("\n") + (save ? "\nsaved in " + dir : ""), true);
   setStatus("Thinking…");
-  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + ". Snapshots saved in " + dir + ". Order of operations: 1) PICTURE: judge only the PICTURE clip named per moment, for the shot alone (placed? head room? cropped?); fix with nudge_clip and its track; layer_frames per footage track and seam_frames before moving on. Do not move the subject to dodge captions or graphics. 2) CAPTIONS: the band is a Premiere track setting the panel cannot move yet; if a caption covers the subject, say so in one line (bottom safe-zone line, as low as it fits) and never move the subject for it. 3) GRAPHICS: layer_frames on each graphic track, then nudge_clip with that track into clear space. Then snapshot_moments again." });
+  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + "." + (save ? " Snapshots saved in " + dir + "." : "") + " Order of operations: 1) PICTURE: judge only the PICTURE clip named per moment, for the shot alone (placed? head room? cropped?); fix with nudge_clip and its track; layer_frames per footage track and seam_frames before moving on. Do not move the subject to dodge captions or graphics. 2) CAPTIONS: the band is a Premiere track setting the panel cannot move yet; if a caption covers the subject, say so in one line (bottom safe-zone line, as low as it fits) and never move the subject for it. 3) GRAPHICS: layer_frames on each graphic track, then nudge_clip with that track into clear space. Then snapshot_moments again." });
   return { content };
 }
 
@@ -1543,8 +1503,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
   { name: "keep_only", description: "Keep only the given time ranges of the active sequence and remove everything else (a selects-based cut: 'keep 0:12-0:41 and 1:03-1:30'). Deterministic. Plan with dry_run=true first.",
     inputSchema: { type: "object", properties: { ranges: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 } }, dry_run: { type: "boolean" } }, required: ["ranges"] } },
-  { name: "snapshot_moments", description: "The check pass. The timeline picks the moments (the first VISIBLE frame of every footage clip, midpoints of long ones, every graphic fully on), renders them, saves them as a contact sheet next to the project, and returns the images with what is on screen (PICTURE clip, hidden clips, GRAPHIC, CAPTION). Use after any reframe or b-roll placement, in the reframe order: picture first, then captions, then graphics.",
-    inputSchema: { type: "object", properties: { max: { type: "number", description: "moments to render, default 8, max 12" }, max_px: { type: "number" } } } },
+  { name: "snapshot_moments", description: "The check pass. The timeline picks the moments (the first VISIBLE frame of every footage clip, midpoints of long ones, every graphic fully on), renders them and returns the images with what is on screen (PICTURE clip, hidden clips, GRAPHIC, CAPTION). Frames are temporary (deleted after you see them) unless save is true. Use after any reframe or b-roll placement, in the reframe order: picture first, then captions, then graphics.",
+    inputSchema: { type: "object", properties: { max: { type: "number", description: "moments to render, default 8, max 12" }, max_px: { type: "number" }, save: { type: "boolean", description: "keep a contact sheet next to the project (default false)" } } } },
   { name: "frames_across", description: "Look closer: 2-6 frames evenly spaced across a time range (one clip, one graphic, the seconds around a suspect moment). Use when a snapshot leaves a question, e.g. is the head cropped for the whole clip or only at the start, does the graphic move, is the subject drifting. Answer the question from these frames before deciding.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, count: { type: "number", description: "default 4, max 6" }, max_px: { type: "number" }, solo_track: { type: "number", description: "1-based video track to render alone; default the composite." } }, required: ["start_seconds", "end_seconds"] } },
   { name: "nudge_clip", description: "Move or scale the video clip at a sequence time. Deltas: dx right, dy down as fractions of the frame (dx -0.1 = 10% left), scale as a multiplier (1.1 = 10% bigger). Absolutes: x, y as frame fractions (0.5,0.5 = centre) and scale_to as a percentage, for restoring a known placement in one call (from clip_transforms). Absolutes win over deltas. Undoable. Use with preview_frames: look, nudge, look again.",
@@ -1557,7 +1517,7 @@ const TOOL_DEFS = [
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
-  { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass using Premiere's own Auto Reframe (Premiere tracks the subject and keyframes the motion) into a new '<name> <aspect> [Claude]' sequence; the original is untouched. From a bin, the raw footage is laid in a matching sequence first. Graphics, titles and guides are put back where the editor had them. Then it returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = the panel's fill-and-centre instead of tracking.",
+  { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass: from a bin, a sequence at the asked shape is built straight from the raw footage (never an intermediate shape); an open timeline is resized on its working copy. Footage fills the frame and is centred, graphics/titles/guides keep their placement, then Premiere's own Auto Reframe effect goes on every footage clip (Premiere analyses each clip's SOURCE and follows the subject inside the frame). Returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = fill-and-centre only, no tracking.",
     inputSchema: { type: "object", properties: { aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9, 2.39:1 ..." }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, bin: { type: "string", description: "bin path of raw footage to build a NEW sequence from; omit to reframe the open timeline" }, name: { type: "string", description: "name for the new sequence (with bin); default '<bin> <aspect>'" }, motion: { type: "string", enum: ["track", "static"], description: "track (default): Premiere Auto Reframe follows the subject; static: fill and centre" }, reframe: { type: "string", enum: ["fill", "fit", "none"], description: "static mode only: fill (default) or fit" }, max: { type: "number", description: "moments to render, default 8" } } } },
   { name: "set_sequence_size", description: "Lower-level than reframe (use reframe). Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe the FOOTAGE: fill (scale to cover, centred; the default), fit, or none. Graphics, titles and guides are NOT re-placed: they keep their position fraction and their proportion (scale follows the frame width); the result lists each one's before/after. The panel saves and checkpoints first. Just do it when asked, then follow the reframe skill: picture first on visible frames (snapshot_moments, nudge_clip footage only where the crop cuts something), seam_frames, captions, graphics last and only if the crop pushed one out of the safe zone.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
