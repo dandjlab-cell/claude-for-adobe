@@ -32,8 +32,9 @@
     #selection-bar b { color: var(--accent); font-weight: 500; }
     #view-settings.active { overflow-y: auto; }
     .pulse { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .tabs { display: flex; border: 1px solid var(--line); }
-    .tabs button { border: 0; padding: 4px 12px; font-size: 12px; color: var(--ink-60); background: transparent; }
+    .tabs { display: flex; border: 1px solid var(--line); overflow-x: auto; white-space: nowrap; }
+    .tabs button { border: 0; padding: 4px 12px; font-size: 12px; color: var(--ink-60); background: transparent; flex: none; }
+    .tabs button .close { margin-left: 8px; opacity: .55; } .tabs button .close:hover { opacity: 1; }
     .tabs button:hover:not(.active) { background: var(--line-soft); color: var(--ink); }
     .tabs button.active { background: var(--accent); color: #fff; }
     .tabs button.attention:not(.active) { color: var(--accent); }
@@ -144,15 +145,16 @@
     <header>
       <span id="project-name">Reading project…</span>
       <span id="status">Starting…</span>
-      <nav class="tabs"><button id="tab-claude" type="button" class="active" title="Chat with Claude (your Claude Code login)">Claude</button><button id="tab-codex" type="button" title="Chat with Codex (your Codex login)">Codex</button><button id="tab-settings" type="button">Settings</button></nav>
+      <nav class="tabs" id="tabs"><button id="tab-settings" type="button">Settings</button></nav>
       <select id="agent" hidden><option value="claude" selected>Claude</option><option value="codex">Codex</option></select>
-      <select id="model" title="Model for new conversations">
+      <select id="model" title="Model of this chat (changing it restarts the chat with its history)">
         <option value="claude-fable-5-1">Fable 5.1</option>
         <option value="claude-opus-5" selected>Opus 5</option>
         <option value="claude-sonnet-5">Sonnet 5</option>
         <option value="claude-haiku-4-5">Haiku 4.5</option>
       </select>
-      <button id="restart" type="button" title="Start a new conversation">New</button>
+      <button id="new-claude" type="button" title="Open a new Claude chat in its own tab (your Claude Code login)">+ Claude</button>
+      <button id="new-codex" type="button" title="Open a new Codex chat in its own tab (your Codex login)">+ Codex</button>
     </header>
     <section id="view-chat" class="view active">
       <div id="selection-bar" class="mono"></div>

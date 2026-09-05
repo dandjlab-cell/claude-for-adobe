@@ -43,7 +43,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), restart: $("restart"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -335,7 +335,7 @@ async function runExtendScript({ summary = "", code = "" }) {
     const what = inspection.notUndoable.length ? "This cannot be undone with Cmd+Z (" + inspection.notUndoable.join(", ") + ")." : (inspection.mutating ? "This edits the project (Cmd+Z undoes it)." : "The guard could not prove this script is read-only.");
     const answer = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run", inspection.notUndoable.length ? "" : "Run all this session");
     if (!answer) return err(card, "The user declined to run this script. Ask before trying a different approach.");
-    if (answer === "all") { allowScriptsThisSession = true; addMessage("assistant muted", "Scripts run without asking until you press New. Actions Cmd+Z can't undo will still ask."); }
+    if (answer === "all") { allowScriptsThisSession = true; addMessage("assistant muted", "Scripts run without asking until you open a new chat. Actions Cmd+Z can't undo will still ask."); }
   }
   let note = inspection.warnings.map((w) => "[warning] " + w).join("\n");
   let copyNote = "";
@@ -1335,7 +1335,7 @@ function onEvent(event) {
     }
     if (event.isError) addMessage("assistant error", event.text || "Claude returned an error.");
     if (pendingProjectRestart) { pendingProjectRestart = false; setTimeout(() => restartSession(session && session.sessionId), 50); }
-    const used = (event.modelsUsed || []).map(modelLabel).join(" + ");
+    const used = (event.modelsUsed || []).filter((m) => [...ui.model.options].some((o) => o.value === m)).map(modelLabel).join(" + "); // helper models (haiku for housekeeping) are not shown
     setStatus("Ready" + (used ? " · " + used : "") + (event.costUsd ? " · $" + event.costUsd.toFixed(3) + " this session" : ""));
     setBusy(false);
     if (queuedNudges.length) nudge(queuedNudges.shift()); // a job finished while Claude was busy
@@ -1365,7 +1365,6 @@ function restartSession(resumeSessionId) {
     if (old) await old.stop();
     try {
       const skillsDir = path.join(extensionRoot, ".claude", "skills");
-      const agent = ui.agent.value;
       const common = {
         mcpUrl: mcp.url, mcpToken: mcp.token, model: ui.model.value, resumeSessionId,
         capabilities: (ui.dupSequence.checked ? "" : "WARNING: the editor turned off duplicate-sequence protection; edits hit the ORIGINAL sequence. Confirm before any edit. ") + "Whisper model: " + whisperState() + (modelReady() ? "" : " (transcribe_whisper will ask the user to download it, " + WHISPER_MODELS[currentModel()].mb + " MB, one time; Premiere's own Transcribe + Cmd+S is the alternative)") + ". Voice silence detection: " + (process.arch === "arm64" ? "ready" : "unavailable on this Mac, level method only") + ".",
@@ -1373,8 +1372,8 @@ function restartSession(resumeSessionId) {
         // quiet; if its process dies while parked, remember the thread so it resumes when the editor comes back.
         onEvent: (event) => {
           if (session === next) { onEvent(event); return; }
-          const rec = parked[agent];
-          if (rec && rec.session === next && event.kind === "exit") { rec.session = null; rec.resumeId = next.sessionId; }
+          const rec = chats.find((c) => c.session === next);
+          if (rec && event.kind === "exit") { rec.session = null; rec.resumeId = next.sessionId; }
         },
       };
       const next = ui.agent.value === "codex"
@@ -1709,18 +1708,18 @@ function writeAnalysis(name, text) {
   const f = path.join(dir, name.replace(/[\/\\:]/g, "_")); fs.writeFileSync(f, text); return f;
 }
 // Chat / Settings tabs.
-// Tabs: one chat per agent (Claude, Codex) plus Settings. The chat tabs ARE the agent switch.
-const tabAgent = { claude: document.getElementById("tab-claude"), codex: document.getElementById("tab-codex") }, tabSettings = document.getElementById("tab-settings");
+// Tabs: one per chat (any mix of Claude and Codex chats) plus Settings. "+ Claude" / "+ Codex" open a new chat.
+const tabsNav = document.getElementById("tabs"), tabSettings = document.getElementById("tab-settings");
+let chatView = true;
 function showView(which) {
-  document.getElementById("view-chat").classList.toggle("active", which === "chat");
-  document.getElementById("view-settings").classList.toggle("active", which === "settings");
-  Object.keys(tabAgent).forEach((a) => tabAgent[a].classList.toggle("active", which === "chat" && a === ui.agent.value));
-  tabSettings.classList.toggle("active", which === "settings");
-  if (which === "chat") ui.input.focus();
+  chatView = which === "chat";
+  document.getElementById("view-chat").classList.toggle("active", chatView);
+  document.getElementById("view-settings").classList.toggle("active", !chatView);
+  tabSettings.classList.toggle("active", !chatView);
+  renderTabs();
+  if (chatView) ui.input.focus();
 }
-Object.keys(tabAgent).forEach((a) => { tabAgent[a].onclick = () => { if (ui.agent.value !== a) { ui.agent.value = a; ui.agent.onchange(); } showView("chat"); }; });
 tabSettings.onclick = () => showView("settings");
-showView("chat");
 // Copy the log for support: system clipboard via pbcopy (reliable inside CEP), with the browser API as fallback.
 document.getElementById("copy-log").onclick = () => {
   const text = ui.log.textContent || "";
@@ -1731,31 +1730,71 @@ document.getElementById("clear-log").onclick = () => { ui.log.textContent = ""; 
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => restartSession(session && session.sessionId);
-ui.restart.onclick = () => { ui.messages.innerHTML = ""; allowScriptsThisSession = false; restartSession(); };
 ui.model.onchange = () => restartSession(session && session.sessionId);
-// Two chats, one per agent. Switching parks the chat on screen (its messages, session and model) and shows the
-// other agent's; the parked session stays alive, so the editor can go back and forth. Not while a turn is running.
-const parked = { claude: null, codex: null };
-let activeAgent = ui.agent.value;
-ui.agent.onchange = () => {
-  const to = ui.agent.value, from = activeAgent;
-  if (to === from) return;
-  if ((session && session.busy) || buttonJob) { ui.agent.value = from; addMessage("assistant error", "Wait for " + agentName(from) + " to finish (or press Stop) before switching."); return; }
-  parked[from] = { session, nodes: [...ui.messages.childNodes], model: ui.model.value, resumeId: null };
+// Chats are tabs. Each holds its own agent, model, messages and session; switching parks the one on screen
+// (its session stays alive) and shows another. New chats open next to it. Not while a turn is running.
+const chats = []; let chatSeq = 0; let activeChat = null;
+function renderTabs() {
+  const tabs = chats.map((c) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = c.label;
+    b.classList.toggle("active", chatView && c === activeChat);
+    b.classList.toggle("attention", c !== activeChat && c.nodes.length > 0); // a parked chat with content
+    b.title = agentName(c.agent) + " chat" + (c.model ? " · " + modelLabel(c.model) : "");
+    const x = document.createElement("span"); x.className = "close"; x.textContent = "×"; x.title = "Close this chat"; x.onclick = (e) => { e.stopPropagation(); closeChat(c); };
+    b.appendChild(x); b.onclick = () => showChat(c);
+    return b;
+  });
+  tabsNav.replaceChildren(...tabs, tabSettings);
+}
+function makeChat(agent) { chatSeq += 1; const c = { id: chatSeq, agent, label: agentName(agent) + " " + chatSeq, nodes: [], session: null, resumeId: null, model: null }; chats.push(c); return c; }
+const busyNow = () => !!((session && session.busy) || buttonJob);
+function parkActive() {
+  if (!activeChat) return;
+  Object.assign(activeChat, { session, nodes: [...ui.messages.childNodes], model: ui.model.value });
   session = null; liveMessage = null; lastPayload = "";
-  try { localStorage.setItem("agent", to); } catch (_) {}
-  activeAgent = to;
+}
+function showChat(c) {
+  if (c !== activeChat) {
+    if (busyNow()) { addMessage("assistant error", "Wait for " + agentName() + " to finish (or press Stop) before switching chats."); showView("chat"); return; }
+    parkActive();
+    activeChat = c;
+    ui.agent.value = c.agent; try { localStorage.setItem("agent", c.agent); } catch (_) {}
+    fillModels();
+    if (c.model && [...ui.model.options].some((o) => o.value === c.model)) ui.model.value = c.model;
+    ui.messages.replaceChildren(...c.nodes); c.nodes = [];
+    ui.messages.scrollTop = ui.messages.scrollHeight;
+    log("chat " + c.label + " shown (session " + (c.session ? "alive" : c.resumeId ? "resume " + c.resumeId : "new") + ")");
+    if (c.session) { session = c.session; c.session = null; setStatus("Ready · " + modelLabel(ui.model.value)); setBusy(false); }
+    else restartSession(c.resumeId || undefined);
+  }
+  showView("chat");
+}
+function newChat(agent) {
+  if (busyNow()) { addMessage("assistant error", "Wait for " + agentName() + " to finish (or press Stop) before opening a chat."); return; }
+  parkActive();
+  activeChat = makeChat(agent);
+  ui.agent.value = agent; try { localStorage.setItem("agent", agent); } catch (_) {}
   fillModels();
-  const p = parked[to]; parked[to] = null;
-  log("switched to " + to + ": parked " + from + " chat (" + parked[from].nodes.length + " nodes, session " + (parked[from].session ? "alive" : "none") + "); " + (p ? "restored " + p.nodes.length + " nodes, session " + (p.session ? "alive" : p.resumeId ? "resume " + p.resumeId : "none") : "new chat"));
-  // A tab holding a parked chat is marked, so it is obvious the conversation is still there.
-  tabAgent[from].classList.toggle("attention", parked[from].nodes.length > 0);
-  tabAgent[to].classList.remove("attention");
-  ui.messages.replaceChildren(...(p ? p.nodes : []));
-  ui.messages.scrollTop = ui.messages.scrollHeight;
-  if (p && p.model && [...ui.model.options].some((o) => o.value === p.model)) ui.model.value = p.model;
-  if (p && p.session) { session = p.session; setStatus("Ready · " + modelLabel(ui.model.value)); setBusy(false); return; }
-  restartSession(p ? p.resumeId : undefined);
-};
+  ui.messages.replaceChildren();
+  allowScriptsThisSession = false;
+  showView("chat");
+  restartSession();
+}
+async function closeChat(c) {
+  const s = c === activeChat ? session : c.session;
+  if (s && s.busy) { addMessage("assistant error", "That chat is still working; press Stop first."); return; }
+  const idx = chats.indexOf(c); if (idx < 0) return;
+  chats.splice(idx, 1);
+  if (c === activeChat) { activeChat = null; session = null; liveMessage = null; ui.messages.replaceChildren(); }
+  if (s) { try { await s.stop(); } catch (_) {} }
+  const next = chats[idx - 1] || chats[0];
+  if (next) showChat(next); else newChat(c.agent);
+  renderTabs();
+}
+ui.newClaude.onclick = () => newChat("claude");
+ui.newCodex.onclick = () => newChat("codex");
+// The first chat uses the agent from last time; boot() starts its session.
+activeChat = makeChat(ui.agent.value);
+showView("chat");
 
 boot();
