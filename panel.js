@@ -1909,7 +1909,13 @@ async function installDevPending() {
 }
 setVersionRow(devRepo ? "dev" : "v" + currentVersion(extensionRoot));
 ui.checkUpdates.onclick = () => (devRepo ? installDevPending() : (pendingUpdate ? installPending() : checkUpdates(true)));
-setTimeout(() => (devRepo ? checkDevUpdates(false) : checkUpdates(false)), 4000);
+// Checked at launch, then every 20 minutes and whenever the panel gets focus again (at most every 5 minutes),
+// so "up to date" never stays on screen after a release without anyone pressing the button.
+const recheck = () => (devRepo ? checkDevUpdates(false) : checkUpdates(false));
+setTimeout(recheck, 4000);
+setInterval(() => { if (!pendingUpdate) recheck(); }, 20 * 60 * 1000);
+let lastRecheck = Date.now();
+window.addEventListener("focus", () => { if (!pendingUpdate && Date.now() - lastRecheck > 5 * 60 * 1000) { lastRecheck = Date.now(); recheck(); } });
 // Persistent choice: ask before scripts (default on).
 try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } catch (_) {}
 ui.askScripts.onchange = () => { try { localStorage.setItem("askScripts", ui.askScripts.checked ? "yes" : "no"); } catch (_) {} };
