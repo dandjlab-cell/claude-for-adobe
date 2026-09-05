@@ -1059,14 +1059,64 @@ async function setSequenceSize({ preset, aspect, width, height, fps, reframe = "
 // The one call for any shape request: "make it 9:16", "4:5 from this bin", "16:9 version". Creates the sequence
 // from the bin (raw footage) or resizes the open one; footage fills, graphics stay; then the visible moments and
 // the seams come back as frames with a checklist. The model's only work afterwards is judging and nudging.
-async function reframeTool({ aspect, preset, width, height, fps, bin, name, reframe = "fill", max = 8, max_px = 512 } = {}) {
+async function reframeTool({ aspect, preset, width, height, fps, bin, name, reframe = "fill", motion = "track", max = 8, max_px = 512 } = {}) {
   const parts = [], content = [];
   let step;
+  const target = targetSize({ aspect, preset, width, height });
   if (bin) {
-    if (!name) { const sz = preset && SEQUENCE_PRESETS[preset] ? preset : (aspect || (width && height ? width + "x" + height : "")); name = path.basename(bin) + (sz ? " " + sz : ""); }
-    step = await createSequence({ name, bin, width, height, fps, preset, aspect, insert_clips: true });
+    // Raw footage: a sequence that matches the footage first, then the same reframe as an open timeline gets.
+    if (!name) name = path.basename(bin) + (target ? " " + target.label : "");
+    step = await createSequence({ name: name + (target ? " source" : ""), bin, fps, preset: "match", insert_clips: true });
     if (step.isError) return step;
     parts.push(step.text);
+  }
+  if (target && motion === "track") {
+    // Premiere's own Auto Reframe: subject tracking by Premiere, a new sequence at the target aspect. The panel's
+    // fill+centre is the static fallback. Graphics are then put back where the editor had them.
+    const before = await readTransforms().catch(() => null);
+    const newName = (project.sequence || "sequence").replace(/ \[Claude\]$/, "").replace(/ source$/, "") + " " + target.label + " [Claude]";
+    let raw = "", waited = 0;
+    while (true) {
+      raw = await host("autoReframe", String(target.num), String(target.den), "default", newName);
+      if (raw !== "ANALYZING" || waited >= 120) break;
+      setStatus("Premiere is analysing the footage for Auto Reframe… " + waited + "s");
+      await new Promise((r) => setTimeout(r, 3000)); waited += 3;
+    }
+    if (raw === "ANALYZING") return { text: "CLAUDE_FOR_ADOBE_ERROR:Premiere is still analysing the footage for Auto Reframe after 2 minutes; try again in a moment.", isError: true };
+    if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) {
+      if (bin || motion === "track") {
+        // Static fallback so the request still completes: fill and centre.
+        parts.push("Auto Reframe unavailable (" + raw.replace(/^ERR:/, "") + "); static reframe instead.");
+        step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
+        if (step.isError) return step;
+        parts.push(step.text);
+      }
+    } else {
+      const [, seqName, size] = raw.split(COL);
+      await refreshProject();
+      timeline = await readSnapshot().catch(() => timeline);
+      lastCopyId = null;
+      parts.push("Premiere Auto Reframe made \"" + seqName + "\" (" + size + "), subject tracked by Premiere; the original is untouched.");
+      // Graphics: Auto Reframe treats them like footage; restore the editor's placement (fraction kept, scale by width).
+      if (before) {
+        const after = await readTransforms().catch(() => null);
+        if (after) {
+          const ratio = after.w / before.w, fixed = [];
+          for (const r of after.rows) {
+            const b = before.rows.find((x) => x.key === r.key); if (!b || !r.graphic || b.x === null) continue;
+            const wantScale = b.scale * ratio;
+            if (Math.abs(r.x - b.x) > 0.002 || Math.abs(r.y - b.y) > 0.002 || Math.abs(r.scale - wantScale) > 0.5) {
+              const clip = timeline.clips.find((c) => c.track === r.track && c.name === r.name);
+              if (!clip) continue;
+              const out = await host("nudgeClip", String(clip.start + 0.01), String(Number(r.track.slice(1)) - 1), "0", "0", "1", String(b.x), String(b.y), String(wantScale));
+              fixed.push(r.track + " \"" + r.name + "\": " + (out.indexOf("ERR:") === 0 ? out : "restored to " + b.x.toFixed(3) + "," + b.y.toFixed(3) + " scale " + wantScale.toFixed(1)));
+            }
+          }
+          parts.push("CHECK " + (fixed.some((f) => /ERR:/.test(f)) ? "FAIL" : "PASS") + ": " + (fixed.length ? fixed.length + " graphic(s) put back where the editor had them\n" + fixed.join("\n") : "graphics already where the editor had them"));
+        }
+      }
+    }
+  } else if (bin) {
     const raw = await host("reframeActive", reframe);
     if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return { text: "CLAUDE_FOR_ADOBE_ERROR:" + raw.replace(/^ERR:/, ""), isError: true };
     parts.push(raw);
@@ -1083,6 +1133,15 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
   if (seam.content) content.push(...seam.content); else if (seam.text) content.push({ type: "text", text: seam.text });
   content.unshift({ type: "text", text: parts.join("\n") + "\n\nReframe done and checked. Now judge the PICTURE in each moment for the shot alone (placed? head room? cropped?) and fix only those with nudge_clip and its track; then the seams. Captions and graphics were not touched: say in one line if a caption or title sits badly, do not move the subject for them. Finish with snapshot_moments once more." });
   return { content };
+}
+// Target aspect as a reduced ratio plus a label, from aspect / preset / width+height.
+function targetSize({ aspect, preset, width, height }) {
+  let w = width, h = height;
+  if (preset && SEQUENCE_PRESETS[preset]) ({ width: w, height: h } = SEQUENCE_PRESETS[preset]);
+  if (!(w && h) && aspect) { const sz = sizeFromAspect(aspect); if (sz) ({ width: w, height: h } = sz); }
+  if (!(w && h)) return null;
+  const g = (a, b) => (b ? g(b, a % b) : a), d = g(Number(w), Number(h));
+  return { num: Number(w) / d, den: Number(h) / d, label: aspect || (Number(w) / d) + "x" + (Number(h) / d) };
 }
 // Motion Position/Scale of every video clip as numbers, keyed by track and index (see clipTransforms).
 async function readTransforms(sequence = "") {
@@ -1351,8 +1410,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" } }, required: ["at_seconds"] } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
-  { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass: creates the sequence from the bin (raw footage laid in order) or resizes the open timeline; footage fills the frame and is centred, graphics/titles/guides keep their placement; the panel checkpoints and works on a duplicate; then it returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. Prefer this over set_sequence_size + separate calls.",
-    inputSchema: { type: "object", properties: { aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9, 2.39:1 ..." }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, bin: { type: "string", description: "bin path of raw footage to build a NEW sequence from; omit to reframe the open timeline" }, name: { type: "string", description: "name for the new sequence (with bin); default '<bin> <aspect>'" }, reframe: { type: "string", enum: ["fill", "fit", "none"], description: "footage: fill (default) or fit" }, max: { type: "number", description: "moments to render, default 8" } } } },
+  { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass using Premiere's own Auto Reframe (Premiere tracks the subject and keyframes the motion) into a new '<name> <aspect> [Claude]' sequence; the original is untouched. From a bin, the raw footage is laid in a matching sequence first. Graphics, titles and guides are put back where the editor had them. Then it returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = the panel's fill-and-centre instead of tracking.",
+    inputSchema: { type: "object", properties: { aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9, 2.39:1 ..." }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, bin: { type: "string", description: "bin path of raw footage to build a NEW sequence from; omit to reframe the open timeline" }, name: { type: "string", description: "name for the new sequence (with bin); default '<bin> <aspect>'" }, motion: { type: "string", enum: ["track", "static"], description: "track (default): Premiere Auto Reframe follows the subject; static: fill and centre" }, reframe: { type: "string", enum: ["fill", "fit", "none"], description: "static mode only: fill (default) or fit" }, max: { type: "number", description: "moments to render, default 8" } } } },
   { name: "set_sequence_size", description: "Lower-level than reframe (use reframe). Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe the FOOTAGE: fill (scale to cover, centred; the default), fit, or none. Graphics, titles and guides are NOT re-placed: they keep their position fraction and their proportion (scale follows the frame width); the result lists each one's before/after. The panel saves and checkpoints first. Just do it when asked, then follow the reframe skill: picture first on visible frames (snapshot_moments, nudge_clip footage only where the crop cuts something), seam_frames, captions, graphics last and only if the crop pushed one out of the safe zone.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",

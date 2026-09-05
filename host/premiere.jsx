@@ -508,6 +508,21 @@ var PCX = (function () {
     return (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + " and centred; " + kept.length + " graphic(s) kept in place)" + (skipped ? ", " + skipped + " skipped" : "") + (kept.length ? "\n" + kept.join("\n") : "") : "");
   }
 
+  // Premiere's own Auto Reframe (Sensei subject tracking): a NEW sequence at the target aspect with the subject
+  // followed by generated Motion keyframes. Premiere may still be analysing the media; the caller polls.
+  function autoReframe(numerator, denominator, preset, newName) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    if (typeof s.autoReframeSequence !== "function") return "ERR:autoReframeSequence unavailable in this Premiere";
+    try { if (typeof s.isDoneAnalyzingForVideoEffects === "function" && !s.isDoneAnalyzingForVideoEffects()) return "ANALYZING"; } catch (e0) {}
+    var ns = null;
+    try { ns = s.autoReframeSequence(Number(numerator), Number(denominator), String(preset || "default"), String(newName), false); } catch (e) { return "ERR:autoReframeSequence " + e; }
+    if (!ns) return "ERR:autoReframeSequence returned nothing";
+    try { app.project.activeSequence = ns; } catch (e2) {}
+    var st = ns.getSettings();
+    return ns.sequenceID + COL + ns.name + COL + st.videoFrameWidth + "x" + st.videoFrameHeight;
+  }
+
   function findMotion(cl) {
     for (var k = 0; k < cl.components.numItems; k++) { var comp = cl.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") return comp; }
     return null;
@@ -678,7 +693,7 @@ var PCX = (function () {
   }
 
   return {
-    nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
