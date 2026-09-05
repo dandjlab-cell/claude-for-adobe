@@ -1066,6 +1066,7 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
   const parts = [], content = [];
   let step;
   const target = targetSize({ aspect, preset, width, height });
+  if (!target && !fps) return { text: "CLAUDE_FOR_ADOBE_ERROR:reframe needs the shape: aspect (9:16, 4:5, 1:1, 16:9), a preset (vertical, four_five, square, hd) or width+height. Nothing was changed.", isError: true };
   if (bin) {
     // Raw footage goes straight into a sequence at the shape asked for. No intermediate sequence, ever.
     if (!name) name = path.basename(bin) + (target ? " " + target.label : "");
@@ -1205,18 +1206,22 @@ async function fitRegionTool({ at_seconds, track, roi, roi_units = "px", target,
 // Where text appears on screen, from sampled frames read by macOS's built-in recognizer (bin/ocr). The
 // on-screen twin of find_in_transcript: "when does 'Codex' show up" answered by timecodes, not by looking.
 const OCR_BIN = path.join(extensionRoot, "bin", "ocr");
-async function findOnScreen({ text, start_seconds = 0, end_seconds, step_seconds = 1 } = {}) {
-  const card = addTool("find_on_screen \"" + text + "\"", "");
-  const needle = String(text || "").trim().toLowerCase();
-  if (!needle) return err(card, "text is required");
+const OCR_MAX_FRAMES = 30; // each frame is a Premiere render (seconds at 4K): keep a call under a minute
+async function findOnScreen({ text, texts, start_seconds = 0, end_seconds, step_seconds = 1 } = {}) {
+  // Several words in one pass: every frame is rendered and read once, whatever the number of words.
+  const needles = [].concat(texts || [], text || []).map((t) => String(t).trim()).filter(Boolean);
+  const card = addTool("find_on_screen " + needles.map((n) => "\"" + n + "\"").join(", "), "");
+  if (!needles.length) return err(card, "text (or texts[]) is required");
   if (!fs.existsSync(OCR_BIN)) return err(card, "text recognition helper missing (bin/ocr)");
   let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
   const a = Math.max(0, Number(start_seconds) || 0), b = Math.min(snap.duration, Number(end_seconds) > 0 ? Number(end_seconds) : snap.duration);
-  const step = Math.max(0.2, Number(step_seconds) || 1);
-  const times = []; for (let t = a; t < b && times.length < 120; t += step) times.push(Number(t.toFixed(3)));
+  let step = Math.max(0.2, Number(step_seconds) || 1);
+  const widened = (b - a) / step > OCR_MAX_FRAMES;
+  if (widened) step = Number(((b - a) / OCR_MAX_FRAMES).toFixed(2));
+  const times = []; for (let t = a; t < b && times.length <= OCR_MAX_FRAMES; t += step) times.push(Number(t.toFixed(3)));
   if (!times.length) return err(card, "empty range");
   card.open();
-  const hits = [];
+  const hits = []; // { needle, t, box, seen }
   for (let i = 0; i < times.length; i += 6) {
     const batch = times.slice(i, i + 6);
     card.progress(i, times.length, "reading frames ");
@@ -1230,16 +1235,17 @@ async function findOnScreen({ text, start_seconds = 0, end_seconds, step_seconds
     const byFile = new Map(out.split("\n").filter(Boolean).map((l) => { try { const j = JSON.parse(l); return [j.file, j.items || []]; } catch (_) { return [null, []]; } }));
     files.forEach((f, j) => {
       const items = f ? byFile.get(f) || [] : [];
-      const m = items.find((it) => String(it.text).toLowerCase().includes(needle));
-      if (m) hits.push({ t: batch[j], box: m.box, seen: m.text });
+      needles.forEach((needle) => { const m = items.find((it) => String(it.text).toLowerCase().includes(needle.toLowerCase())); if (m) hits.push({ needle, t: batch[j], box: m.box, seen: m.text }); });
       try { if (f) fs.unlinkSync(f); } catch (_) {}
     });
   }
-  const spans = [];
-  hits.forEach((h) => { const last = spans[spans.length - 1]; if (last && h.t - last.last <= step * 1.5) { last.last = h.t; last.n++; } else spans.push({ first: h.t, last: h.t, n: 1, box: h.box, seen: h.seen }); });
-  const lines = spans.map((s) => tc(s.first) + " to " + tc(Math.min(b, s.last + step)) + " (seen \"" + s.seen + "\" at frame x " + s.box[0].toFixed(2) + "-" + s.box[2].toFixed(2) + ", y " + s.box[1].toFixed(2) + "-" + s.box[3].toFixed(2) + ")");
-  const result = "\"" + text + "\" on screen (sampled every " + step + "s, " + times.length + " frames" + (times.length >= 120 ? ", capped at 120" : "") + "): " + (spans.length ? "\n" + lines.join("\n") : "not found")
-    + "\nTimes are timeline seconds; boxes are frame fractions, origin top-left. For the exact frame, call again with a smaller step_seconds around a span.";
+  const blocks = needles.map((needle) => {
+    const spans = [];
+    hits.filter((h) => h.needle === needle).forEach((h) => { const last = spans[spans.length - 1]; if (last && h.t - last.last <= step * 1.5) { last.last = h.t; last.n++; } else spans.push({ first: h.t, last: h.t, n: 1, box: h.box, seen: h.seen }); });
+    return "\"" + needle + "\": " + (spans.length ? "\n" + spans.map((s) => "  " + tc(s.first) + " to " + tc(Math.min(b, s.last + step)) + " (seen \"" + s.seen + "\" at frame x " + s.box[0].toFixed(2) + "-" + s.box[2].toFixed(2) + ", y " + s.box[1].toFixed(2) + "-" + s.box[3].toFixed(2) + ")").join("\n") : "not found");
+  });
+  const result = "On screen, sampled every " + step + "s from " + tc(a) + " to " + tc(b) + " (" + times.length + " frames" + (widened ? "; step widened to keep it to " + OCR_MAX_FRAMES + " frames, narrow the range for finer steps" : "") + "):\n" + blocks.join("\n")
+    + "\nTimes are timeline seconds; boxes are frame fractions, origin top-left. For the exact frame, call again with a small range around a span and a smaller step; put every word you need in texts[] so frames are read once.";
   card.done(result, true);
   setStatus("Thinking…");
   return { text: result };
@@ -1511,8 +1517,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" } }, required: ["at_seconds"] } },
   { name: "fit_region", description: "Place the action by arithmetic, not by eye: give a rectangle of the clip's SOURCE (the control, the panel, the face: source pixels, or fractions with roi_units 'fraction') and a target rectangle of the frame (a safe band from the project's safe-zone note; default the frame with a 5% margin). The tool computes the one position and scale that put the region inside the target (capped at max_scale, default 100 so text keeps its size), applies it, reads Premiere back and returns CHECK PASS/FAIL plus any blank canvas to disclose. Your judgment is only WHICH region; then frames_across to confirm.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track" }, roi: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, required: ["x0", "y0", "x1", "y1"] }, roi_units: { type: "string", enum: ["px", "fraction"] }, target: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, description: "frame fractions, e.g. the upper safe band" }, max_scale: { type: "number", description: "default 100 (never enlarge)" }, margin: { type: "number", description: "breathing room inside the target, fraction of it; default 0.03" } }, required: ["at_seconds", "track", "roi"] } },
-  { name: "find_on_screen", description: "The on-screen twin of find_in_transcript: when does a word or label appear on screen? Samples frames of the active sequence (every step_seconds, up to 120) and reads their text with macOS's built-in recognizer; returns the spans (timeline seconds) where the text is visible and where in the frame. Use it to find the beat in a screen recording ('when does it say Codex') instead of scanning frames by eye; then a smaller step around a span for the exact frame.",
-    inputSchema: { type: "object", properties: { text: { type: "string" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum" } }, required: ["text"] } },
+  { name: "find_on_screen", description: "The on-screen twin of find_in_transcript: when do words or labels appear on screen? Samples frames of the active sequence and reads their text with macOS's built-in recognizer; returns, per word, the spans (timeline seconds) where it is visible and where in the frame. Each frame is a Premiere render (seconds each), so: put EVERY word you need in texts[] (one pass reads them all), and narrow start/end before asking for a small step. At most 30 frames per call; the step widens to fit and the result says so.",
+    inputSchema: { type: "object", properties: { texts: { type: "array", items: { type: "string" }, description: "all the words/labels to look for, in one pass" }, text: { type: "string", description: "a single word (or use texts)" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum; widened automatically beyond 30 frames" } } } },
   // caption_style (captionStyleTool) is built and tested but not registered: it reopens the project, which is
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
@@ -1673,7 +1679,15 @@ async function boot() {
   try {
     await loadHostScript();
     // Every tool result's first line goes to the log, so a pasted log explains what the model saw, not just what it called.
-    mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: async (name, args) => { const t0 = Date.now(); const out = await TOOLS[name](args); const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; }, onLog: log });
+    // Tool calls run one at a time: Premiere's host is single-threaded, and two frame renders in flight at once
+    // (the model likes to call tools in parallel) only make both slow.
+    let toolQueue = Promise.resolve();
+    mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: (name, args) => {
+      const run = async () => { const t0 = Date.now(); const out = await TOOLS[name](args); const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
+      const next = toolQueue.then(run, run);
+      toolQueue = next.catch(() => {});
+      return next;
+    }, onLog: log });
     log("mcp server at " + mcp.url);
     await refreshProject();
     setInterval(() => { refreshProject().catch(() => {}); }, PROJECT_POLL_MS);
