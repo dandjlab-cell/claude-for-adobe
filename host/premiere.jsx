@@ -151,8 +151,14 @@ var PCX = (function () {
         s.setOutPoint(b);
         var d0 = num(s.end);
         q.extract();
-        if (num(s.end) === d0) errs.push(a.toFixed(2) + ": no change"); else done++;
-      } catch (e) { errs.push(a.toFixed(2) + ": " + e); }
+        var removed = (d0 - num(s.end)) / T, want = b - a;
+        if (num(s.end) === d0) errs.push(a.toFixed(2) + ": no change");
+        else if (Math.abs(removed - want) > 2 * F + 0.01) {
+          // Premiere took out something other than the range asked for: stop here, do not compound it.
+          errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": removed " + removed.toFixed(2) + "s instead of " + want.toFixed(2) + "s; stopped");
+          break;
+        } else done++;
+      } catch (e) { errs.push(a.toFixed(2) + ": " + e); break; }
     }
     var closed = closeGaps(q, s);
     for (var k = 0; k < saved.tracks.length; k++) {
@@ -358,9 +364,19 @@ var PCX = (function () {
   function createSequenceFromBin(binPath, name, width, height, fps, insertClips) {
     var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
     if (!bin) return "ERR:no bin " + binPath;
-    var items = [];
-    (function walk(b) { for (var i = 0; i < b.children.numItems; i++) { var c = b.children[i]; if (c.type === 2) walk(c); else { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp) items.push(c); } } })(bin);
-    if (!items.length) return "ERR:no media in " + (binPath || "root");
+    // Clips in a bin named like b-roll are never laid on V1 with the talking head: they wait for place_broll.
+    var items = [], brollSkipped = 0;
+    (function walk(b, inBroll) {
+      for (var i = 0; i < b.children.numItems; i++) {
+        var c = b.children[i];
+        if (c.type === 2) { walk(c, inBroll || /b[\s_-]?roll|cutaway/i.test(String(c.name))); continue; }
+        var mp = ""; try { mp = c.getMediaPath(); } catch (e) {}
+        if (!mp) continue;
+        if (inBroll) { brollSkipped++; continue; }
+        items.push(c);
+      }
+    })(bin, /b[\s_-]?roll|cutaway/i.test(String(bin.name || "")));
+    if (!items.length) return "ERR:no media in " + (binPath || "root") + (brollSkipped ? " apart from " + brollSkipped + " b-roll clip(s), which are placed with place_broll, not laid on V1" : "");
     var s = null;
     try { s = app.project.createNewSequenceFromClips(name, items, bin); } catch (e) { return "ERR:" + e; }
     if (!s) return "ERR:could not create the sequence";
@@ -379,7 +395,7 @@ var PCX = (function () {
     }
     var fin = s.getSettings();
     try { app.project.openSequence(s.sequenceID); } catch (e) {}
-    return s.sequenceID + "|" + s.name + "|" + fin.videoFrameWidth + "x" + fin.videoFrameHeight;
+    return s.sequenceID + "|" + s.name + "|" + fin.videoFrameWidth + "x" + fin.videoFrameHeight + "|" + items.length + "|" + brollSkipped;
   }
 
   // What the editor has highlighted right now: Project panel items (bins, clips) and timeline clips.

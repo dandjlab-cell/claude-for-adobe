@@ -493,9 +493,10 @@ async function applyCuts(card, cuts, dryRun, summary) {
   }
   let copyNote = "";
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
-  // Batches of 8, latest ranges first (earlier cuts must not shift later ones), with progress between batches.
+  // One range per host call, latest first (earlier cuts must not shift later ones); the duration is checked
+  // after every range and the first mismatch stops the rest, so a misbehaving extract cannot empty a timeline.
   const ordered = cuts.slice().sort((a, b) => b.start - a.start);
-  const BATCH = 8;
+  const BATCH = 1;
   let doneRanges = 0, ok = true, raw = "";
   const durBefore = (await readSnapshot().catch(() => ({ duration: NaN }))).duration;
   const planned = cuts.reduce((s, c) => s + Math.max(0, Math.min(c.end, durBefore || c.end) - c.start), 0);
@@ -509,6 +510,16 @@ async function applyCuts(card, cuts, dryRun, summary) {
     const m = /extracted=(\d+)\/(\d+)/.exec(raw);
     ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && !!m && m[1] === m[2] && raw.indexOf(" ERRORS:") < 0;
     if (m) doneRanges += Number(m[1]);
+    if (ok && Number.isFinite(durBefore)) {
+      // Independent check from the panel side after every range: the timeline shortened by the ranges so far
+      // and nothing else. The first mismatch stops the loop before it can compound.
+      const now = (await readSnapshot().catch(() => ({ duration: NaN }))).duration;
+      const plannedSoFar = ordered.slice(0, i + 1).reduce((s, c) => s + (c.end - c.start), 0);
+      if (Number.isFinite(now) && Math.abs((durBefore - now) - plannedSoFar) > (i + 1) * 0.05 + 0.1) {
+        ok = false;
+        raw = "after range " + batch[0].start.toFixed(2) + "-" + batch[0].end.toFixed(2) + "s the timeline is " + now.toFixed(2) + "s, expected " + (durBefore - plannedSoFar).toFixed(2) + "s; stopped before the remaining " + (ordered.length - i - 1) + " range(s). Cmd+Z " + (i + 1) + " time(s) restores it.";
+      }
+    }
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
@@ -922,10 +933,10 @@ async function createSequence({ name = "", bin = "", width, height, fps, preset,
   if (!name) return err(card, "name is required");
   const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false");
   if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
-  const [id, seqName, size] = raw.split("|");
+  const [id, seqName, size, laid, brollSkipped] = raw.split("|");
   await refreshProject();
   timeline = await readSnapshot().catch(() => timeline);
-  const text = "created sequence \"" + seqName + "\" (" + size + ")" + (insert_clips ? " with the bin's clips laid in order" : " empty") + "; it is now the active sequence. Undo: Cmd+Z.";
+  const text = "created sequence \"" + seqName + "\" (" + size + ")" + (insert_clips ? " with " + (laid || "the bin's") + " clip(s) laid in order on V1" : " empty") + (Number(brollSkipped) ? "; " + brollSkipped + " clip(s) from a b-roll bin were NOT laid: place them over the talking head with place_broll after the cut" : "") + "; it is now the active sequence. Undo: Cmd+Z.";
   card.done(text, true);
   return { text };
 }
