@@ -1746,7 +1746,13 @@ function renderTabs() {
   });
   tabsNav.replaceChildren(...tabs, tabSettings);
 }
-function makeChat(agent) { chatSeq += 1; const c = { id: chatSeq, agent, label: agentName(agent) + " " + chatSeq, nodes: [], session: null, resumeId: null, model: null }; chats.push(c); return c; }
+// Numbered by the lowest free number, so closing the last chat gives "Claude 1" again, not "Claude 9".
+function makeChat(agent) {
+  let num = 1; while (chats.some((c) => c.num === num)) num += 1;
+  chatSeq += 1;
+  const c = { id: chatSeq, num, agent, label: agentName(agent) + " " + num, nodes: [], session: null, resumeId: null, model: null };
+  chats.push(c); return c;
+}
 const busyNow = () => !!((session && session.busy) || buttonJob);
 function parkActive() {
   if (!activeChat) return;
