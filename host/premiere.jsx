@@ -158,16 +158,29 @@ var PCX = (function () {
         continue;
       }
       try {
-        // Never trust the in/out to have landed: on 2026-09-05 an inner range (23.49-23.87 on a 27 s take)
-        // extracted everything before it. Read both back; retry once in ticks; refuse to extract on a mismatch.
-        s.setInPoint(a);
-        s.setOutPoint(b);
-        var ri = num(s.getInPoint()), ro = num(s.getOutPoint());
-        if (Math.abs(ri - a) > F || Math.abs(ro - b) > F) {
-          try { s.setInPoint(String(Math.round(a * T))); s.setOutPoint(String(Math.round(b * T))); } catch (eT) {}
+        // Never trust the in/out to have landed. Isolated 2026-09-05 on five fresh copies: for particular out
+        // values (23.87 on a 27 s take) setOutPoint SILENTLY CLEARS THE IN POINT TO ZERO, so Extract then takes
+        // everything from the head. Same start with a different out is clean; one frame later is clean. So: set
+        // out first, then in, read both back, re-set whichever drifted (up to three passes), and refuse to
+        // extract unless both hold. A range whose out cannot hold is nudged one frame and retried.
+        var ri = 0, ro = 0, held = false;
+        for (var pass = 0; pass < 3 && !held; pass++) {
+          try {
+            if (pass === 0) { s.setOutPoint(b); s.setInPoint(a); }
+            else if (pass === 1) { s.setInPoint(a); s.setOutPoint(b); s.setInPoint(a); }
+            else { s.setOutPoint(String(Math.round(b * T))); s.setInPoint(String(Math.round(a * T))); }
+          } catch (eS) {}
           ri = num(s.getInPoint()); ro = num(s.getOutPoint());
+          held = Math.abs(ri - a) <= F && Math.abs(ro - b) <= F;
         }
-        if (Math.abs(ri - a) > F || Math.abs(ro - b) > F) {
+        if (!held && b - F > a + F * 0.5) {
+          // One frame off the out is inaudible on a silence edge and clears the bad value.
+          var b2 = b - F;
+          try { s.setOutPoint(b2); s.setInPoint(a); } catch (eS2) {}
+          ri = num(s.getInPoint()); ro = num(s.getOutPoint());
+          if (Math.abs(ri - a) <= F && Math.abs(ro - b2) <= F) { b = b2; held = true; errs.push(a.toFixed(2) + "-" + (b + F).toFixed(2) + ": that out point cleared the in point, so the out was moved one frame to " + b2.toFixed(2)); }
+        }
+        if (!held) {
           errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": in/out did not take (Premiere reports " + ri.toFixed(2) + "-" + ro.toFixed(2) + "); stopped before extracting");
           break;
         }
