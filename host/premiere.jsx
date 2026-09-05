@@ -28,6 +28,20 @@ var PCX = (function () {
     } catch (e) { return "ERR:" + e; }
   }
 
+  // Reload the current project from disk after the panel rewrote the file: close (already saved) and reopen the
+  // same path, then make the sequence that was active active again. Returns "ok|<path>|<activeSequenceId>".
+  function reloadProject(activeSequenceId) {
+    var p = app.project ? app.project.path : "";
+    if (!p) return "ERR:no project open";
+    try { app.project.closeDocument(0, 0); } catch (e0) { try { app.project.closeDocument(); } catch (e1) { return "ERR:closeDocument " + e1; } }
+    var ok = false;
+    try { ok = app.openDocument(p, true, true, true, false); } catch (e2) { return "ERR:openDocument " + e2; }
+    if (!ok || !app.project || app.project.path !== p) return "ERR:project did not reopen (" + (app.project ? app.project.path : "none") + ")";
+    if (activeSequenceId) { try { app.project.openSequence(activeSequenceId); } catch (e3) {} }
+    var s = app.project.activeSequence;
+    return "ok" + COL + p + COL + (s ? s.sequenceID : "");
+  }
+
   // Sequence header row + one row per clip: nodeId|track|name|startTicks|endTicks|inPointTicks|mediaPath
   function snapshot() {
     var s = seq();
@@ -698,7 +712,7 @@ var PCX = (function () {
 
   return {
     nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
-    projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
+    projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
   };

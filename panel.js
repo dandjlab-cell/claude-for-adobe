@@ -17,6 +17,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = 
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
+const { captionBlocks, captionStyle, updateCaptionStyles, readProjectXml, writeProjectXml } = require(path.join(extensionRoot, "src", "prproj.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, fillerRanges, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
 const { MODELS: WHISPER_MODELS, cachedWords, currentModel, ensureModel, installedModels, modelReady, setModel, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
@@ -1146,6 +1147,46 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
   content.unshift({ type: "text", text: parts.join("\n") + "\n\nReframe done and checked. Now judge the PICTURE in each moment for the shot alone (placed? head room? cropped?) and fix only those with nudge_clip and its track; then the seams. Captions and graphics were not touched: say in one line if a caption or title sits badly, do not move the subject for them. Finish with snapshot_moments once more." });
   return { content };
 }
+// Caption band position and size through the SAVED PROJECT FILE, the third way into Premiere: no panel API
+// reaches caption style, but every caption keeps it in a block of the .prproj (fields located by A/B diffs).
+// Save, checkpoint, rewrite in place, reopen the project, read the file back.
+async function captionStyleTool({ y, size } = {}) {
+  const wantY = y !== undefined && y !== null, wantSize = size !== undefined && size !== null;
+  const card = addTool("caption_style" + (wantY ? " y " + y : "") + (wantSize ? " size " + size : ""), "");
+  if (!project.path) return err(card, "no project file yet (save the project once)");
+  const report = (xml) => { const blocks = captionBlocks(xml); if (!blocks.length) throw new Error("no captions in the saved project file (create_captions first, and the project must be saved)"); const s = captionStyle(blocks[0].b64); return { blocks, s, line: blocks.length + " caption(s); zone " + s.zone + ", y offset " + (s.y === null ? "?" : s.y.toFixed(3)) + " (fraction of frame height from the zone's line, negative = up; default -0.053), size " + (s.size === null ? "?" : s.size) }; };
+  if (!wantY && !wantSize) {
+    try { await saveProject(); const { line } = report(readProjectXml(project.path)); const text = line + ". Read from the saved file."; card.done(text, true); return { text }; } catch (error) { return err(card, error.message); }
+  }
+  if (session && session.busy && buttonJob) return err(card, "a button job is running");
+  let cp = "", entry = null;
+  try { await saveProject(); entry = createCheckpoint(project.path, "before caption style"); renderCheckpoints(); cp = " File checkpoint " + entry.id + " saved first (this is a file rewrite, not undoable with Cmd+Z)."; }
+  catch (error) { return err(card, "Caption style blocked: a checkpoint was not possible: " + error.message); }
+  let changed = 0;
+  try {
+    const xml = readProjectXml(project.path);
+    report(xml);
+    const r = updateCaptionStyles(xml, { y: wantY ? Number(y) : undefined, size: wantSize ? Number(size) : undefined });
+    if (!r.changed) throw new Error("caption blocks found but none had the expected fields (a newer Premiere layout?)");
+    changed = r.changed;
+    writeProjectXml(project.path, r.xml);
+  } catch (error) { return err(card, "could not rewrite the project file: " + error.message); }
+  setStatus("Reopening the project…");
+  const out = await host("reloadProject", project.sequenceId || "");
+  if (out.indexOf("ERR:") === 0 || out === "EvalScript error.") return err(card, "file rewritten but the project did not reopen (" + out.replace(/^ERR:/, "") + "). Open it again from File > Open Recent; checkpoint " + (entry ? entry.id : "?") + " holds the previous version.");
+  await refreshProject();
+  timeline = await readSnapshot().catch(() => timeline);
+  let back = null; try { back = report(readProjectXml(project.path)).s; } catch (_) {}
+  const okY = !wantY || (back && back.y !== null && Math.abs(back.y - Number(y)) < 1e-4), okS = !wantSize || (back && back.size !== null && Math.abs(back.size - Number(size)) < 1e-3);
+  const ok = okY && okS;
+  const text = changed + " caption(s) restyled" + (wantY ? ", y offset " + Number(y).toFixed(3) : "") + (wantSize ? ", size " + size : "") + "; project reloaded from disk." + cp
+    + "\nCHECK " + (ok ? "PASS: values read back from the file" : "FAIL: file reads " + JSON.stringify(back))
+    + "\nMeasure where the band sits now: find_on_screen with a word from a caption (its box y is the band), or preview_frames at a caption time. Adjust once if needed.";
+  card.done(text, ok);
+  setStatus("Thinking…");
+  return { text: ok ? text : "CLAUDE_FOR_ADOBE_ERROR:" + text, isError: !ok };
+}
+
 // Target aspect as a reduced ratio plus a label, from aspect / preset / width+height.
 function targetSize({ aspect, preset, width, height }) {
   let w = width, h = height;
@@ -1418,7 +1459,7 @@ async function snapshotMoments({ max = 8, max_px = 512 } = {}) {
   fs.writeFileSync(path.join(dir, "index.md"), "# Snapshots of \"" + (project.sequence || "sequence") + "\"\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.width + "x" + snap.height + ", " + snap.duration.toFixed(1) + "s\n\n" + index.join("\n") + "\n");
   card.done(index.join("\n") + "\nsaved in " + dir, true);
   setStatus("Thinking…");
-  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + ". Snapshots saved in " + dir + ". Order of operations: 1) PICTURE: judge only the PICTURE clip named per moment, for the shot alone (placed? head room? cropped?); fix with nudge_clip and its track; layer_frames per footage track and seam_frames before moving on. Do not move the subject to dodge captions or graphics. 2) CAPTIONS: a track setting; if a caption covers the subject, say so in one line (bottom safe-zone line, as low as it fits). 3) GRAPHICS: layer_frames on each graphic track, then nudge_clip with that track into clear space. Then snapshot_moments again." });
+  content.push({ type: "text", text: "Frame " + snap.width + "x" + snap.height + ". Snapshots saved in " + dir + ". Order of operations: 1) PICTURE: judge only the PICTURE clip named per moment, for the shot alone (placed? head room? cropped?); fix with nudge_clip and its track; layer_frames per footage track and seam_frames before moving on. Do not move the subject to dodge captions or graphics. 2) CAPTIONS: caption_style moves the band (y, negative = up) and sets the size; put it at the bottom safe-zone line, as low as it fits, then measure with find_on_screen. 3) GRAPHICS: layer_frames on each graphic track, then nudge_clip with that track into clear space. Then snapshot_moments again." });
   return { content };
 }
 
@@ -1473,7 +1514,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, caption_style: captionStyleTool, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1512,6 +1553,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track" }, roi: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, required: ["x0", "y0", "x1", "y1"] }, roi_units: { type: "string", enum: ["px", "fraction"] }, target: { type: "object", properties: { x0: { type: "number" }, y0: { type: "number" }, x1: { type: "number" }, y1: { type: "number" } }, description: "frame fractions, e.g. the upper safe band" }, max_scale: { type: "number", description: "default 100 (never enlarge)" }, margin: { type: "number", description: "breathing room inside the target, fraction of it; default 0.03" } }, required: ["at_seconds", "track", "roi"] } },
   { name: "find_on_screen", description: "The on-screen twin of find_in_transcript: when does a word or label appear on screen? Samples frames of the active sequence (every step_seconds, up to 120) and reads their text with macOS's built-in recognizer; returns the spans (timeline seconds) where the text is visible and where in the frame. Use it to find the beat in a screen recording ('when does it say Codex') instead of scanning frames by eye; then a smaller step around a span for the exact frame.",
     inputSchema: { type: "object", properties: { text: { type: "string" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum" } }, required: ["text"] } },
+  { name: "caption_style", description: "Move the caption band and set caption size. Works through the saved project file (no panel API reaches caption style): the panel saves, takes a file checkpoint, rewrites every caption's style block in place, reopens the project (a few seconds) and reads the file back with a CHECK line. y = vertical offset from the zone's line as a fraction of frame height, negative = up: -0.053 is Premiere's default at the bottom, -0.29 is about a third of the way up. size = font size. No arguments = report the current values. Then measure with find_on_screen on a caption word and adjust once. Not undoable with Cmd+Z; the checkpoint is the undo.",
+    inputSchema: { type: "object", properties: { y: { type: "number", description: "vertical offset, fraction of frame height, negative = up" }, size: { type: "number", description: "font size" } } } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
   { name: "reframe", description: "THE call for any shape request: 'make it 9:16', '4:5', '16:9 version', or '9:16 from this bin'. One deterministic pass using Premiere's own Auto Reframe (Premiere tracks the subject and keyframes the motion) into a new '<name> <aspect> [Claude]' sequence; the original is untouched. From a bin, the raw footage is laid in a matching sequence first. Graphics, titles and guides are put back where the editor had them. Then it returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = the panel's fill-and-centre instead of tracking.",

@@ -28,7 +28,7 @@ A clip named like `*mask*`, `*placement*`, `*safe*`, `*guide*`, `*template*` tha
 1. `sequence_overview` says what exists. Text listed as a clip on a video track is a graphic and can be nudged. Text on screen that is absent from the overview is a Premiere caption track.
 2. Any one of these settles it: the text is not in `sequence_overview`; the selection line reports `"SyntheticCaption"`; the text shows at a time where no graphic clip exists; the text does not move when the suspected clip is nudged.
 3. A render is not evidence about a graphic. Caption text appears in every render, solo or not, because captions are not a video track. A solo frame that still shows a title means the solo was not honoured (the tool says so) or the title is a caption; read `clip_transforms`.
-4. The caption band is a Premiere track setting the panel cannot move. Say once where it should go (bottom safe-zone line, as low as it fits) and continue.
+4. The caption band moves with `caption_style` (y offset, negative = up; size), through the saved project file with a checkpoint. Measure the result with `find_on_screen` on a caption word.
 
 ## Inside a MOGRT
 
