@@ -1087,6 +1087,13 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
       await new Promise((r) => setTimeout(r, 3000)); waited += 3;
     }
     if (raw === "ANALYZING") return { text: "CLAUDE_FOR_ADOBE_ERROR:Premiere is still analysing the footage for Auto Reframe after 2 minutes; try again in a moment.", isError: true };
+    if (raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw) {
+      // Believe it only if the active timeline now has the asked shape.
+      await refreshProject();
+      const check = await readSnapshot().catch(() => null);
+      if (!check || !check.width || Math.abs(check.width / check.height - target.num / target.den) > 0.02) raw = "ERR:active sequence is " + (check ? check.width + "x" + check.height : "unknown") + " after Auto Reframe";
+    }
+    log("auto reframe: " + raw.split(COL).join(" | ").slice(0, 160));
     if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error." || !raw) {
       // Static fallback so the request still completes: the matching sequence (or the open one) is resized, fill and centre.
       parts.push("Auto Reframe unavailable (" + raw.replace(/^ERR:/, "") + "); static reframe instead.");

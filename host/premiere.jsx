@@ -518,9 +518,12 @@ var PCX = (function () {
     var ns = null;
     try { ns = s.autoReframeSequence(Number(numerator), Number(denominator), String(preset || "default"), String(newName), false); } catch (e) { return "ERR:autoReframeSequence " + e; }
     if (!ns) return "ERR:autoReframeSequence returned nothing";
-    try { app.project.activeSequence = ns; } catch (e2) {}
-    var st = ns.getSettings();
-    return ns.sequenceID + COL + ns.name + COL + st.videoFrameWidth + "x" + st.videoFrameHeight;
+    // Trust nothing: it must be a NEW sequence at the asked shape.
+    var st = ns.getSettings(), w = num(st.videoFrameWidth), h = num(st.videoFrameHeight);
+    if (ns.sequenceID === s.sequenceID) return "ERR:autoReframeSequence returned the same sequence";
+    if (!(w && h) || Math.abs(w / h - Number(numerator) / Number(denominator)) > 0.02) return "ERR:autoReframeSequence made " + w + "x" + h + ", not " + numerator + ":" + denominator;
+    try { app.project.activeSequence = ns; } catch (e2) { try { app.project.openSequence(ns.sequenceID); } catch (e3) {} }
+    return ns.sequenceID + COL + ns.name + COL + w + "x" + h;
   }
 
   function findMotion(cl) {
