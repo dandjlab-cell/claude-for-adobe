@@ -75,6 +75,9 @@ function summarizeChanges(lines) {
 
 // ---- What is visible: the picture is the topmost footage clip at a time; graphics sit over it. ----
 const isGraphic = (c) => !c.mediaPath || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(c.mediaPath);
+// A guide: a graphic named like a mask / placement / safe-zone template that spans (nearly) the whole sequence.
+// It is the editor's reference for where graphics may sit, never picture, never judged.
+const isGuide = (snap, c) => isGraphic(c) && /mask|placement|safe|guide|template/i.test(c.name || "") && (c.end - c.start) >= (snap.duration || 0) * 0.9;
 const trackNo = (c) => Number(String(c.track).slice(1)) || 0;
 const videoClips = (snap) => snap.clips.filter((c) => c.track[0] === "V");
 // Highest video track with a footage (opaque) clip covering t, or null.
@@ -103,4 +106,4 @@ function seams(snap, eps = 0.04) {
   return out;
 }
 
-module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot, isGraphic, topFootageAt, firstVisibleTime, seams };
+module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams };

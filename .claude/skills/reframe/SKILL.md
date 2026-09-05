@@ -21,8 +21,12 @@ The caption band is a Premiere track setting; the panel cannot move it. Say once
 
 ## 3. Graphics
 
-For each graphic track (V3, V4, V5...): `layer_frames` with that track. A layer that shows nothing alone is a mask or a hidden helper: leave it. Otherwise `nudge_clip` with that track into clear space: title zone at the top, never over a face, never in the caption zone, not overlapping another graphic. Check the composite with `preview_frames` at that time.
+`set_sequence_size` kept every graphic, title and guide where the editor put it (position fraction kept, scale following the frame width) and listed each one's before/after. Read that list and `clip_transforms`. Move a graphic only if the crop pushed it out of the safe zone, with `nudge_clip` and its track (absolute `x`/`y` from `clip_transforms`). A title over a face is the editor's call: say it in one line, do not move it unasked. Guides (a mask, placement or safe-zone clip spanning the sequence) are never judged and never moved. Never re-place a graphic by eye; see `graphics-and-titles.md`.
 
 ## 4. Report
 
 One line: what frame it is now, which copy it is on, and that the original is untouched.
+
+## Files
+
+- `graphics-and-titles.md`: what the tools keep for you, restoring by arithmetic when needed, the deterministic caption test, guides, MOGRT internals, and the 8-call fast path. Read it before reframing any sequence with graphic, title or guide tracks.

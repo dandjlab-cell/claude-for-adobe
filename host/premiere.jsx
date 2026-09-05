@@ -218,6 +218,8 @@ var PCX = (function () {
       }
     }
     var outs = [];
+    // Honest solo: the first row says how many of the other video tracks were actually hidden.
+    if (soloIdx >= 0) outs.push("SOLO" + COL + hidden.length + COL + (s.videoTracks.numTracks - 1));
     for (var i = 0; i < secs.length; i++) {
       s.setPlayerPosition(String(Math.round(secs[i] * T)));
       var b = base + "_" + i, ok = false, tc = "";
@@ -456,36 +458,70 @@ var PCX = (function () {
       s.setSettings(st);
     } catch (e) { return "ERR:setSettings " + e; }
     if (w === oldW && h === oldH) mode = "none";
-    var done = 0, skipped = 0;
+    var done = 0, skipped = 0, kept = [];
     if (mode === "fill" || mode === "fit") {
       for (var t = 0; t < s.videoTracks.numTracks; t++) {
         var tr = s.videoTracks[t];
         for (var c = 0; c < tr.clips.numItems; c++) {
           var cl = tr.clips[c];
           try {
-            var motion = null;
-            for (var k = 0; k < cl.components.numItems; k++) { var comp = cl.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") { motion = comp; break; } }
+            var motion = findMotion(cl);
             if (!motion) { skipped++; continue; }
             var pos = motion.properties[0], scale = motion.properties[1];
-            // Source frame from the clip's metadata: "1920 x 1080 (1.0)"; fall back to the old sequence size.
-            var srcW = oldW, srcH = oldH, vi = "";
-            try { vi = String(cl.projectItem.getProjectColumnsMetadata()); var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); } } catch (e0) {}
-            var fx = w / srcW, fy = h / srcH;
-            // Footage fills the new frame; graphics, stills and titles FIT it (never blown up past the edges).
-            var isGraphicClip = isGraphicItem(cl.projectItem, vi);
-            var factor = (mode === "fill" && !isGraphicClip) ? Math.max(fx, fy) : Math.min(fx, fy);
-            // Scale 100 = source pixels, so the target is absolute (source size vs the new frame); the clip's
-            // previous zoom is not carried over, which is what a reframe means.
-            scale.setValue(100 * factor, true);
-            var p = pos.getValue();
-            pos.setValue(isNormalized(p) ? [0.5, 0.5] : [w / 2, h / 2], true);
+            var p = pos.getValue(), norm = isNormalized(p), cur = num(scale.getValue());
+            var vi = ""; try { vi = String(cl.projectItem.getProjectColumnsMetadata()); } catch (e0) {}
+            if (isGraphicItem(cl.projectItem, vi)) {
+              // Graphics, titles and guides keep the editor's placement: same position fraction, scale scaled
+              // with the frame WIDTH (text and lower thirds are laid out against the width). Nothing is centred.
+              var fx0 = norm ? p[0] : p[0] / oldW, fy0 = norm ? p[1] : p[1] / oldH;
+              var ns = cur * (w / oldW);
+              scale.setValue(ns, true);
+              pos.setValue(norm ? [fx0, fy0] : [fx0 * w, fy0 * h], true);
+              kept.push("V" + (t + 1) + " \"" + cl.name + "\" position " + fx0.toFixed(3) + "," + fy0.toFixed(3) + " kept, scale " + cur.toFixed(1) + " -> " + ns.toFixed(1));
+            } else {
+              // Footage: source frame from the clip's metadata ("1920 x 1080 (1.0)"), else the old sequence size.
+              var srcW = oldW, srcH = oldH;
+              var m = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (m) { srcW = Number(m[1]); srcH = Number(m[2]); }
+              var fx = w / srcW, fy = h / srcH;
+              // Scale 100 = source pixels, so the target is absolute; the previous zoom is not carried over.
+              scale.setValue(100 * (mode === "fill" ? Math.max(fx, fy) : Math.min(fx, fy)), true);
+              pos.setValue(norm ? [0.5, 0.5] : [w / 2, h / 2], true);
+            }
             done++;
           } catch (e1) { skipped++; }
         }
       }
     }
     var fin = s.getSettings();
-    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + ", graphics fit, all centred)" + (skipped ? ", " + skipped + " skipped" : "") : "");
+    return "sequence is now " + fin.videoFrameWidth + "x" + fin.videoFrameHeight + (mode === "fill" || mode === "fit" ? "; " + done + " clip(s) reframed (footage " + mode + " and centred; " + kept.length + " graphic(s) kept in place)" + (skipped ? ", " + skipped + " skipped" : "") + (kept.length ? "\n" + kept.join("\n") : "") : "");
+  }
+
+  function findMotion(cl) {
+    for (var k = 0; k < cl.components.numItems; k++) { var comp = cl.components[k]; if (comp.displayName === "Motion" || comp.matchName === "AE.ADBE Motion") return comp; }
+    return null;
+  }
+
+  // Every video clip's Motion Position and Scale, for the active sequence or one named. Read-only.
+  // Rows: track|index|name|x|y|scale|graphic|startSec|endSec ; header: SEQ|name|w|h
+  function clipTransforms(seqName) {
+    var s = null;
+    if (seqName) { for (var i = 0; i < app.project.sequences.numSequences; i++) { if (app.project.sequences[i].name === seqName) { s = app.project.sequences[i]; break; } } if (!s) return "ERR:no sequence named " + seqName; }
+    else s = seq();
+    if (!s) return "ERR:no active sequence";
+    var st = s.getSettings(), W = num(st.videoFrameWidth), H = num(st.videoFrameHeight);
+    var rows = ["SEQ" + COL + s.name + COL + W + COL + H];
+    for (var t = 0; t < s.videoTracks.numTracks; t++) {
+      var tr = s.videoTracks[t];
+      for (var c = 0; c < tr.clips.numItems; c++) {
+        var cl = tr.clips[c];
+        var motion = findMotion(cl);
+        var x = "", y = "", sc = "";
+        if (motion) { try { var p = motion.properties[0].getValue(); var n = isNormalized(p); x = (n ? p[0] : p[0] / W).toFixed(4); y = (n ? p[1] : p[1] / H).toFixed(4); sc = num(motion.properties[1].getValue()).toFixed(2); } catch (e0) {} }
+        var vi = ""; try { vi = String(cl.projectItem.getProjectColumnsMetadata()); } catch (e1) {}
+        rows.push(["V" + (t + 1), c, cl.name, x, y, sc, isGraphicItem(cl.projectItem, vi) ? 1 : 0, (num(cl.start.ticks) / T).toFixed(2), (num(cl.end.ticks) / T).toFixed(2)].join(COL));
+      }
+    }
+    return rows.join(ROW);
   }
 
   // Graphics, stills, titles and alpha media FIT a new frame; footage and nested sequences FILL it. One place
@@ -590,7 +626,8 @@ var PCX = (function () {
   // Move a clip's picture inside the frame: the video clip under `atSec` on track V(trackIndex+1) (or the first
   // video track that has a clip there). dx/dy are fractions of the frame (+x right, +y down); scale is a multiplier
   // (1 = keep). Uses the Motion component; position units are detected (0-1 or pixels). Undo: Cmd+Z.
-  function nudgeClip(atSec, trackIndex, dx, dy, scaleMul) {
+  // Absolute targets (x, y as frame fractions; scaleAbs as a percentage) win over the deltas when given.
+  function nudgeClip(atSec, trackIndex, dx, dy, scaleMul, x, y, scaleAbs) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var at = Number(atSec), idx = Number(trackIndex);
@@ -612,16 +649,19 @@ var PCX = (function () {
     var pos = motion.properties[0], scale = motion.properties[1];
     var p = pos.getValue();
     var normalized = isNormalized(p);
-    var nx = normalized ? p[0] + Number(dx || 0) : p[0] + Number(dx || 0) * W;
-    var ny = normalized ? p[1] + Number(dy || 0) : p[1] + Number(dy || 0) * H;
+    var hasX = x !== undefined && x !== "" && x !== null, hasY = y !== undefined && y !== "" && y !== null;
+    var nx = hasX ? (normalized ? Number(x) : Number(x) * W) : (normalized ? p[0] + Number(dx || 0) : p[0] + Number(dx || 0) * W);
+    var ny = hasY ? (normalized ? Number(y) : Number(y) * H) : (normalized ? p[1] + Number(dy || 0) : p[1] + Number(dy || 0) * H);
     try { pos.setValue([nx, ny], true); } catch (e) { return "ERR:position " + e; }
-    var sm = Number(scaleMul);
-    if (sm && sm !== 1) { try { scale.setValue(num(scale.getValue()) * sm, true); } catch (e2) { return "ERR:scale " + e2; } }
-    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position " + (normalized ? nx.toFixed(3) + "," + ny.toFixed(3) + " (fraction)" : Math.round(nx) + "," + Math.round(ny) + " px") + (sm && sm !== 1 ? ", scale x" + sm : "");
+    var sm = Number(scaleMul), sa = (scaleAbs !== undefined && scaleAbs !== "" && scaleAbs !== null) ? Number(scaleAbs) : NaN;
+    var finalScale = num(scale.getValue());
+    if (!isNaN(sa) && sa > 0) { try { scale.setValue(sa, true); finalScale = sa; } catch (e3) { return "ERR:scale " + e3; } }
+    else if (sm && sm !== 1) { try { finalScale = finalScale * sm; scale.setValue(finalScale, true); } catch (e2) { return "ERR:scale " + e2; } }
+    return "nudged " + found.name + " on V" + (tIdx + 1) + ": position " + (normalized ? nx.toFixed(3) + "," + ny.toFixed(3) + " (fraction)" : Math.round(nx) + "," + Math.round(ny) + " px (" + (nx / W).toFixed(3) + "," + (ny / H).toFixed(3) + ")") + ", scale " + finalScale.toFixed(1);
   }
 
   return {
-    nudgeClip: nudgeClip, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    nudgeClip: nudgeClip, clipTransforms: clipTransforms, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

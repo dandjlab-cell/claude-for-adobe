@@ -33,6 +33,10 @@ test("visibility: top footage, first visible time, seams between cuts", () => {
     { id: "ti", track: "V3", name: "title", start: 0, end: 3, inPoint: 0, mediaPath: "/m/title.png" },
   ], ["Seq A", "id1", 1080, 1350, 20]);
   assert.equal(isGraphic(s.clips[3]), true);
+  const { isGuide } = require("../src/timeline.cjs");
+  const g = snap([{ id: "m", track: "V4", name: "shape_mask_text_placement.png", start: 0, end: 20, inPoint: 0, mediaPath: "/m/mask.png" }, { id: "t", track: "V5", name: "title.png", start: 0, end: 3, inPoint: 0, mediaPath: "/m/title.png" }], ["Seq A", "id1", 1080, 1350, 20]);
+  assert.equal(isGuide(g, g.clips[0]), true);
+  assert.equal(isGuide(g, g.clips[1]), false);
   assert.equal(topFootageAt(s, 1).id, "th");
   assert.equal(topFootageAt(s, 3).id, "b1");
   assert.equal(topFootageAt(s, 25), null);

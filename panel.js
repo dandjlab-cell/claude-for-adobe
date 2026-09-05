@@ -15,7 +15,7 @@ const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captio
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
-const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
+const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, fillerRanges, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
 const { MODELS: WHISPER_MODELS, cachedWords, currentModel, ensureModel, installedModels, modelReady, setModel, toPremiereTranscript, transcribe } = require(path.join(extensionRoot, "src", "whisper.cjs"));
@@ -418,7 +418,12 @@ async function previewFrames({ seconds = [], max_px = 512, solo_track, labels = 
   const raw = await host("frames", JSON.stringify(secs), base, solo >= 0 ? String(solo) : "");
   if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
   const content = [];
-  raw.split(ROW).forEach((row, i) => {
+  let rows = raw.split(ROW), soloNote = "";
+  if (rows[0] && rows[0].indexOf("SOLO" + COL) === 0) {
+    const [, hid, others] = rows.shift().split(COL);
+    soloNote = Number(hid) === Number(others) ? "" : "SOLO NOT HONOURED: only " + hid + " of " + others + " other video tracks could be hidden, so these frames are (partly) composites. Do not conclude anything about other layers from them; read clip_transforms instead.";
+  }
+  rows.forEach((row, i) => {
     const [b, ok, tc] = row.split(COL);
     const src = [b + ".png", b].find((f) => fs.existsSync(f));
     if (!src) { content.push({ type: "text", text: "frame " + i + " at " + secs[i] + "s: export failed (" + ok + ")" }); return; }
@@ -430,6 +435,8 @@ async function previewFrames({ seconds = [], max_px = 512, solo_track, labels = 
     } catch (error) { content.push({ type: "text", text: "frame " + i + ": " + error.message }); }
     fs.unlinkSync(src);
   });
+  if (soloNote) content.push({ type: "text", text: soloNote });
+  content.push({ type: "text", text: "Captions are a caption track, not a video track: they appear in every render, solo or not. That is expected and says nothing about graphics." });
   card.done(content.filter((c) => c.type === "text").map((c) => c.text).join("\n"), true);
   setStatus("Thinking…");
   return { content };
@@ -1080,15 +1087,30 @@ async function createCaptions({ max_words, max_chars = 32, max_lines, max_second
 }
 
 // Reframe check-and-fix: move a clip's picture by a fraction of the frame, optionally scale. Verify with preview_frames.
-async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1 } = {}) {
-  const card = addTool("nudge_clip @" + Number(at_seconds).toFixed(2) + "s dx " + dx + " dy " + dy + (scale !== 1 ? " scale x" + scale : ""), "");
+async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1, x, y, scale_to } = {}) {
+  const abs = [x !== undefined ? "x " + x : "", y !== undefined ? "y " + y : "", scale_to !== undefined ? "scale " + scale_to : ""].filter(Boolean).join(" ");
+  const card = addTool("nudge_clip @" + Number(at_seconds).toFixed(2) + "s " + (abs || "dx " + dx + " dy " + dy + (scale !== 1 ? " scale x" + scale : "")), "");
   if (!Number.isFinite(Number(at_seconds))) return err(card, "at_seconds is required");
   let copyNote = "";
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
-  const raw = await host("nudgeClip", String(at_seconds), String(track ? Number(track) - 1 : -1), String(dx), String(dy), String(scale));
+  const raw = await host("nudgeClip", String(at_seconds), String(track ? Number(track) - 1 : -1), String(dx), String(dy), String(scale), x === undefined ? "" : String(x), y === undefined ? "" : String(y), scale_to === undefined ? "" : String(scale_to));
   const ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && raw !== "";
   card.done(raw, ok);
   return { text: copyNote + raw + (ok ? "\nLook at preview_frames at this time to confirm before moving on." : ""), isError: !ok };
+}
+
+// Where every clip sits: Motion Position (frame fractions) and Scale, per video clip, for the active or a named
+// sequence. The ground truth for placement; read it instead of estimating from a frame.
+async function clipTransforms({ sequence = "" } = {}) {
+  const card = addTool("clip_transforms" + (sequence ? " \"" + sequence + "\"" : ""), "");
+  const raw = await host("clipTransforms", String(sequence || ""));
+  if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return err(card, raw.replace(/^ERR:/, ""));
+  const rows = raw.split(ROW);
+  const [, name, w, h] = rows[0].split(COL);
+  const lines = rows.slice(1).map((r) => { const [track, idx, clipName, px, py, sc, graphic, a, b] = r.split(COL); return track + " #" + idx + " \"" + clipName + "\" " + tc(Number(a)) + "-" + tc(Number(b)) + (graphic === "1" ? " GRAPHIC" : " footage") + (px ? " position " + px + "," + py + " scale " + sc : " (no Motion)"); });
+  const text = "\"" + name + "\" " + w + "x" + h + " (positions are frame fractions: 0.5,0.5 = centre; scale is % of native)\n" + lines.join("\n");
+  card.done(text, true);
+  return { text };
 }
 
 // Snapshot pass: the timeline decides the moments (the first VISIBLE frame of every footage clip, midpoints of
@@ -1097,7 +1119,7 @@ async function nudgeClip({ at_seconds, track, dx = 0, dy = 0, scale = 1 } = {}) 
 function layersAt(snap, t, cues) {
   const top = topFootageAt(snap, t);
   const on = snap.clips.filter((c) => c.track[0] === "V" && t >= c.start && t < c.end && (!top || c.id !== top.id)).sort((a, b) => a.track.localeCompare(b.track));
-  const parts = [top ? "PICTURE " + top.track + " \"" + top.name + "\"" : "no picture"].concat(on.map((c) => c.track + " " + (isGraphic(c) ? "GRAPHIC " : "hidden ") + "\"" + c.name + "\""));
+  const parts = [top ? "PICTURE " + top.track + " \"" + top.name + "\"" : "no picture"].concat(on.map((c) => c.track + " " + (isGuide(snap, c) ? "GUIDE " : isGraphic(c) ? "GRAPHIC " : "hidden ") + "\"" + c.name + "\""));
   const cue = cues && cues.find((q) => t >= q.start && t <= q.end);
   if (cue) parts.push("CAPTION \"" + cue.lines.join(" ") + "\"");
   return parts.join(" + ");
@@ -1105,6 +1127,7 @@ function layersAt(snap, t, cues) {
 function keyMoments(snap, max = 12, cues = null) {
   const pts = [];
   snap.clips.filter((c) => c.track[0] === "V").sort((a, b) => a.start - b.start).forEach((c) => {
+    if (isGuide(snap, c)) return; // the editor's safe-zone template, never judged as picture
     if (isGraphic(c)) pts.push({ t: Math.min(c.end - 0.05, c.start + Math.min(1.5, (c.end - c.start) / 2)), why: "graphic \"" + c.name + "\" (" + c.track + ") fully on" });
     else {
       // Only where this shot IS the picture; a talking head buried under b-roll is judged where it shows.
@@ -1223,7 +1246,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1256,9 +1279,11 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { max: { type: "number", description: "moments to render, default 8, max 12" }, max_px: { type: "number" } } } },
   { name: "frames_across", description: "Look closer: 2-6 frames evenly spaced across a time range (one clip, one graphic, the seconds around a suspect moment). Use when a snapshot leaves a question, e.g. is the head cropped for the whole clip or only at the start, does the graphic move, is the subject drifting. Answer the question from these frames before deciding.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, count: { type: "number", description: "default 4, max 6" }, max_px: { type: "number" }, solo_track: { type: "number", description: "1-based video track to render alone; default the composite." } }, required: ["start_seconds", "end_seconds"] } },
-  { name: "nudge_clip", description: "After a reframe: move the picture of the video clip at a sequence time by a fraction of the frame (dx right, dy down; e.g. dx -0.1 pushes it left by 10% of the width) and optionally scale it (1.1 = 10% bigger). Use with preview_frames: look, nudge, look again.",
-    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" } }, required: ["at_seconds"] } },
-  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe every clip: fill (scale up to cover, centred; the default for 9:16 from 16:9), fit, or none. The panel saves and checkpoints first. Just do it when asked. THEN LOOP: snapshot_moments (it picks the moments); nudge_clip anything off-centre, cropped or misplaced; snapshot_moments again; repeat until all moments are right. Do not stop at describing what needs repositioning.",
+  { name: "nudge_clip", description: "Move or scale the video clip at a sequence time. Deltas: dx right, dy down as fractions of the frame (dx -0.1 = 10% left), scale as a multiplier (1.1 = 10% bigger). Absolutes: x, y as frame fractions (0.5,0.5 = centre) and scale_to as a percentage, for restoring a known placement in one call (from clip_transforms). Absolutes win over deltas. Undoable. Use with preview_frames: look, nudge, look again.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track (V3 = 3). Required when more than one clip is at that time, e.g. a graphic over the subject; the tool lists them if you leave it out" }, dx: { type: "number" }, dy: { type: "number" }, scale: { type: "number" }, x: { type: "number", description: "absolute x, frame fraction" }, y: { type: "number", description: "absolute y, frame fraction" }, scale_to: { type: "number", description: "absolute scale, percent of native" } }, required: ["at_seconds"] } },
+  { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
+    inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
+  { name: "set_sequence_size", description: "Change the active sequence's frame size (any aspect: 9:16, 4:5, 1:1, 16:9, 2.39:1; or a preset; or width+height) and optionally fps, then reframe the FOOTAGE: fill (scale to cover, centred; the default), fit, or none. Graphics, titles and guides are NOT re-placed: they keep their position fraction and their proportion (scale follows the frame width); the result lists each one's before/after. The panel saves and checkpoints first. Just do it when asked, then follow the reframe skill: picture first on visible frames (snapshot_moments, nudge_clip footage only where the crop cuts something), seam_frames, captions, graphics last and only if the crop pushed one out of the safe zone.",
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
@@ -1347,7 +1372,7 @@ function restartSession(resumeSessionId) {
       };
       const next = ui.agent.value === "codex"
         ? createCodexSession({ ...common, skillsDir })
-        : createClaudeSession({ ...common, cwd: extensionRoot, readPaths: [analysisDir(), skillsDir] });
+        : createClaudeSession({ ...common, cwd: extensionRoot, readPaths: [...new Set([analysisDir(), skillsDir].flatMap((p) => { try { return [p, fs.realpathSync(p)]; } catch (_) { return [p]; } }))] }); // the dev panel is a symlink: allow the real path too
       if (gen !== sessionGen) { next.stop(); return; }
       session = next;
       setStatus("Ready · " + ui.model.value);
