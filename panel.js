@@ -1792,7 +1792,11 @@ async function boot() {
     // (the model likes to call tools in parallel) only make both slow.
     let toolQueue = Promise.resolve();
     mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: (name, args) => {
-      const run = async () => { const t0 = Date.now(); const out = await TOOLS[name](args); const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
+      // The rhythm rules monitor every edit rather than waiting to be asked: if a tool changed the timeline, the
+      // cut is checked (holes on V1, flash gaps and blinks on the b-roll tracks, scroll stop on vertical) and any
+      // finding is appended to that tool's own result, where the model cannot miss it.
+      const run = async () => { const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline); const out = await TOOLS[name](args);
+        if (timelineFingerprint(timeline) !== fpBefore) { const note = require("./src/rhythm.cjs").rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
       const next = toolQueue.then(run, run);
       toolQueue = next.catch(() => {});
       return next;

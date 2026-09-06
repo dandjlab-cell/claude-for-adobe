@@ -16,7 +16,12 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 7. **Cut the talking head.** `keep_only` with the chosen ranges, then `remove_fillers` (ums, stutters, repeats; plan then apply), then `remove_silences` with `preset: "social"` (looser only if asked). Report the new duration.
 8. **Understand the b-roll.** For each b-roll clip, `preview_frames` at one moment (a quarter in) and write one line per clip: what it shows, motion, mood. `save_notes` (name: broll-notes). Reuse these notes next time instead of looking again.
 9. **Check what you made.** After any reframe or b-roll placement, follow the `reframe` skill's order: picture first on visible frames only (`snapshot_moments`, `layer_frames`, `seam_frames`, fix with `nudge_clip`), then captions, then graphics.
-10. **Lay the b-roll.** Where the words call for a picture, `place_broll` on V2, 3-6 s each, sound off, matching the shot to the sentence. Don't cover the first sentence or the last. Say what went where.
+10. **Lay the b-roll, to a rhythm.** Where the words call for a picture, `place_broll` on V2, 3-6 s each, sound off, matching the shot to the sentence. Don't cover the last sentence. The rhythm rules are not preferences and the panel checks every edit against them, reporting any breach in the tool's own result:
+    - **Never leave a few frames of face between two b-roll clips.** A gap under half a second reads as a flicker. Either hold the talking head for at least half a second, or extend the earlier clip so the two meet.
+    - **Nothing on screen for less than a second.** Under that nobody reads it. Lengthen it or drop it.
+    - **Vertical is a scroll stop.** If the video is taller than it is wide and b-roll exists, something must move inside the first second. The face alone rarely holds an open on social.
+    - **No holes on V1.** Black between talking-head moments is a bug in the cut, not a beat. Fix it before judging anything else.
+    A RHYTHM block in a tool result is work to do, not a note. Fix it in the same turn and say what you changed.
 11. **Captions (when asked).** `transcribe_timeline` on the finished cut, then `create_captions`. Plain native captions, editable in the Captions panel.
 12. **Report.** Two or three lines: what the piece is now, duration, and how to undo (Cmd+Z per step; the original sequence is untouched).
 
