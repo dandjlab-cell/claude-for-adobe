@@ -1010,6 +1010,43 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
   return { text: copyNote + raw, isError: !ok };
 }
 
+// What macOS can see of the speaker across a span: face geometry and capture quality per frame, with the other
+// video tracks hidden so b-roll cannot cover the face being judged. Read-only; frames are deleted after reading.
+const FACE_MAX_FRAMES = 24;
+async function speakerCheck({ start_seconds, end_seconds, step_seconds = 0.5, track = 1 } = {}) {
+  const card = addTool("speaker_check " + Number(start_seconds).toFixed(2) + "-" + Number(end_seconds).toFixed(2) + "s V" + track, "");
+  if (!fs.existsSync(OCR_BIN)) return err(card, "vision helper missing (bin/ocr)");
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const a = Math.max(0, Number(start_seconds) || 0), b = Math.min(snap.duration, Number(end_seconds));
+  if (!(b > a)) return err(card, "end_seconds must be greater than start_seconds");
+  let step = Math.max(0.1, Number(step_seconds) || 0.5);
+  if ((b - a) / step > FACE_MAX_FRAMES) step = Number(((b - a) / FACE_MAX_FRAMES).toFixed(2));
+  const times = []; for (let t = a; t < b && times.length < FACE_MAX_FRAMES; t += step) times.push(Number(t.toFixed(3)));
+  if (!times.length) return err(card, "empty range");
+  card.open();
+  const { readFrame, summarise } = require("./src/face.cjs");
+  const rows = [];
+  for (let i = 0; i < times.length; i += 6) {
+    const batch = times.slice(i, i + 6);
+    card.progress(i, times.length, "reading the speaker ");
+    const base = path.join(os.tmpdir(), "claude-for-adobe-face-" + Date.now().toString(36));
+    const raw = await host("frames", JSON.stringify(batch), base, String(Math.max(0, Number(track) - 1)));
+    if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
+    const files = raw.split(ROW).map((row) => { const [f] = row.split(COL); return [f + ".png", f].find((p) => fs.existsSync(p)) || null; });
+    let out = "";
+    try { out = require("node:child_process").execFileSync(OCR_BIN, ["--faces", ...files.filter(Boolean)], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }); } catch (error) { return err(card, "face reading failed: " + error.message); }
+    const byFile = new Map(out.split("\n").filter(Boolean).map((l) => { try { const j = JSON.parse(l); return [j.file, j]; } catch (_) { return [null, null]; } }));
+    files.forEach((f, j) => { rows.push(readFrame(f ? byFile.get(f) : null, batch[j])); try { if (f) fs.unlinkSync(f); } catch (_) {} });
+  }
+  const sum = summarise(rows);
+  const perFrame = rows.map((r) => r.face
+    ? r.t.toFixed(2) + "s  facing " + (r.facing === null ? "?" : r.facing.toFixed(3)) + "  eyes " + r.eyes.toFixed(2) + "  mouth " + r.mouth.toFixed(2) + "  quality " + (r.quality === null ? "?" : r.quality.toFixed(2)) + "  face width " + r.width.toFixed(2) + "  " + r.notes.join(", ")
+    : r.t.toFixed(2) + "s  no face").join("\n");
+  const text = "V" + track + " alone, " + a.toFixed(2) + "-" + b.toFixed(2) + "s every " + step + "s (facing: 0 is square to the lens, over 0.11 is turned away)\n" + perFrame + "\n\n" + sum.text;
+  card.done(text, true);
+  return { text };
+}
+
 // A named transition (default Morph Cut) on cuts of one track, on the working copy, with a transition-count CHECK.
 async function morphCut({ seams, all_seams = false, track = 1, transition = "Morph Cut", frames = 12 } = {}) {
   const card = addTool("morph_cut " + transition + " V" + track + (all_seams ? " all seams" : " @" + (seams || []).map((x) => Number(x).toFixed(2)).join(", ")), "");
@@ -1581,7 +1618,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1630,6 +1667,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "speaker_check", description: "Is the speaker worth staying on here? Renders frames across a span with the b-roll tracks hidden and reads the face with macOS's Vision framework: whether the head is square to the lens, eyes open, mouth mid-word, how big the face is, and Apple's own capture quality. Use it before deciding to hold on the face for a key line, and before covering one. Measured geometry only, no mood: energy comes from the voice.",
+    inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 0.5" }, track: { type: "number", description: "1-based video track holding the speaker, default 1" } }, required: ["start_seconds", "end_seconds"] } },
   { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
     inputSchema: { type: "object", properties: { seams: { type: "array", items: { type: "number" }, description: "cut times in seconds (end of the outgoing clip)" }, all_seams: { type: "boolean", description: "every cut on the track where clips touch" }, track: { type: "number", description: "1-based video track, default 1" }, transition: { type: "string", description: "default Morph Cut" }, frames: { type: "number", description: "duration in frames, default 12" } }, required: [] } },
   { name: "subject_path", description: "Where Premiere's Auto Reframe put the subject over time: every keyframed parameter on every clip of one video track, sampled (time=x,y in frame fractions). Read this instead of judging head room from frames. Read-only. Key times are as Premiere returns them; the result says whether they read as sequence or clip time.",

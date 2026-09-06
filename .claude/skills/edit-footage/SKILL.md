@@ -16,6 +16,12 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 7. **Cut the talking head.** `keep_only` with the chosen ranges, then `remove_fillers` (ums, stutters, repeats; plan then apply), then `remove_silences` with `preset: "social"` (looser only if asked). Report the new duration.
 8. **Understand the b-roll.** For each b-roll clip, `preview_frames` at one moment (a quarter in) and write one line per clip: what it shows, motion, mood. `save_notes` (name: broll-notes). Reuse these notes next time instead of looking again.
 9. **Check what you made.** After any reframe or b-roll placement, follow the `reframe` skill's order: picture first on visible frames only (`snapshot_moments`, `layer_frames`, `seam_frames`, fix with `nudge_clip`), then captions, then graphics.
+9b. **Find the line that carries the video, then check the speaker on it.** Read the transcript and pick the one or two sentences the whole cut exists for: the claim, the turn, the payoff. Not the longest, the one a viewer would quote. Then `speaker_check` across that span, with the track the speaker is on. It reads the face with macOS's own vision: head square to the lens, eyes open, mid-word, face size, and Apple's capture quality per frame.
+    - Usable frames and the head square to the lens: stay on the face for that line. That is the moment the person sells it, and b-roll over it throws the line away.
+    - Turned away, blinking, soft or badly lit: cover it with b-roll and keep the voice. Say why in one line.
+    - No face at all: the wrong track was read, or the shot is not a talking head.
+    The tool measures geometry and image quality, never mood. Conviction is in the voice and the words: `analyze_audio` for how loud and fast the line is against its neighbours, and the sentence itself for what it says. A line that is louder, slower and followed by a pause is usually the one to hold on.
+
 10. **Lay the b-roll, to a rhythm.** Where the words call for a picture, `place_broll` on V2, 3-6 s each, sound off, matching the shot to the sentence. Don't cover the last sentence. The rhythm rules are not preferences and the panel checks every edit against them, reporting any breach in the tool's own result:
     - **Never leave a few frames of face between two b-roll clips.** A gap under half a second reads as a flicker. Either hold the talking head for at least half a second, or extend the earlier clip so the two meet.
     - **Nothing on screen for less than a second.** Under that nobody reads it. Lengthen it or drop it.
