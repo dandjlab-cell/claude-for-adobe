@@ -22,3 +22,16 @@ test("host/premiere.jsx parses and every exported host function is defined", () 
   const unknown = [...new Set(called)].filter((n) => !names.includes(n));
   assert.deepEqual(unknown, [], "panel calls host functions that are not exported");
 });
+
+// place_broll must not warn about its own work. The overwrite adds the b-roll's audio, the host removes it, and
+// Premiere may append an empty audio track to hold it: none of that is a sync problem. The warning fired on every
+// placement until 2026-09-06 because it compared whole-timeline strings. Guard the shape of the new comparison.
+test("overlayClip's sync check compares clips, not whole-timeline strings", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "host", "premiere.jsx"), "utf8");
+  const fn = /function overlayClip\([\s\S]*?\n  \}\n/.exec(src);
+  assert.ok(fn, "overlayClip not found");
+  const body = fn[0];
+  assert.ok(!/after === before/.test(body), "must not compare fingerprints as one string");
+  assert.ok(/lost\.length \?/.test(body), "warning must be driven by clips that went missing");
+  assert.ok(/return out;\n    \}/.test(body), "fingerprint must return a list of clips");
+});

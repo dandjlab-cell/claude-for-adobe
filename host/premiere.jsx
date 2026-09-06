@@ -190,7 +190,7 @@ var PCX = (function () {
         if (num(s.end) === d0) errs.push(a.toFixed(2) + ": no change");
         else if (Math.abs(removed - want) > 2 * F + 0.01) {
           // Premiere took out something other than the range asked for: stop here, do not compound it.
-          errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": removed " + removed.toFixed(2) + "s instead of " + want.toFixed(2) + "s; stopped");
+          errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": removed " + removed.toFixed(2) + "s instead of " + want.toFixed(2) + "s (in/out read back as " + ri.toFixed(3) + "-" + ro.toFixed(3) + " before the call); edges near the range: " + edgesNear(s, a, b) + "; stopped");
           break;
         } else done++;
       } catch (e) { errs.push(a.toFixed(2) + ": " + e); break; }
@@ -208,6 +208,26 @@ var PCX = (function () {
     var vt = s.videoTracks[0], at = s.audioTracks[0];
     for (var j = 0; j < Math.min(vt.clips.numItems, at.clips.numItems); j++) if (vt.clips[j].start.ticks !== at.clips[j].start.ticks) mismatches++;
     return "extracted=" + done + "/" + R.length + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
+  }
+
+  // Clip starts and ends on every track within a second of a range, as "V1 s3.20 e23.87". A failing Extract
+  // reports these so the next one carries its own evidence: whether the bad out point sits on an edit, a gap or
+  // a track's end is the open question (2026-09-06: 23.87 and 17.91 both failed, 23.90 and 24.49 were clean, and
+  // the frame arithmetic is identical for all four, so it is not rounding).
+  function edgesNear(s, a, b) {
+    var out = [];
+    function walk(list, prefix) {
+      for (var t = 0; t < list.numTracks; t++) {
+        var tr = list[t];
+        for (var c = 0; c < tr.clips.numItems; c++) {
+          var cl = tr.clips[c], st = num(cl.start.ticks) / T, en = num(cl.end.ticks) / T;
+          if (Math.abs(st - a) < 1 || Math.abs(st - b) < 1) out.push(prefix + (t + 1) + " s" + st.toFixed(3));
+          if (Math.abs(en - a) < 1 || Math.abs(en - b) < 1) out.push(prefix + (t + 1) + " e" + en.toFixed(3));
+        }
+      }
+    }
+    walk(s.videoTracks, "V"); walk(s.audioTracks, "A");
+    return out.length ? out.join(" ") : "none within a second (the range sits inside clips on every track)";
   }
 
   // Everything from `a` to the end goes: clips starting at or after `a` are removed, clips spanning `a` are
@@ -740,12 +760,16 @@ var PCX = (function () {
     if (s.videoTracks.numTracks <= idx) return "ERR:video track V" + (idx + 1) + " does not exist (add it in the timeline)";
     var track = s.videoTracks[idx];
     var at = Number(atSec), dur = Number(durSec), inPt = Number(inSec) || 0;
-    // Fingerprint every OTHER track so we can prove nothing moved (an overwrite must never ripple or replace).
+    // Every clip on every OTHER track, so we can prove nothing moved (an overwrite must never ripple or replace).
+    // One entry per clip, not a whole-timeline string: the b-roll's own audio is added by the overwrite and
+    // removed again below, and Premiere may append an empty audio track to hold it. Neither is a sync problem,
+    // and comparing whole strings made the warning fire on every single placement (fixed 2026-09-06). The test
+    // that matters: every clip that existed BEFORE is still there afterwards, at the same start and end.
     function fingerprint() {
       var out = [];
-      function list(tracks, skipIdx, prefix) { for (var t = 0; t < tracks.numTracks; t++) { if (t === skipIdx) continue; var tr = tracks[t]; var row = [prefix + t]; for (var c = 0; c < tr.clips.numItems; c++) row.push(tr.clips[c].name + "@" + tr.clips[c].start.ticks + "-" + tr.clips[c].end.ticks); out.push(row.join("|")); } }
+      function list(tracks, skipIdx, prefix) { for (var t = 0; t < tracks.numTracks; t++) { if (t === skipIdx) continue; var tr = tracks[t]; for (var c = 0; c < tr.clips.numItems; c++) out.push(prefix + (t + 1) + ":" + tr.clips[c].name + "@" + tr.clips[c].start.ticks + "-" + tr.clips[c].end.ticks); } }
       list(s.videoTracks, idx, "V"); list(s.audioTracks, -1, "A");
-      return out.join("\n");
+      return out;
     }
     var before = fingerprint();
     // Lock everything except the target track so the linked audio cannot land on A1 over the talking head.
@@ -766,8 +790,13 @@ var PCX = (function () {
     // Any audio the overwrite still created for this clip is removed, not muted: b-roll never carries sound here.
     var removed = 0;
     for (var a = 0; a < s.audioTracks.numTracks; a++) { var tra = s.audioTracks[a]; for (var k = tra.clips.numItems - 1; k >= 0; k--) { var ac = tra.clips[k]; var mp = ""; try { mp = ac.projectItem ? ac.projectItem.getMediaPath() : ""; } catch (e) {} if (mp === mediaPath && Math.abs(num(ac.start.ticks) / T - at) < 0.05) { try { ac.remove(0, 0); removed++; } catch (e4) { try { ac.disabled = true; } catch (e5) {} } } } }
-    var after = fingerprint();
-    var sync = after === before ? "" : " WARNING: other tracks changed during the overwrite (sync at risk). Cmd+Z and tell the editor.";
+    var after = fingerprint(), lost = [];
+    for (var f = 0; f < before.length; f++) {
+      var still = false;
+      for (var g = 0; g < after.length; g++) { if (after[g] === before[f]) { still = true; break; } }
+      if (!still) lost.push(before[f].split("@")[0]);
+    }
+    var sync = lost.length ? " WARNING: " + lost.length + " clip(s) on other tracks moved or vanished during the overwrite (sync at risk): " + lost.slice(0, 4).join(", ") + ". Cmd+Z and tell the editor." : "";
     return "placed " + placed.name + " V" + (idx + 1) + " " + at.toFixed(2) + "-" + (num(placed.end.ticks) / T).toFixed(2) + "s" + (removed ? " (its audio removed)" : "") + (notes.length ? " [" + notes.join("; ") + "]" : "") + sync;
   }
 
