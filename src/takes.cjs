@@ -5,6 +5,7 @@
 "use strict";
 const { FILLERS } = require("./transcript.cjs");
 
+const SURE = 0.8; // groups at or above this are retakes beyond doubt and may be cut unattended; below, they are suggestions
 const STOP = new Set(["the", "a", "an", "and", "or", "but", "so", "to", "of", "in", "on", "at", "is", "it", "that", "this", "i", "you", "we", "they", "he", "she", "be", "was", "are", "for", "with", "as", "like", "just", "really", "very"]);
 const norm = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}']+/gu, "");
 const isFiller = (t) => FILLERS.includes(norm(t));
@@ -57,14 +58,18 @@ function findTakes(words, { gap = 0.7, window = 90, minSim = 0.6, minTokens = 3 
     const cands = idx.sort((a, b) => a - b).map((k) => ({ ...us[k], score: score(us[k]) }));
     let keep = 0;
     cands.forEach((c, i) => { if (c.score > cands[keep].score || (c.score === cands[keep].score && i > keep)) keep = i; });
-    return { candidates: cands.map((c) => ({ start: c.start, end: c.end, text: c.text, words: c.words.length, fillers: c.fillers, score: c.score })), keep, remove: cands.filter((_, i) => i !== keep).map((c) => ({ start: c.start, end: c.end, text: c.text })) };
+    // Confidence: the weakest link in the group. A group of true retakes shares most content words; a group
+    // that merely revisits a topic does not, and must never be cut without a human.
+    let sim = 1;
+    for (let i = 0; i < cands.length; i++) { let best = 0; for (let j = 0; j < cands.length; j++) if (i !== j) best = Math.max(best, similarity(cands[i], cands[j])); sim = Math.min(sim, best); }
+    return { similarity: Number(sim.toFixed(2)), candidates: cands.map((c) => ({ start: c.start, end: c.end, text: c.text, words: c.words.length, fillers: c.fillers, score: c.score })), keep, remove: cands.filter((_, i) => i !== keep).map((c) => ({ start: c.start, end: c.end, text: c.text })) };
   }).filter((g) => g.candidates.length > 1);
 }
 
 const f = (n) => n.toFixed(2) + "s";
 function report(groups) {
   if (!groups.length) return "No repeated takes found.";
-  return groups.map((g, gi) => "Take group " + (gi + 1) + " (" + g.candidates.length + " takes):\n" + g.candidates.map((c, i) => "  " + (i === g.keep ? "KEEP  " : "drop  ") + f(c.start) + "-" + f(c.end) + " (" + c.words + " words, " + c.fillers + " fillers, score " + c.score + "): \"" + c.text.slice(0, 90) + (c.text.length > 90 ? "…" : "") + "\"").join("\n")).join("\n");
+  return groups.map((g, gi) => "Take group " + (gi + 1) + " (" + g.candidates.length + " takes, similarity " + g.similarity + (g.similarity >= SURE ? ", sure" : ", possible: a human decides") + "):\n" + g.candidates.map((c, i) => "  " + (i === g.keep ? "KEEP  " : "drop  ") + f(c.start) + "-" + f(c.end) + " (" + c.words + " words, " + c.fillers + " fillers, score " + c.score + "): \"" + c.text.slice(0, 90) + (c.text.length > 90 ? "…" : "") + "\"").join("\n")).join("\n");
 }
 
-module.exports = { utterances, similarity, score, findTakes, report };
+module.exports = { utterances, similarity, score, findTakes, report, SURE };

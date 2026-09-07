@@ -1210,7 +1210,7 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   card.progress(4, 5, "takes ");
   const r5 = await findTakesTool({ apply: true });
   const d5 = await dur();
-  steps.push("5. Takes: " + first(r5.text) + " -> " + d5.toFixed(1) + "s");
+  steps.push("5. Takes: " + first(r5.text) + " -> " + d5.toFixed(1) + "s (only groups with similarity " + require(path.join(extensionRoot, "src", "takes.cjs")).SURE + " or more were cut; the rest are listed below for you)\n" + String(r5.text || "").split("\n").filter((l) => /^(Take group|  KEEP|  drop)/.test(l)).join("\n"));
   // the material for the story: the timeline transcript as it stands after the cuts (carried through each one)
   const finalSnap = await readSnapshot().catch(() => null);
   const tlw = finalSnap && !finalSnap.error ? freshTimelineWords(finalSnap) : null;
@@ -1224,7 +1224,7 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
 }
 
 // Repeated takes on the timeline, from whatever transcript exists (the exact timeline transcript first, else per clip).
-async function findTakesTool({ window_seconds = 90, min_similarity = 0.6, apply = false, source = "auto" } = {}) {
+async function findTakesTool({ window_seconds = 90, min_similarity = 0.6, apply = false, apply_min, source = "auto" } = {}) {
   const card = addTool((apply ? "remove" : "find") + "_takes", "");
   let snap, clips;
   try { ({ snap, clips } = await audioClipsIn(0, Infinity)); } catch (error) { return err(card, error.message); }
@@ -1260,12 +1260,15 @@ async function findTakesTool({ window_seconds = 90, min_similarity = 0.6, apply 
       delivery = "delivery from the timeline render (energy dB, pitch range Hz, words/s; +2 x delivery in the score)";
     }
   } catch (_) {}
-  const line = (g) => g.candidates.map((c, i) => "  " + (i === g.keep ? "KEEP  " : "drop  ") + c.start.toFixed(2) + "s-" + c.end.toFixed(2) + "s (" + c.words + " words, " + c.fillers + " fillers" + (c.delivery !== undefined ? ", " + c.energyDb + " dB, pitch range " + (c.f0Range === null ? "?" : c.f0Range) + ", " + c.pace + " w/s, delivery " + (c.delivery >= 0 ? "+" : "") + c.delivery : "") + ", score " + c.score + "): \"" + c.text.slice(0, 90) + (c.text.length > 90 ? "…" : "") + "\"").join("\n");
-  const text = (groups.length ? groups.map((g, gi) => "Take group " + (gi + 1) + " (" + g.candidates.length + " takes):\n" + line(g)).join("\n") : report(groups)) + "\n(from the " + from + "; " + delivery + ")";
-  if (!apply || !groups.length) { card.done(text, true); return { text: text + (groups.length ? "\nSay find_takes with apply: true to drop the marked takes, or use keep_only with your own choice." : "") }; }
-  const cuts = union(groups.flatMap((g) => g.remove).map((r) => ({ start: r.start, end: r.end }))).sort((a, b) => b.start - a.start);
+  const { SURE } = require(path.join(extensionRoot, "src", "takes.cjs"));
+  const sureMin = Number.isFinite(Number(apply_min)) ? Number(apply_min) : SURE;
+  const line = (g) => g.candidates.map((c, i) => "  " + (i === g.keep ? "KEEP  " : (g.similarity >= sureMin ? "drop  " : "drop? ")) + c.start.toFixed(2) + "s-" + c.end.toFixed(2) + "s (" + c.words + " words, " + c.fillers + " fillers" + (c.delivery !== undefined ? ", " + c.energyDb + " dB, pitch range " + (c.f0Range === null ? "?" : c.f0Range) + ", " + c.pace + " w/s, delivery " + (c.delivery >= 0 ? "+" : "") + c.delivery : "") + ", score " + c.score + "): \"" + c.text.slice(0, 90) + (c.text.length > 90 ? "…" : "") + "\"").join("\n");
+  const text = (groups.length ? groups.map((g, gi) => "Take group " + (gi + 1) + " (" + g.candidates.length + " takes, similarity " + g.similarity + (g.similarity >= sureMin ? ", sure" : ", possible: a human decides") + "):\n" + line(g)).join("\n") : report(groups)) + "\n(from the " + from + "; " + delivery + ")";
+  const sure = groups.filter((g) => g.similarity >= sureMin), possible = groups.length - sure.length;
+  if (!apply || !sure.length) { card.done(text, true); return { text: text + (groups.length ? "\n" + (sure.length ? sure.length + " sure group(s) would be cut by apply: true; " : "") + (possible ? possible + " possible group(s) are suggestions only: use keep_only with your own choice." : "") : "") }; }
+  const cuts = union(sure.flatMap((g) => g.remove).map((r) => ({ start: r.start, end: r.end }))).sort((a, b) => b.start - a.start);
   const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
-  const res = await applyCuts(card, cuts, false, cuts.length + " dropped take(s), " + total.toFixed(1) + "s, sequence " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s");
+  const res = await applyCuts(card, cuts, false, cuts.length + " dropped take(s) from " + sure.length + " sure group(s), " + total.toFixed(1) + "s, sequence " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s" + (possible ? "; " + possible + " possible group(s) left for a human" : ""));
   return { ...res, text: res.text + "\n" + text };
 }
 

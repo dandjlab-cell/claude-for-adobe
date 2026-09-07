@@ -32,3 +32,13 @@ test("utterances split at pauses and sentence ends", () => {
   const u = utterances(say(["Hello there.", "How are you"]));
   assert.strictEqual(u.length, 2);
 });
+
+test("a topic revisited is a possible group, not a sure one", () => {
+  const { findTakes, SURE } = require("../src/takes.cjs");
+  const words = say(["Premiere never tells you why the extract failed on the timeline.", "Later the timeline extract failed again and Premiere said nothing about why."]);
+  const g = findTakes(words);
+  assert.strictEqual(g.length, 1);
+  assert.ok(g[0].similarity < SURE, "similarity " + g[0].similarity);
+  const clean = findTakes(say(["So the thing about Premiere is that it never tells", "So the thing about Premiere is that it never tells you why."]));
+  assert.ok(clean[0].similarity >= SURE, "a real restart is sure: " + clean[0].similarity);
+});

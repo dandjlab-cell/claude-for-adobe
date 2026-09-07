@@ -94,7 +94,7 @@
     #job-bar b { font-weight: 600; white-space: nowrap; }
     #job-bar span { color: var(--ink-60); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #job-bar i { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--accent); transition: width 300ms; }
-    body.landing #job-bar { display: none; }
+    #job-bar[hidden], body.landing #job-bar { display: none; } /* the id's display:flex must not beat the hidden attribute */
     #messages { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
     #messages:empty { display: none; }
     /* Landing page: only when no chat is open. Not a message; the chat UI is hidden under it. */
