@@ -461,7 +461,11 @@ var PCX = (function () {
     })(bin, /b[\s_-]?roll|cutaway/i.test(String(bin.name || "")));
     if (!items.length) return "ERR:no media in " + (binPath || "root") + (brollSkipped ? " apart from " + brollSkipped + " b-roll clip(s), which are placed with place_broll, not laid on V1" : "");
     var s = null;
-    try { s = app.project.createNewSequenceFromClips(name, items, bin); } catch (e) { return "ERR:" + e; }
+    // The new sequence lives in the PARENT of the footage bin (next to "TALKING HEAD" and "BROLL"), never inside
+    // one of them; a bin at the root puts it at the root.
+    var home = app.project.rootItem;
+    if (binPath && binPath.indexOf("/") >= 0) { try { var ph = binByPath(binPath.substring(0, binPath.lastIndexOf("/")), false); if (ph) home = ph; } catch (eH) {} }
+    try { s = app.project.createNewSequenceFromClips(name, items, home); } catch (e) { return "ERR:" + e; }
     if (!s) return "ERR:could not create the sequence";
     if (insertClips === "false") {
       try { for (var t = 0; t < s.videoTracks.numTracks; t++) { var tr = s.videoTracks[t]; for (var k = tr.clips.numItems - 1; k >= 0; k--) tr.clips[k].remove(false, false); }
