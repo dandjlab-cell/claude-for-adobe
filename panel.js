@@ -60,6 +60,10 @@ const workingCopies = new Map(); // copyId -> { copyName, originalId, originalNa
 
 // ---- host bridge --------------------------------------------------------------------------------
 
+// Keep the message list pinned to the newest message only while the reader is already at the bottom; once they
+// scroll up to read, progress ticks and new cards must not drag the view back down.
+function followBottom(el) { if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight; }
+
 function evalScript(code) {
   return new Promise((resolve) => window.__adobe_cep__.evalScript(code, (result) => resolve(String(result == null ? "" : result))));
 }
@@ -109,7 +113,7 @@ function addMessage(cls, text) {
   el.className = "message " + cls;
   el.textContent = text;
   ui.messages.appendChild(el);
-  ui.messages.scrollTop = ui.messages.scrollHeight;
+  followBottom(ui.messages);
   return el;
 }
 
@@ -123,7 +127,7 @@ function addTool(summary, code) {
   el.querySelector("summary").textContent = "▸ " + summary;
   el.querySelector(".code").textContent = code;
   ui.messages.appendChild(el);
-  ui.messages.scrollTop = ui.messages.scrollHeight;
+  followBottom(ui.messages);
   const bar = el.querySelector(".bar");
   return {
     el,
@@ -152,7 +156,7 @@ function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "") {
     row.append(yes, no);
     if (allLabel) { const all = document.createElement("button"); all.textContent = allLabel; all.className = "utility"; all.onclick = () => finish("all"); row.append(all); }
     el.appendChild(row);
-    ui.messages.scrollTop = ui.messages.scrollHeight;
+    followBottom(ui.messages);
   });
 }
 
@@ -1827,7 +1831,7 @@ function onEvent(event) {
   else if (event.kind === "delta") {
     if (!liveMessage) liveMessage = addMessage("assistant", "");
     liveMessage.textContent += event.text;
-    ui.messages.scrollTop = ui.messages.scrollHeight;
+    followBottom(ui.messages);
   }
   else if (event.kind === "text") { if (liveMessage) { liveMessage.textContent = event.text; liveMessage = null; } else addMessage("assistant", event.text); }
   else if (event.kind === "tool_use") { liveMessage = null; log("tool_use " + event.name); }
@@ -2343,7 +2347,7 @@ function showChat(c) {
     fillModels();
     if (c.model && [...ui.model.options].some((o) => o.value === c.model)) ui.model.value = c.model;
     ui.messages.replaceChildren(...c.nodes); c.nodes = [];
-    ui.messages.scrollTop = ui.messages.scrollHeight;
+    followBottom(ui.messages);
     log("chat " + c.label + " shown (session " + (c.session ? "alive" : c.resumeId ? "resume " + c.resumeId : "new") + ")");
     if (c.session) { session = c.session; c.session = null; setStatus("Ready · " + modelLabel(ui.model.value)); setBusy(false); }
     else restartSession(c.resumeId || undefined);
