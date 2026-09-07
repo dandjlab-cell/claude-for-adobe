@@ -1,5 +1,7 @@
 // What macOS itself can see in a frame, so the panel never guesses. Two modes, one binary:
 //   bin/ocr <image...>           text: {"file":"...","items":[{"text":"Codex","conf":0.98,"box":[x0,y0,x1,y1]}]}
+//   bin/ocr --sounds <audio>     sounds: one line per window {"t0":s,"t1":s,"labels":[["laughter",0.71],...]} using Apple's
+//                                303-class sound classifier (laughter, applause, cheering, sigh, gasp, speech, music, silence...)
 //   bin/ocr --faces <image...>   faces: {"file":"...","faces":[{"box":[..],"yaw":deg,"pitch":deg,"roll":deg,
 //                                        "quality":0..1,"eyes":ratio,"mouth":ratio,"facing":0..,"tilt":0..1}]}
 // Boxes are fractions of the image, origin top-left. yaw/pitch are Vision's head pose in degrees: both near zero
@@ -85,9 +87,35 @@ func faces(_ cg: CGImage, _ file: String) {
   print("{\"file\":\(json(file)),\"faces\":[\(out.joined(separator: ","))]}")
 }
 
+import SoundAnalysis
+
+// Apple's built-in sound classifier over an audio file, one JSON line per one-second window (half-second hop),
+// listing every label at or above 0.1 confidence. The panel turns windows into segments.
+final class SoundSink: NSObject, SNResultsObserving {
+  func request(_ request: SNRequest, didProduce result: SNResult) {
+    guard let r = result as? SNClassificationResult else { return }
+    let t0 = r.timeRange.start.seconds, t1 = t0 + r.timeRange.duration.seconds
+    let labels = r.classifications.filter { $0.confidence >= 0.1 }.prefix(6).map { "[\(json($0.identifier)),\(num(Double($0.confidence)))]" }
+    print("{\"t0\":\(num(t0)),\"t1\":\(num(t1)),\"labels\":[\(labels.joined(separator: ","))]}")
+  }
+  func request(_ request: SNRequest, didFailWithError error: Error) { print("{\"error\":\(json(String(describing: error)))}") }
+  func requestDidComplete(_ request: SNRequest) {}
+}
+
+func sounds(_ file: String) {
+  guard let analyzer = try? SNAudioFileAnalyzer(url: URL(fileURLWithPath: file)) else { print("{\"error\":\"unreadable audio\"}"); return }
+  guard let req = try? SNClassifySoundRequest(classifierIdentifier: .version1) else { print("{\"error\":\"no classifier\"}"); return }
+  req.windowDuration = CMTimeMakeWithSeconds(1.0, preferredTimescale: 48000)
+  req.overlapFactor = 0.5
+  let sink = SoundSink()
+  do { try analyzer.add(req, withObserver: sink) } catch { print("{\"error\":\(json(String(describing: error)))}"); return }
+  analyzer.analyze()
+}
+
 var args = Array(CommandLine.arguments.dropFirst())
 let wantFaces = args.first == "--faces"
 if wantFaces { args = Array(args.dropFirst()) }
+if args.first == "--sounds" { for f in args.dropFirst() { sounds(f) }; exit(0) }
 
 for file in args {
   guard let img = NSImage(contentsOfFile: file), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {

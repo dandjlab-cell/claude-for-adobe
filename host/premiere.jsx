@@ -1112,8 +1112,39 @@ var PCX = (function () {
     return ["OK" + COL + fx.name + COL + before + COL + after + COL + dur].concat(rows).join(ROW);
   }
 
+  // Read-only probe of two leads: Media Intelligence preferences (where Premiere keeps its visual-search index)
+  // and the QE multicam names on every clip of the active sequence. Rows: label|value.
+  function probeLeads() {
+    var rows = [];
+    var prefs = ["BE.Prefs.MediaIntelligence.AnalyzeImportedMediaCacheLocation", "BE.Prefs.MediaIntelligence.AnalyzeImportedMediaForFace", "BE.Prefs.MediaIntelligence.AnalyzeImportedMediaForMISO", "DVASE.UniversalSearch.LocalizedMediaIntelligence", "DVASE.VectorIndex.AutoCloseSeconds", "DVASE.MachineLearning.EmbeddingsCompressionLevel", "BE.Prefs.DefaultVideoTransitionDuration", "BE.Prefs.DefaultVideoTransitionDurationUnit", "MZ.Prefs.MediaCacheLocation", "BE.Prefs.MediaCacheFilesLocation"];
+    for (var i = 0; i < prefs.length; i++) {
+      var v = "";
+      try { v = app.properties.doesPropertyExist(prefs[i]) ? String(app.properties.getProperty(prefs[i])) : "(does not exist)"; } catch (e0) { v = "ERR:" + e0; }
+      rows.push("pref " + prefs[i] + COL + v);
+    }
+    var s = seq();
+    if (!s) { rows.push("multicam" + COL + "no active sequence"); return rows.join(ROW); }
+    var q = null; try { app.enableQE(); q = qe.project.getActiveSequence(); } catch (e1) {}
+    if (!q) { rows.push("multicam" + COL + "QE unavailable"); return rows.join(ROW); }
+    try { rows.push("qeSeq.multicam" + COL + String(q.multicam)); } catch (e2) { rows.push("qeSeq.multicam" + COL + "ERR:" + e2); }
+    for (var t = 0; t < q.numVideoTracks && t < 4; t++) {
+      var tr = null; try { tr = q.getVideoTrackAt(t); } catch (e3) { continue; }
+      for (var c = 0; c < tr.numItems && c < 12; c++) {
+        var it = null; try { it = tr.getItemAt(c); } catch (e4) { continue; }
+        if (!it || String(it.type) === "Empty") continue;
+        var mc = "", sw = "", can = "", isMc = "";
+        try { mc = String(it.multicamEnabled); } catch (e5) { mc = "ERR"; }
+        try { sw = String(it.switchSources); } catch (e6) { sw = "ERR"; }
+        try { can = String(it.canDoMulticam()); } catch (e7) { can = "ERR:" + e7; }
+        try { var pi = it.getProjectItem(); isMc = pi ? String(pi.isMultiCamClip ? pi.isMultiCamClip() : "n/a") : "no item"; } catch (e8) { isMc = "ERR"; }
+        rows.push("V" + (t + 1) + "[" + c + "] " + it.name + COL + "multicamEnabled=" + mc + " switchSources=" + sw + " canDoMulticam=" + can + " isMultiCamClip=" + isMc);
+      }
+    }
+    return rows.join(ROW);
+  }
+
   return {
-    addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

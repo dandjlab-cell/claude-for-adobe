@@ -13,3 +13,5 @@ description: Use when the editor asks to remove silences, gaps, pauses, dead air
 Use `method: "db"` only if asked. Use `remove_pauses` only when the editor wants Premiere's transcript rule (word gaps). Do not call `sequence_overview` or `analyze_audio` first.
 
 For 'clean up the audio' / 'remove the ums': `remove_fillers` first (plan, one line, apply), then the silence pass.
+
+Before removing pauses on anything with more than one person or an audience: `sound_events` first. A pause that touches a laughter or applause segment is a beat, not dead air; leave it and say so.

@@ -45,7 +45,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -1010,6 +1010,42 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
   return { text: copyNote + raw, isError: !ok };
 }
 
+// Sound events on the timeline (laughter, applause, reactions, music) from Apple's classifier over the rendered mix.
+async function soundEvents({ start_seconds = 0, end_seconds, min_confidence } = {}) {
+  const card = addTool("sound_events", "");
+  if (!fs.existsSync(OCR_BIN)) return err(card, "sound helper missing (bin/ocr)");
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const { parseWindows, segments, report, MIN_CONF } = require("./src/sounds.cjs");
+  const wav = seqFile(".mix.wav");
+  fs.mkdirSync(analysisDir(), { recursive: true });
+  const fp = timelineFingerprint(snap);
+  const cached = seqFile(".sounds.json");
+  let windows = null;
+  try { const j = JSON.parse(fs.readFileSync(cached, "utf8")); if (j.timeline === fp) windows = j.windows; } catch (_) {}
+  if (!windows) {
+    let fresh = false; try { fresh = fs.existsSync(wav) && JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8")).timeline === fp; } catch (_) {}
+    if (!fresh) {
+      try { fs.unlinkSync(wav); } catch (_) {}
+      card.progress(0, 2, "rendering timeline audio ");
+      const preset = wavPreset();
+      if (!preset) return err(card, "could not find Premiere's WAV export preset (WAV_Mono_16bit_16kHz.epr) under /Applications");
+      const out = await host("exportSequenceAudio", wav, preset);
+      if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return err(card, "audio render failed: " + out.replace(/^ERR:/, ""));
+      try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: fp })); } catch (_) {}
+    }
+    card.progress(1, 2, "listening ");
+    let out = "";
+    try { out = require("node:child_process").execFileSync(OCR_BIN, ["--sounds", wav], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }); } catch (error) { return err(card, "sound classification failed: " + error.message); }
+    windows = parseWindows(out);
+    try { fs.writeFileSync(cached, JSON.stringify({ timeline: fp, windows })); } catch (_) {}
+  }
+  const a = Math.max(0, Number(start_seconds) || 0), b = Number(end_seconds) > 0 ? Number(end_seconds) : snap.duration;
+  const segs = segments(windows, { minConf: Number(min_confidence) || MIN_CONF }).filter((s) => s.end > a && s.start < b);
+  const text = "Sound events " + a.toFixed(2) + "-" + b.toFixed(2) + "s (Apple sound classifier, timeline seconds, peak confidence; cached for this cut):\n" + report(segs) + "\nRule: never cut a pause that touches a laughter or applause segment; a reaction here is a candidate cut point on the other camera.";
+  card.done(text, true);
+  return { text };
+}
+
 // What macOS can see of the speaker across a span: face geometry and capture quality per frame, with the other
 // video tracks hidden so b-roll cannot cover the face being judged. Read-only; frames are deleted after reading.
 const FACE_MAX_FRAMES = 24;
@@ -1618,7 +1654,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1667,6 +1703,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "sound_events", description: "Laughter, applause, cheering, sighs and gasps, music and keyboard noise on the timeline, with times, from Apple's built-in sound classifier over Premiere's own render of the mix. Free, on this Mac. Use it before removing pauses (a pause next to a laugh is a beat, not dead air), to find reactions worth cutting to, and to see where music runs. Results are saved next to the project for reuse.",
+    inputSchema: { type: "object", properties: { start_seconds: { type: "number", description: "default 0" }, end_seconds: { type: "number", description: "default the whole sequence" }, min_confidence: { type: "number", description: "default 0.35" } }, required: [] } },
   { name: "speaker_check", description: "Is the speaker worth staying on here? Renders frames across a span with the b-roll tracks hidden and reads the face with macOS's Vision framework: whether the head is square to the lens, eyes open, mouth mid-word, how big the face is, and Apple's own capture quality. Use it before deciding to hold on the face for a key line, and before covering one. Measured geometry only, no mood: energy comes from the voice.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 0.5" }, track: { type: "number", description: "1-based video track holding the speaker, default 1" } }, required: ["start_seconds", "end_seconds"] } },
   { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
@@ -2074,7 +2112,21 @@ async function dumpSurface() {
   } catch (error) { addMessage("assistant error", "Surface dump failed: " + error.message); }
   ui.dumpSurface.disabled = false; ui.dumpSurface.textContent = "Dump Premiere surface";
 }
-if (devRepo) { ui.dumpSurface.hidden = false; ui.dumpSurface.addEventListener("click", dumpSurface); }
+async function probeLeads() {
+  ui.probeLeads.disabled = true;
+  try {
+    const raw = await host("probeLeads");
+    if (!raw || raw.indexOf("ERR:") === 0) throw new Error(raw || "empty result");
+    const lines = raw.split(ROW).map((r) => r.split(COL).join(" = "));
+    const dir = path.join(os.homedir(), "Library", "Application Support", "claude-for-adobe", "surface");
+    fs.mkdirSync(dir, { recursive: true });
+    const out = path.join(dir, "leads-" + new Date().toISOString().slice(0, 10) + ".txt");
+    fs.writeFileSync(out, lines.join("\n"));
+    addMessage("assistant muted", "Leads probe (read-only):\n" + lines.join("\n") + "\n\nSaved to " + out);
+  } catch (error) { addMessage("assistant error", "Probe failed: " + error.message); }
+  ui.probeLeads.disabled = false;
+}
+if (devRepo) { ui.dumpSurface.hidden = false; ui.dumpSurface.addEventListener("click", dumpSurface); ui.probeLeads.hidden = false; ui.probeLeads.addEventListener("click", probeLeads); }
 ui.checkUpdates.onclick = () => (devRepo ? installDevPending() : (pendingUpdate ? installPending() : checkUpdates(true)));
 // Checked at launch, then every 20 minutes and whenever the panel gets focus again (at most every 5 minutes),
 // so "up to date" never stays on screen after a release without anyone pressing the button.
