@@ -7,6 +7,19 @@ description: Use when the editor asks to edit, assemble, rough-cut, or "do somet
 
 Work like an editor at the timeline. Short sentences, timecodes as m:ss, one question at a time. Prefer the tools; scripts only for what they don't cover.
 
+**The order for "make me a 9:16 (or 4:5, 16:9) video from this folder".** Tracking, frames and checks are the
+expensive steps; cutting is cheap. They come last, once, on what survives. Never run Auto Reframe,
+snapshot_moments or seam_frames on six minutes of raw footage that will become one.
+1. `create_sequence` at the asked shape (fill and centre, no tracking): the talking head bin only; b-roll stays out.
+2. `remove_silences` (voice). Then the transcript: Premiere's if the clips have one (`read_transcript`), else `transcribe_timeline`, which runs while you go on.
+3. `remove_fillers`, then `find_takes` (report), decide, then `find_takes` with apply: true or `keep_only` with your choice.
+4. The story: which lines carry it, in what order, to what length (`speaker_check` on the line that matters).
+5. `keep_only` to the target length. `sound_events` before cutting any pause on a conversation.
+6. B-roll from its bin over the lines that call for it (`place_broll`), to the rhythm rules.
+7. Only now `reframe` (tracking) on the cut, then `subject_path`, one `snapshot_moments`, `seam_frames` at the real seams (`visible_at`), captions last.
+
+The full workflow when the request is open-ended:
+
 1. **What's already known.** `list_analysis`. If transcripts, notes, prosody, or diarization files exist (from this panel or anything else), read them with a subagent before doing new work.
 2. **Inspect.** The selected bin is the scope. `classify_clips` (no arguments) reports footage sizes and rates, speech coverage, and talking head vs b-roll.
 3. **Ask once.** If no sequence exists or none was named: ONE question with concrete choices for settings (match the footage, `vertical`, `hd`) and a name. Then `create_sequence` with `insert_clips` true.
