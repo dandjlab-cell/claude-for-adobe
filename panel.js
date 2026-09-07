@@ -583,7 +583,11 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
   setStatus("Thinking…");
+  const fpBefore = timelineFingerprint(timeline);
   timeline = await readSnapshot();
+  // The exact timeline transcript rides along with the cut: words in the removed ranges go, the rest move
+  // earlier, and it is re-stamped for the new timeline, so fillers, takes and captions after a cut stay exact.
+  if (ok) { try { const tp = timelineTranscriptPath(); const j = JSON.parse(fs.readFileSync(tp, "utf8")); if (j.fingerprint === fpBefore) { const { remapWordsThroughCuts } = require(path.join(extensionRoot, "src", "transcript.cjs")); j.words = remapWordsThroughCuts(j.words, cuts); j.fingerprint = timelineFingerprint(timeline); j.remappedAt = new Date().toISOString(); fs.writeFileSync(tp, JSON.stringify(j)); } } catch (_) {} }
   // Post-condition: the sequence shortened by what was planned (each range lands on frame boundaries, so allow
   // one frame per range plus a little). A mismatch is reported as a FAIL the model must relay.
   let check = "";
@@ -764,6 +768,7 @@ async function transcribeTimeline({ language = "en" } = {}) {
   if (!preset) return err(card, "could not find Premiere's WAV export preset (WAV_Mono_16bit_16kHz.epr) under /Applications");
   const out = await host("exportSequenceAudio", wav, preset);
   if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return err(card, "audio render failed: " + out.replace(/^ERR:/, ""));
+  try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(snap) })); } catch (_) {}
   card.progress(1, 3, "transcribing ");
   setStatus("Whisper: timeline…");
   // Runs outside the tool call (a timer, so this reply reaches Claude first); nudges Claude when done.
@@ -1161,6 +1166,7 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
       setStatus("Rendering timeline audio…");
       const out = await host("exportSequenceAudio", wav, preset);
       if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return stop("audio render failed: " + out.replace(/^ERR:/, ""));
+      try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(snap) })); } catch (_) {}
       setStatus("Whisper: timeline…");
       try { const r = await transcribeRenderedTimeline(wav, snap, language); from = "Whisper on the timeline render (" + r.words.length + " words)"; } catch (error) { return stop("transcription failed: " + error.message); }
       setStatus("Ready");
@@ -1172,6 +1178,12 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const r4 = await removeFillers({ dry_run: false });
   const d4 = await dur();
   steps.push("4. Fillers: " + first(r4.text) + " -> " + d4.toFixed(1) + "s");
+  // The timeline render for delivery scoring, made AFTER the last cut so it matches the timeline the takes are on.
+  try {
+    const sn = await readSnapshot(); const wav = seqFile(".mix.wav"); let fresh = false;
+    try { fresh = fs.existsSync(wav) && JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8")).timeline === timelineFingerprint(sn); } catch (_) {}
+    if (!fresh) { const preset = wavPreset(); if (preset) { setStatus("Rendering timeline audio…"); const out = await host("exportSequenceAudio", wav, preset); if (out.indexOf("ERR:") !== 0 && fs.existsSync(wav)) fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(sn) })); } }
+  } catch (_) {}
   // 5. takes
   card.progress(4, 5, "takes ");
   const r5 = await findTakesTool({ apply: true });
@@ -1202,8 +1214,29 @@ async function findTakesTool({ window_seconds = 90, min_similarity = 0.6, apply 
     words.sort((a, b) => a.start - b.start);
     if (!words.length) return err(card, "no transcript for this timeline" + (skipped.length ? " (" + skipped.join(", ") + ")" : "") + ": run transcribe_timeline, or transcribe in Premiere's Text panel and save");
   }
-  const groups = findTakes(words, { window: Number(window_seconds) || 90, minSim: Number(min_similarity) || 0.6 });
-  const text = report(groups) + "\n(from the " + from + ")";
+  let groups = findTakes(words, { window: Number(window_seconds) || 90, minSim: Number(min_similarity) || 0.6 });
+  // Delivery, from the timeline render when it is fresh for this cut: energy, pitch movement and pace per take,
+  // scored within each group and added to completeness. Louder, more pitch movement, on the speaker's pace wins.
+  let delivery = "no delivery data (the timeline render is missing or stale; rough_cut and transcribe_timeline make it)";
+  try {
+    const wav = seqFile(".mix.wav"); const meta = JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8"));
+    if (fs.existsSync(wav) && meta.timeline === timelineFingerprint(snap) && groups.length) {
+      const { prosodyForRanges, deliveryScores } = require(path.join(extensionRoot, "src", "prosody.cjs"));
+      const ranges = groups.flatMap((g) => g.candidates.map((c) => ({ start: c.start, end: c.end, words: c.words })));
+      const sums = prosodyForRanges(wav, ranges);
+      let k = 0;
+      groups = groups.map((g) => {
+        const mine = g.candidates.map(() => sums[k++]);
+        const d = deliveryScores(mine);
+        const cands = g.candidates.map((c, i) => ({ ...c, delivery: d[i], energyDb: mine[i].energyDb, f0Range: mine[i].f0Range, pace: mine[i].pace, score: Number((c.score + 2 * d[i]).toFixed(2)) }));
+        let keep = 0; cands.forEach((c, i) => { if (c.score > cands[keep].score || (c.score === cands[keep].score && i > keep)) keep = i; });
+        return { candidates: cands, keep, remove: cands.filter((_, i) => i !== keep).map((c) => ({ start: c.start, end: c.end, text: c.text })) };
+      });
+      delivery = "delivery from the timeline render (energy dB, pitch range Hz, words/s; +2 x delivery in the score)";
+    }
+  } catch (_) {}
+  const line = (g) => g.candidates.map((c, i) => "  " + (i === g.keep ? "KEEP  " : "drop  ") + c.start.toFixed(2) + "s-" + c.end.toFixed(2) + "s (" + c.words + " words, " + c.fillers + " fillers" + (c.delivery !== undefined ? ", " + c.energyDb + " dB, pitch range " + (c.f0Range === null ? "?" : c.f0Range) + ", " + c.pace + " w/s, delivery " + (c.delivery >= 0 ? "+" : "") + c.delivery : "") + ", score " + c.score + "): \"" + c.text.slice(0, 90) + (c.text.length > 90 ? "…" : "") + "\"").join("\n");
+  const text = (groups.length ? groups.map((g, gi) => "Take group " + (gi + 1) + " (" + g.candidates.length + " takes):\n" + line(g)).join("\n") : report(groups)) + "\n(from the " + from + "; " + delivery + ")";
   if (!apply || !groups.length) { card.done(text, true); return { text: text + (groups.length ? "\nSay find_takes with apply: true to drop the marked takes, or use keep_only with your own choice." : "") }; }
   const cuts = union(groups.flatMap((g) => g.remove).map((r) => ({ start: r.start, end: r.end }))).sort((a, b) => b.start - a.start);
   const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);

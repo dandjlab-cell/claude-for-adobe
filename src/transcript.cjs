@@ -153,4 +153,21 @@ function fillerRanges(words, { fillers = FILLERS, repeats = true, pad = 0.02, of
   return out;
 }
 
-module.exports = { FILLERS, fillerRanges, complementRanges, findInWords, linesFromWords, tc, DEFAULT_MIN_PAUSE, decodeWords, listTranscripts, pausesFromWords, transcriptForClip };
+// Carry timeline words through a set of removed ranges (original timeline time): words inside a range are
+// dropped, words after it move earlier by the removed length. Ranges may be in any order and may overlap.
+function remapWordsThroughCuts(words, ranges) {
+  const cuts = ranges.map((r) => ({ start: Math.min(r.start, r.end), end: Math.max(r.start, r.end) })).sort((a, b) => a.start - b.start);
+  const merged = [];
+  cuts.forEach((c) => { const last = merged[merged.length - 1]; if (last && c.start <= last.end + 1e-6) last.end = Math.max(last.end, c.end); else merged.push({ ...c }); });
+  const out = [];
+  for (const w of words) {
+    const mid = (w.start + w.end) / 2;
+    if (merged.some((c) => mid >= c.start && mid < c.end)) continue;
+    let shift = 0;
+    for (const c of merged) { if (c.end <= mid) shift += c.end - c.start; }
+    out.push({ ...w, start: Number((w.start - shift).toFixed(3)), end: Number((w.end - shift).toFixed(3)) });
+  }
+  return out;
+}
+
+module.exports = { remapWordsThroughCuts, FILLERS, fillerRanges, complementRanges, findInWords, linesFromWords, tc, DEFAULT_MIN_PAUSE, decodeWords, listTranscripts, pausesFromWords, transcriptForClip };

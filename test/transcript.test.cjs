@@ -49,3 +49,10 @@ test("fillerRanges finds ums and immediate repeats, cutting the first copy", () 
   assert.deepEqual(r.map((x) => [x.reason, x.text, x.start, x.end]), [["filler", "um", 0.3, 0.5], ["repeat", "I", 0.6, 0.7], ["repeat", "we were", 1.3, 1.6]]);
   assert.equal(fillerRanges(words, { repeats: false, pad: 0 }).length, 1);
 });
+
+test("timeline words ride along with cuts: dropped inside, shifted after", () => {
+  const { remapWordsThroughCuts } = require("../src/transcript.cjs");
+  const words = [{ text: "a", start: 0, end: 1 }, { text: "um", start: 2, end: 2.5 }, { text: "b", start: 4, end: 5 }, { text: "c", start: 9, end: 10 }];
+  const out = remapWordsThroughCuts(words, [{ start: 8, end: 8.5 }, { start: 1.5, end: 3 }]);
+  assert.deepStrictEqual(out.map((w) => [w.text, w.start, w.end]), [["a", 0, 1], ["b", 2.5, 3.5], ["c", 7, 8]]);
+});
