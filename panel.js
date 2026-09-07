@@ -45,7 +45,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -2335,6 +2335,44 @@ async function dumpSurface() {
   } catch (error) { addMessage("assistant error", "Surface dump failed: " + error.message); }
   ui.dumpSurface.disabled = false; ui.dumpSurface.textContent = "Dump Premiere surface";
 }
+// A bug report the editor can hand to anyone: redacted at the source (src/redact.cjs), written next to the project,
+// copied to the clipboard, never sent by the panel. In dev mode the same file is what the developer's session reads.
+async function buildBugReport() {
+  ui.bugReport.disabled = true;
+  try {
+    const { redact, timelineShape } = require(path.join(extensionRoot, "src", "redact.cjs"));
+    const snap = timeline || (await readSnapshot().catch(() => null));
+    const names = [];
+    if (snap && !snap.error) snap.clips.forEach((c) => { names.push(c.name); if (c.mediaPath) names.push(path.basename(c.mediaPath)); });
+    if (project.name) names.push(project.name.replace(/\.prproj$/i, ""));
+    if (snap && snap.name) names.push(snap.name);
+    let premiere = ""; try { premiere = await evalScript("app.version"); } catch (_) {}
+    let devRev = ""; try { devRev = devRepo ? gitDev("rev-parse", "--short", "HEAD") : ""; } catch (_) {}
+    const settings = ["duplicate sequence=" + ui.dupSequence.checked, "ask before scripts=" + ui.askScripts.checked, "file checkpoints=" + ui.requireCheckpoint.checked, "cut method=" + ui.cutMethod.value, "min silence=" + ui.minSilence.value, "pad=" + ui.pad.value, "whisper=" + currentModel(), "media analysis=" + mediaAnalysisState].join(", ");
+    let trace = ""; try { const t = fs.readFileSync(seqFile(".extract-trace.txt"), "utf8"); trace = t.split("\n").slice(-40).join("\n"); } catch (_) {}
+    const logTail = String(ui.log.textContent || "").split("\n").slice(-300).join("\n");
+    const body = [
+      "# Claude for Adobe bug report", "",
+      "Panel " + (devRepo ? "dev " + devRev : "v" + currentVersion(extensionRoot)) + " | Premiere " + premiere + " | macOS " + os.release() + " " + process.arch + " | agent " + agentName() + " model " + (ui.model.value || ""),
+      "Settings: " + settings,
+      "Timeline: " + timelineShape(snap), "",
+      "## What happened", "", "(describe in a sentence; what you asked, what you expected, what you saw)", "",
+      "## Recent log (redacted)", "", "```", redact(logTail, { names }), "```", "",
+      trace ? "## Extract trace tail (redacted)\n\n```\n" + redact(trace, { names }) + "\n```\n" : "",
+      "Redaction: media and clip names are stable tags, paths are shortened to root + tag, emails/urls/keys removed, transcript lines dropped.",
+    ].join("\n");
+    fs.mkdirSync(analysisDir(), { recursive: true });
+    const out = path.join(analysisDir(), "bug-report-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".md");
+    fs.writeFileSync(out, body);
+    try { require("node:child_process").execSync("pbcopy", { input: body }); } catch (_) {}
+    addMessage("assistant muted", "Bug report written to " + out + " and copied to the clipboard. Read it first; then paste it into a GitHub issue" + (devRepo ? ", or just say 'read the bug report' in the developer session" : "") + ".");
+    log("bug report " + out + " (" + body.length + " chars)");
+  } catch (error) { addMessage("assistant error", "Could not build the report: " + error.message); }
+  ui.bugReport.disabled = false;
+}
+ui.bugReport.addEventListener("click", buildBugReport);
+ui.openIssues.addEventListener("click", () => { try { window.cep.util.openURLInDefaultBrowser("https://github.com/dandjlab-cell/claude-for-adobe/issues/new"); } catch (_) { addMessage("assistant muted", "Open https://github.com/dandjlab-cell/claude-for-adobe/issues/new in your browser."); } });
+
 async function probeLeads() {
   ui.probeLeads.disabled = true;
   try {

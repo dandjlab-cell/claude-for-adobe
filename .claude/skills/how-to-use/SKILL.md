@@ -14,3 +14,7 @@ Everything happens on a duplicate sequence. Cmd+Z undoes each step. Edits that c
 The Cut silences button at the top works on its own, no Claude needed.
 
 Coming next: telling speakers apart, and reading how something is said, not just what.
+
+## Reporting a problem
+
+Settings has **Build bug report**: it writes a redacted report next to the project (versions, settings, the timeline's shape, the recent log, any Extract trace; media and clip names become tags, paths are shortened, emails and transcript lines removed) and copies it to the clipboard. The panel never sends it; the editor pastes it into a GitHub issue (**GitHub issues** button) or hands it to whoever is helping. Read it before sharing.
