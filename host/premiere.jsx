@@ -1236,6 +1236,9 @@ var PCX = (function () {
     if (a.record) { try { var r2 = mc.stop(); rows.push("stop()" + COL + String(r2)); } catch (e6) { rows.push("stop()" + COL + "ERR " + e6); } }
     var after = s.videoTracks[0] ? s.videoTracks[0].clips.numItems : -1;
     rows.push("V1 clips" + COL + before + " -> " + after);
+    // Premiere labels multicam pieces by angle ("[MC2] name"): the names around the cut are the read-back.
+    try { var names = []; for (var ni = 0; ni < s.videoTracks[0].clips.numItems; ni++) { var nc = s.videoTracks[0].clips[ni]; names.push((num(nc.start.ticks) / T).toFixed(2) + "s " + nc.name); } rows.push("V1 after" + COL + names.slice(0, 8).join(" | ")); } catch (eN) {}
+    rows.push("switched" + COL + (done && after > before ? "yes" : done ? "call accepted, no new cut (playhead may sit on an existing cut)" : "no"));
     return rows.join(ROW);
   }
 

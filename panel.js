@@ -1084,10 +1084,16 @@ async function multicamSwitch({ at_seconds, camera, record = false } = {}) {
   [before, after].forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
   timeline = await readSnapshot().catch(() => timeline);
   const steps = raw.split(ROW).map((r) => r.split(COL).join(": "));
-  const changed = share !== null && share < 0.9;
-  const text = copyNote + steps.join("\n") + "\nFrame at " + t.toFixed(2) + "s before vs after: " + (share === null ? "could not render" : Math.round(share * 100) + "% identical") + " | CHECK " + (changed ? "PASS: the picture changed, the camera switched" : "FAIL: the picture did not change (wrong argument shape, not a multicam clip, or the switch needs record mode: try record: true)");
-  card.done(text, changed);
-  return { text, isError: !changed };
+  const switched = /^switched: yes/m.test(steps.join("\n"));
+  const accepted = /^changeCamera[^\n]*returned true/m.test(steps.join("\n"));
+  const pictureChanged = share !== null && share < 0.9;
+  // Premiere's own word is the verdict: changeCamera accepted and a new piece cut at the playhead is exactly what
+  // the number key does. The frame comparison is supporting evidence only: two angles from the same file look
+  // identical, and that says nothing about the switch.
+  const ok = switched || (accepted && pictureChanged);
+  const text = copyNote + steps.join("\n") + "\nFrame at " + t.toFixed(2) + "s before vs after: " + (share === null ? "could not render" : Math.round(share * 100) + "% identical" + (pictureChanged ? " (the picture changed)" : " (same picture: the angles may share a source, or the switch needs playback)")) + " | CHECK " + (ok ? "PASS: Premiere accepted the camera change and cut a new piece at the playhead" : accepted ? "FAIL: the call was accepted but no new piece appeared and the picture is unchanged" : "FAIL: changeCamera was not accepted in any argument shape");
+  card.done(text, ok);
+  return { text, isError: !ok };
 }
 
 // Settle moments by Premiere's renderer: composite vs base track alone, batched into two host calls for any number
