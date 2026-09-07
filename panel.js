@@ -2102,7 +2102,15 @@ async function sendMessage() {
     log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)") + (binPath ? " [bin path " + binPath + "]" : ""));
     const active = project.sequence ? "Open timeline (active sequence): \"" + project.sequence + "\". Anything about the timeline, the sequence, its frame size, cuts, silences or captions means THIS sequence; never switch to another one for those." : "No sequence is open.";
     const selNote = sel && sel.indexOf("ERR:") !== 0 ? " Selected in Premiere: " + sel.split("\u0003").join("; ") + (binPath ? ". The selected bin \"" + binPath + "\" is the scope only for footage inspection and organizing (classify_clips, project_bins, create_sequence default to it)." : ".") : "";
-    payload = "[" + active + selNote + "]\n\n" + payload;
+    // The source verdict, so "make a video" never has to guess between the Project panel and the timeline:
+    // a selected bin or clips in the Project panel = build from them (a new sequence); otherwise the open sequence.
+    const hasProjectSel = !!(binPath || (sel && /Project panel:/.test(sel)));
+    const hasTimelineSel = !!(sel && /Timeline: \d+ clip/.test(sel));
+    const source = hasProjectSel
+      ? " SOURCE: the Project panel selection" + (binPath ? " (bin \"" + binPath + "\")" : "") + ". A request to make, build or create a video means a NEW sequence from these items; the open timeline is the target only when the request says 'this timeline', 'this sequence' or 'this cut'."
+      : hasTimelineSel ? " SOURCE: the open sequence, the selected clips in particular. Nothing is selected in the Project panel, so there is no other source."
+      : project.sequence ? " SOURCE: the open sequence. Nothing is selected anywhere else." : " SOURCE: nothing is open or selected; ask which bin or sequence in one line.";
+    payload = "[" + active + selNote + source + " State the source in the first line of your reply.]\n\n" + payload;
   } catch (_) {}
   lastPayload = payload;
   const images = attachments.splice(0).map((a) => ({ mediaType: a.mediaType, data: a.data }));
