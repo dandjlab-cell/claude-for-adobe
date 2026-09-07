@@ -563,7 +563,9 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const ordered = cuts.slice().sort((a, b) => b.start - a.start);
   const BATCH = 1;
   let doneRanges = 0, ok = true, raw = "";
-  const durBefore = (await readSnapshot().catch(() => ({ duration: NaN }))).duration;
+  const snapBefore = await readSnapshot().catch(() => ({ duration: NaN, error: "no snapshot" }));
+  const durBefore = snapBefore.duration;
+  const fpBefore = snapBefore.error ? "" : timelineFingerprint(snapBefore); // taken BEFORE any extract; the module timeline is refreshed by Premiere's events mid-cut and cannot be trusted for this
   const planned = cuts.reduce((s, c) => s + Math.max(0, Math.min(c.end, durBefore || c.end) - c.start), 0);
   const t0 = Date.now();
   for (let i = 0; i < ordered.length && ok; i += BATCH) {
@@ -592,7 +594,6 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
   setStatus("Thinking…");
-  const fpBefore = timelineFingerprint(timeline);
   timeline = await readSnapshot();
   // The exact timeline transcript rides along with the cut: words in the removed ranges go, the rest move
   // earlier, and it is re-stamped for the new timeline, so fillers, takes and captions after a cut stay exact.
@@ -1210,9 +1211,12 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const r5 = await findTakesTool({ apply: true });
   const d5 = await dur();
   steps.push("5. Takes: " + first(r5.text) + " -> " + d5.toFixed(1) + "s");
-  // the material for the story
-  const rt = await readTranscript({});
-  const lines = String(rt.text || "").split("\n").slice(0, 120).join("\n");
+  // the material for the story: the timeline transcript as it stands after the cuts (carried through each one)
+  const finalSnap = await readSnapshot().catch(() => null);
+  const tlw = finalSnap && !finalSnap.error ? freshTimelineWords(finalSnap) : null;
+  let lines;
+  if (tlw) lines = linesFromWords(tlw.words, 0).slice(0, 120).map((l) => "[" + tc(l.start) + "] " + l.text).join("\n") + "\n(exact timeline transcript, " + tlw.words.length + " words, carried through the cuts)";
+  else { const rt = await readTranscript({}); lines = String(rt.text || "").split("\n").slice(0, 120).join("\n"); }
   const broll = /(\d+) clip\(s\) from a b-roll bin were NOT laid/.exec(r1.text || "");
   const text = steps.join("\n") + "\n\nThe cut is " + d5.toFixed(1) + "s (from " + d1.toFixed(1) + "s raw). Original clips untouched; every step is Cmd+Z on the new sequence." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW THE JUDGEMENT, yours: read the transcript below, decide which lines carry the story, in what order, to what length; then keep_only, place_broll, and reframe (no bin) once for tracking and checks.\n\n" + lines;
   card.done(steps.join("\n") + "\n-> " + d5.toFixed(1) + "s; the story is next", true);
