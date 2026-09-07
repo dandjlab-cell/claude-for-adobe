@@ -2104,7 +2104,6 @@ async function boot() {
     }, onLog: log });
     log("mcp server at " + mcp.url);
     await refreshProject();
-    setTimeout(() => { checkMediaAnalysis().catch(() => {}); }, 2500);
     setInterval(() => { refreshProject().catch(() => {}); }, PROJECT_POLL_MS);
     await bindHostEvents();
     await snapshotTimeline();
@@ -2197,8 +2196,7 @@ ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.va
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
 
-// Landing-page chips: open a chat (the agent used last) with the prompt ready to send.
-document.querySelectorAll("#starter [data-prompt]").forEach((b) => { b.onclick = () => { if (!activeChat) newChat(ui.agent.value === "codex" ? "codex" : "claude"); ui.input.value = b.dataset.prompt; ui.input.focus(); }; });
+
 // Whisper model row: the one big download, visible and under the user's control. Also tells Claude what is available.
 function whisperState() { const inst = installedModels(); return (modelReady() ? "ready (" + currentModel() + ")" : "not downloaded (" + currentModel() + " chosen)") + (inst.length && !modelReady() ? "; installed: " + inst.join(", ") : ""); }
 function renderModelRow() {
@@ -2452,8 +2450,11 @@ ui.model.onchange = () => restartSession(session && session.sessionId);
 // Chats are tabs. Each holds its own agent, model, messages and session; switching parks the one on screen
 // (its session stays alive) and shows another. New chats open next to it. Not while a turn is running.
 const chats = []; let chatSeq = 0; let activeChat = null;
+let mediaAnalysisAsked = false;
 function renderTabs() {
   document.body.classList.toggle("landing", !activeChat); // no chat open: the landing page, not the chat UI
+  // The media-analysis question is a chat card, and the landing page hides the chat: ask when a chat first shows.
+  if (activeChat && !mediaAnalysisAsked) { mediaAnalysisAsked = true; setTimeout(() => { checkMediaAnalysis().catch(() => {}); }, 800); }
   const tabs = chats.map((c) => {
     const b = document.createElement("button"); b.type = "button"; b.textContent = c.label;
     b.classList.toggle("active", chatView && c === activeChat);
