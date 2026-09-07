@@ -18,3 +18,11 @@ test("ledger answers visibility by lookup and grades every cut", () => {
   assert.ok(at10.hiddenBefore >= 0.45 && at10.hiddenAfter >= 0.45);
   assert.deepStrictEqual(at10.by, ["V2 broll 50%"]);
 });
+
+test("an adjustment layer is never part of the visibility question", () => {
+  const rows = [row({ end: 20 }), row({ track: "V3", name: "Adjustment Layer", mediaPath: "", graphic: true, alpha: false })];
+  const snap = { name: "s", width: 1080, height: 1920, duration: 20, clips: rows.map(snapClip) };
+  const L = buildLedger(snap, { w: 1080, h: 1920, rows });
+  assert.strictEqual(L.clips[1].cover, "none");
+  assert.deepStrictEqual(visibleAt(L, 5).over, []);
+});

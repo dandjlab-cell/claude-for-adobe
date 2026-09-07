@@ -2,7 +2,7 @@
 // own clip data and kept next to the project, so every decision starts from a lookup instead of a fresh read.
 // Built from clip_transforms rows (Motion, Crop, Opacity, source size, Alpha, masks) and the sequence frame.
 "use strict";
-const { coverAt, clipRect } = require("./cover.cjs");
+const { coverAt, clipRect, coverKind } = require("./cover.cjs");
 
 // Per clip: where it sits and how much of the frame it occupies. Per cut: how hidden it is on either side.
 // Per half second: the base track's cover, so "is V1 visible at t" is a lookup.
@@ -11,7 +11,9 @@ function buildLedger(snap, transforms, { base = "V1", step = 0.5, half = 0.25 } 
   const hasAlpha = (p) => !!rows.find((c) => c.mediaPath === p && c.alpha);
   // A clip whose geometry cannot be read (AE comps and MOGRTs report no source size) is assumed to fill the frame:
   // that is the conservative reading, and the renderer settles it.
-  const clips = rows.map((c) => { const r = clipRect(c, W, H); const known = !!r; const rr = r || { x0: 0, y0: 0, x1: 1, y1: 1 }; return { track: c.track, name: c.name, mediaPath: c.mediaPath || "", start: c.start, end: c.end, rect: rr, geometryKnown: known, share: Number((((rr.x1 - rr.x0) * (rr.y1 - rr.y0))).toFixed(3)), opacity: c.opacity, crop: c.crop, alpha: c.alpha, masked: c.masked, graphic: c.graphic }; });
+  // cover: "opaque" (footage, alpha-less still), "alpha" (AE comp, MOGRT, alpha still: may or may not hide),
+  // "none" (adjustment layer, title, synthetic item, opacity under 50%: never part of the visibility question).
+  const clips = rows.map((c) => { const r = clipRect(c, W, H); const known = !!r; const rr = r || { x0: 0, y0: 0, x1: 1, y1: 1 }; return { track: c.track, name: c.name, mediaPath: c.mediaPath || "", start: c.start, end: c.end, rect: rr, geometryKnown: known, share: Number((((rr.x1 - rr.x0) * (rr.y1 - rr.y0))).toFixed(3)), opacity: c.opacity, crop: c.crop, alpha: c.alpha, masked: c.masked, graphic: c.graphic, cover: coverKind(c, hasAlpha) }; });
   // Every footage edge on every track is a cut worth grading (seams() only lists the ones that change the
   // picture in the binary model; here the fraction is the point).
   const edges = new Map();
@@ -29,7 +31,7 @@ function buildLedger(snap, transforms, { base = "V1", step = 0.5, half = 0.25 } 
 function visibleAt(ledger, t) {
   const i = Math.min(ledger.cover.length - 1, Math.max(0, Math.floor(t / ledger.coverEvery)));
   const hidden = ledger.cover[i] ? ledger.cover[i][1] : 0, maybe = ledger.cover[i] ? (ledger.cover[i][2] === undefined ? hidden : ledger.cover[i][2]) : 0;
-  const over = ledger.clips.filter((c) => c.track !== ledger.base && c.start <= t && t < c.end && c.share);
+  const over = ledger.clips.filter((c) => c.track !== ledger.base && c.start <= t && t < c.end && c.share && c.cover !== "none");
   return { hidden, maybe, baseVisible: 1 - hidden, over: over.map((c) => c.track + " \"" + c.name + "\" " + Math.round((c.share || 0) * 100) + "%" + (c.masked ? " masked" : "") + (c.alpha || c.graphic ? " (alpha: may or may not hide)" : "")) };
 }
 

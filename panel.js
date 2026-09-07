@@ -1113,7 +1113,7 @@ async function settleMoments(times, baseIdx, card, label) {
 function alphaCoverCache() { try { return JSON.parse(fs.readFileSync(path.join(analysisDir(), "alpha-cover.json"), "utf8")); } catch (_) { return {}; } }
 async function settleAlphaLayers(L, baseIdx, card) {
   const cache = alphaCoverCache();
-  const layers = L.clips.filter((c) => c.track !== L.base && (c.alpha || c.graphic) && c.share > 0 && c.mediaPath);
+  const layers = L.clips.filter((c) => c.track !== L.base && c.cover === "alpha" && c.share > 0 && c.mediaPath);
   const need = [];
   for (const c of layers) if (!cache[c.mediaPath]) need.push(c);
   if (need.length) {
@@ -1150,7 +1150,7 @@ async function visibleAtTool({ at_seconds, base_track = 1, settle = false } = {}
   const layerVerdict = (mediaPath) => cache[mediaPath];
   const settledText = (t) => { const k = [...settled.keys()].find((x) => Math.abs(x - t) < 0.01); return k === undefined ? "" : " RENDERED: " + base + " is " + Math.round(settled.get(k) * 100) + "% of what the viewer sees"; };
   // Per cut: the alpha layers over it, with their cached verdicts when known.
-  const layersOver = (t) => L.clips.filter((c) => c.track !== base && (c.alpha || c.graphic) && c.share && c.start <= t && t < c.end);
+  const layersOver = (t) => L.clips.filter((c) => c.track !== base && c.cover === "alpha" && c.share && c.start <= t && t < c.end);
   const cutVerdict = (c) => {
     const over = [...new Set(layersOver(c.t - 0.25).concat(layersOver(c.t + 0.25)))];
     if (!over.length) return "";
