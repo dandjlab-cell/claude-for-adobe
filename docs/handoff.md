@@ -2,9 +2,9 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe
-**Date:** 2026-09-07 (evening)
+**Date:** 2026-09-07 (night)
 **Branch:** `main`
-**Last commit:** `5bb9087` rough_cut transcript step: Premiere's own transcript first, Whisper with progress otherwise (everything after v0.1.77 `a39b166`-era is unreleased main; see Current State)
+**Last commit:** `336637d` doubles fix (findRestarts) + place_broll by name/bin path + prompt rules (everything after v0.1.77 `a39b166`-era is unreleased main; see Current State)
 **Role:** BUILDER (make changes, run tests, ship releases; VERIFIER = reproduce and confirm without editing. Default here is BUILDER; confirm with the user before a release.)
 
 ---
@@ -39,9 +39,9 @@ A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that
 
 ## Current State
 
-- 144 tests, 143 pass, 1 skipped offline (`node --test test/*.test.cjs`). Privacy scan is part of the suite and the pre-push hook.
+- 145 tests, 144 pass, 1 skipped offline (`node --test test/*.test.cjs`). Privacy scan is part of the suite and the pre-push hook.
 - Working end to end on the user's Mac (Apple Silicon, Premiere 26.3.2) on the dev panel: rough_cut to the indexed transcript, authored thoughts, audio_cut report and apply, Cut silences with the trace, morph_cut, multicam_switch, visible_at, sound_events, fill and face focus with read-backs, Copy chat, bug report, job bar, Stop.
-- Not yet validated by the user: the doubles fix (not written), b-roll placement after rough_cut (broken, see above), Auto Reframe tracking pass on the survivors, captions on the 9:16 result, Codex agent inside the panel, caption band routes.
+- Not yet validated by the user: the doubles fix (written and unit/offline-tested, `336637d`), b-roll placement by clip name after rough_cut (written, untested in Premiere), Auto Reframe tracking pass on the survivors, captions on the 9:16 result, Codex agent inside the panel, caption band routes.
 
 ## Key Files
 
@@ -89,13 +89,14 @@ Private, per-machine notes under `~/.claude/projects/<this repo's scope>/memory/
 
 ## What's Next
 
-1. **Fix the doubles the restart detector missed (`src/thoughts_authored.cjs`, `findRestarts`).** Verified tonight by running it on the three doubled phrases from the run: it returns nothing for all three. Causes: (a) exact-token match, so "premier" vs "premiere" breaks the 4-word run; (b) a comma before the retake is treated as a list (`endsPunct(rows[j-1])`), which kills every Whisper-punctuated retake; (c) a repeated run opening on "and", or preceded by "and", is treated as a list, which killed the one clean five-word recurrence ("and tight, which makes decisions…"); (d) 1–2 word stutters ("reach which reach which") are under the floor. Planned change, not yet written: fuzzy token equality (prefix or edit distance 1), drop the comma and "and" exceptions when the recurrence is inside one authored thought, lower floor to 2 words when the run starts the thought. Also fix the report line in `report()` that says "cuts only between thoughts, never inside one" (the planner does cut inside; it found none). Add the four phrases as a test in `test/thoughts_authored.test.cjs`. The semantic double ("a lot of room to go" / "more room to grow") needs a prompt rule in the authoring step: two thoughts making the same point get a `retake_of` link. Re-run: select the two bins, say "make this a 9x16 video", audio_cut report must show those four spans as dropped.
-2. **`place_broll` cannot resolve a clip by name or bin path** (`ERR:no project item for v2.mov` and for `<bin path>/v2.mov`, while `project_bins` lists it). Root cause confirmed in `host/premiere.jsx` (`findItemByMedia`, ~line 777): it walks the project comparing `getMediaPath()` to the argument by exact string, so only a full media path matches; the model passes a clip name or a bin path. Fix: accept a name or `bin/path/name` too (match `c.name` and the bin path the way `project_bins` builds it; error if ambiguous), and add to the prompt: a failed place_broll is reported, never scripted around with ad-hoc ExtendScript.
-3. **Run the rest of the 9:16 loop on the survivors**: b-roll over the hook and the project-file section, `reframe` (Auto Reframe) for tracking, `seam_frames`/`layer_frames` checks, captions. Wall time per step goes in the log.
-4. **Release beyond 0.1.77**: everything since `542edd9` is dev-only. Bump `CSXS/manifest.xml` + `package.json`, review the host-script changes (`closeGaps`, `isGraphicItem`, `createSequenceFromBin` parent bin, `clipTransforms` fields) under the AGENTS.md rule and log in `docs/codex-review-log.md`, then `sh scripts/package.sh` and `gh release create`. Never run `gh release create` without an explicit go from the user in this session.
-5. **Keystroke doorbell decision** (needs the Accessibility permission): the only way to reach command ids (Speech to Text, etc.). The user has not decided; do not build without a yes.
-6. **Default Media Scaling preference** (Preferences > Media): still unknown; needed to know what scale 100% means for fill on other machines.
-7. Parked: `sound_events` on a cut with a real laugh; `similar_shots` over the embedding cache (audio record start field unpinned); masks in the cover model; caption band routes (track-style inheritance, import-a-sequence); Codex in the panel; After Effects panel; ZXP signing.
+1. **RE-RUN THE 9:16 LOOP (needs the editor: Premiere control was declined for the agent).** Code for last night's two failures is written, tested and installed to the dev panel (`336637d`); the host script changed, so **restart Premiere first**. Then: footer shows the dev panel; select the TALKING HEAD and BROLL bins; say "make this a 9x16 video". Pass criteria: the audio_cut report lists the "premier project / premiere project file" restart, the "reach which reach which" stutter and the "and tight, which makes decisions…" restart under Dropped (verified offline on the run's real word timings: all three found, no false positives in the raw 726-word take series beyond genuine repeats), and the two "room to go / room to grow" thoughts are linked by `retake_of` so one is dropped (prompt rule; model behaviour, not yet observed). Listen through the kept pieces for anything said twice.
+2. **Then b-roll, tracking, captions on the survivors** in the same session: `place_broll` now takes the clip name or `bin/path/name` as `project_bins` prints it (exact media path still wins; several matches is an error naming them), so "v2.mov" resolves. Then `reframe` (no bin) once for tracking, `seam_frames`/`layer_frames`, captions last. Wall time per step goes in the log. If place_broll still errors, the new prompt rule says the model reports it and stops; the error text is the bug report.
+3. **Release beyond 0.1.77**: everything since `542edd9` is dev-only. Bump `CSXS/manifest.xml` + `package.json`, review the host-script changes (`closeGaps`, `isGraphicItem`, `createSequenceFromBin` parent bin, `clipTransforms` fields, `findItemByMedia`) under the AGENTS.md rule and log in `docs/codex-review-log.md`, then `sh scripts/package.sh` and `gh release create`. Never run `gh release create` without an explicit go from the user in this session.
+4. **Keystroke doorbell decision** (needs the Accessibility permission): the only way to reach command ids (Speech to Text, etc.). The user has not decided; do not build without a yes.
+5. **Default Media Scaling preference** (Preferences > Media): still unknown; needed to know what scale 100% means for fill on other machines.
+6. Parked: `sound_events` on a cut with a real laugh; `similar_shots` over the embedding cache (audio record start field unpinned); masks in the cover model; caption band routes (track-style inheritance, import-a-sequence); Codex in the panel; After Effects panel; ZXP signing.
+
+**findRestarts rules now (`src/thoughts_authored.cjs`):** tokens match fuzzily (one a prefix of the other, or edit distance 1, both ≥4 letters); an immediate repeat needs 2 words, a repeat with words between needs 4; a comma before the retake is not a list; a run opening on and/or/nor/but/so is a list only when 1–3 words sit between the attempts (the slot: "and we painted the WALLS and we painted the ceiling"); a retake preceded by and/or/nor is a list; with more than 3 words between and no pause marking the retake, the cut is exactly [first attempt, retake). Ceiling: a genuine list whose slot is 4+ words and whose repeated template is 4+ words reads as a restart.
 
 ## Known Issues
 
@@ -116,10 +117,10 @@ Private, per-machine notes under `~/.claude/projects/<this repo's scope>/memory/
 ```bash
 cd ~/DevApps/claude-for-adobe
 git pull
-node -e 'const {findRestarts}=require("./src/thoughts_authored.cjs");const mk=s=>s.split(" ").map((t,i)=>({text:t,start:i*0.3,end:i*0.3+0.25}));console.log(findRestarts(mk("and tight which makes decisions on what to keep and generates text on what parts and tight which makes decisions")))'  # prints [] today; item 1 is done when it prints one restart
+node -e 'const {findRestarts}=require("./src/thoughts_authored.cjs");const mk=s=>s.split(" ").map((t,i)=>({text:t,start:i*0.3,end:i*0.3+0.25}));console.log(findRestarts(mk("and tight which makes decisions on what to keep and generates text on what parts and tight which makes decisions")))'  # prints one restart (cut 0 -> 4.5) since 336637d
 gh auth status                          # must show dandjlab-cell before any release
 claude --version                        # CLI present (the panel also accepts the desktop app's login)
-node --test test/*.test.cjs            # 144 tests, 143 pass, 1 skips offline; privacy.test.cjs scans the tree
+node --test test/*.test.cjs            # 145 tests, 144 pass, 1 skips offline; privacy.test.cjs scans the tree
 sh scripts/install.sh                   # also installs the pre-push privacy hook
 # release: bump CSXS/manifest.xml AND package.json to X.Y.Z, then
 sh scripts/package.sh && gh release create vX.Y.Z dist/ClaudeForAdobe-X.Y.Z.zip dist/ClaudeForAdobe.zip --title "Claude for Adobe X.Y.Z" --notes "..."
