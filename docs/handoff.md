@@ -2,7 +2,7 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe
-**Date:** 2026-09-05
+**Date:** 2026-09-07
 **Branch:** `main`
 **Last commit:** see `git log -1` (0.1.68 was `ea7dd8d`; everything after it is unreleased main)
 **Role:** BUILDER (make changes, run tests, ship releases; VERIFIER = reproduce and confirm without editing. Default here is BUILDER; confirm with the user before a release.)
@@ -24,6 +24,43 @@ A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that
 - Skills shipped in `.claude/skills/`: edit-footage (the core workflow), cut-silences, organize-project, how-to-use, premiere-scripting (API can/cannot table + ES3 snippets). Subagents allowed (Haiku) for read-heavy steps.
 - Every message to Claude carries: the Frame line (sequence size vs footage sizes, MISMATCH flag), the open timeline name, and the Project panel selection (bin path). Long jobs run outside tool calls and nudge Claude when done.
 - Dev workflow: `sh scripts/install.sh` installs a side-by-side "Claude for Premiere (dev)" panel symlinked to the repo (own id, DevTools port 9296); the shipped copy comes from the zip.
+
+## 2026-09-05 to 09-07: native mechanisms, the trace, and the wipe (read this before touching Extract)
+
+**The timeline wipe was the gap-closing pass, not Extract.** Three days of value-based theories (out point at the
+last frame, a bad out value, BRAW audio, clip edges) were all wrong. A per-call trace (`extract a= b= in_read=
+out_read= end_before= end_after=` lines in the panel log and `<seq>.extract-trace.txt` next to the project) showed
+every range extracted exactly and `closeGaps` taking 269 s: an in point set on a one-frame hole is silently reset to
+zero and Extract runs from the head. `closeGaps` now extends the previous clip's `.end` to the next clip's start, no
+in/out points, and a length change there is an error. Lesson, in memory too: trace every host call before theorising.
+
+**Verified in Premiere 26.3.2 this weekend** (all rows in `.claude/skills/premiere-scripting/mechanisms.md`):
+`subject_path` (Auto Reframe keys are on the Auto Reframe component, source time + 5 frames, converted),
+`scene_cuts` (`performSceneEditDetectionOnSelection`, a flattened 5-cut export came back as 6 clips),
+`morph_cut` (QE `addTransition(getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")`; `matchnames.md`),
+`multicam_switch` (QE `item.setMulticam(true)`, `sequence.multicam.enable()`, `changeCamera(2)`: cuts at the playhead,
+switch applies FORWARD from the cut; the April "not exposed" note was wrong), `visible_at` + `settle: true`
+(visibility ledger from Premiere's clip data; alpha layers settled once per FILE by composite-vs-base-alone render,
+cached in `alpha-cover.json`), `sound_events` (Apple sound classifier; calibrated: a runner-up label under speech
+is not an event), Extract with the per-call trace, one-click Cut silences (settings moved to Settings).
+Also: `speaker_check` (Vision faces; facing/tilt from landmarks because Vision's yaw is quantised), `premiere_shortcut`
+(reads the editor's .kys), rhythm monitor after every edit, the media-analysis ask (Premiere's Media Intelligence
+preference read/written the way Adobe's Learn panel does; a decline is remembered).
+
+**Two doors found by reflection** (`surface-26.3.2.md`, `commands-26.md`): QE has razor, ripple delete, move to
+track, speed, transitions, playback, undo, render status, and `sequence.multicam`; all 1,231 command ids are NOT
+callable from a panel (keystrokes only). premiere-map Round 249 decoded Premiere's Media Intelligence embedding cache
+(`Analyzer Cache Files/*____Embedings.mfdc`: 512-d unit vectors, visual per sampled frame with
+`AdobeOneVisualB16-20250709`, audio per 0.3125 s): a reading tool (`similar_shots`) is the next build; text search
+stays Premiere's.
+
+**Eight lazy requires used `require("./src/...")`**, which CEP cannot resolve (the panel URL carries `%20`); every
+feature behind them failed silently inside Premiere for two days while tests passed. All are absolute now and a test
+forbids the relative form. A button job that throws marks its card Failed.
+
+**Parked:** a `sound_events` run on a cut with a real laugh (verifies the higher bar under speech); release 0.1.77
+(the public panel still has the wiping gap pass; the user has not said go); the audio embedding record's start field;
+`similar_shots` over the embedding cache; masks in the cover model; the caption band (track-style test, import-a-sequence).
 
 ## Current State
 
