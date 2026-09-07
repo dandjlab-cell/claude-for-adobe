@@ -1086,6 +1086,31 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 }
 
 // What the viewer sees at a time, or at every cut, from the ledger.
+// Repeated takes on the timeline, from whatever transcript exists (the exact timeline transcript first, else per clip).
+async function findTakesTool({ window_seconds = 90, min_similarity = 0.6, apply = false, source = "auto" } = {}) {
+  const card = addTool((apply ? "remove" : "find") + "_takes", "");
+  let snap, clips;
+  try { ({ snap, clips } = await audioClipsIn(0, Infinity)); } catch (error) { return err(card, error.message); }
+  const { findTakes, report } = require(path.join(extensionRoot, "src", "takes.cjs"));
+  let words = null, from = "";
+  const tlw = source === "auto" ? freshTimelineWords(snap) : null;
+  if (tlw) { words = tlw.words; from = "timeline transcript (exact for this cut)"; }
+  else {
+    let transcripts = []; if (source !== "whisper" && project.path) { try { transcripts = listTranscripts(project.path); } catch (_) {} }
+    words = []; const skipped = [];
+    clips.forEach((c) => { try { const r = wordsForClip(c, source, transcripts); const off = c.start - c.inPoint; r.words.forEach((w) => { const st = w.start + off, en = w.end + off; if (en > c.s0 && st < c.s1) words.push({ text: w.text, start: st, end: en }); }); from = from || r.from + " transcript per clip"; } catch (error) { skipped.push(c.name); } });
+    words.sort((a, b) => a.start - b.start);
+    if (!words.length) return err(card, "no transcript for this timeline" + (skipped.length ? " (" + skipped.join(", ") + ")" : "") + ": run transcribe_timeline, or transcribe in Premiere's Text panel and save");
+  }
+  const groups = findTakes(words, { window: Number(window_seconds) || 90, minSim: Number(min_similarity) || 0.6 });
+  const text = report(groups) + "\n(from the " + from + ")";
+  if (!apply || !groups.length) { card.done(text, true); return { text: text + (groups.length ? "\nSay find_takes with apply: true to drop the marked takes, or use keep_only with your own choice." : "") }; }
+  const cuts = union(groups.flatMap((g) => g.remove).map((r) => ({ start: r.start, end: r.end }))).sort((a, b) => b.start - a.start);
+  const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
+  const res = await applyCuts(card, cuts, false, cuts.length + " dropped take(s), " + total.toFixed(1) + "s, sequence " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s");
+  return { ...res, text: res.text + "\n" + text };
+}
+
 // Multicam angle switch through QE, verified by rendering the frame before and after.
 async function multicamSwitch({ at_seconds, camera, record = false } = {}) {
   const card = addTool("multicam_switch @" + Number(at_seconds).toFixed(2) + "s -> camera " + camera, "");
@@ -1874,7 +1899,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1923,6 +1948,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "find_takes", description: "Repeated takes from the transcript: a line said, stumbled, said again. Groups near-duplicate utterances within a window and picks the most complete take (most content words, fewest fillers, finished ending; later on a tie). Returns the groups with times and the ranges to drop; with apply: true it removes the dropped takes (working copy, one Cmd+Z step per range). Run after remove_silences and before story decisions; the transcript must exist (Premiere's or transcribe_timeline).",
+    inputSchema: { type: "object", properties: { window_seconds: { type: "number", description: "how far apart two takes of the same line can be, default 90" }, min_similarity: { type: "number", description: "0-1, default 0.6" }, apply: { type: "boolean", description: "remove the dropped takes now, default false (report only)" }, source: { type: "string", description: "auto | premiere | whisper, default auto" } }, required: [] } },
   { name: "multicam_switch", description: "EXPERIMENTAL, first run pending: switch the camera of a multicam clip at a time through Premiere's own multicam editor (QE sequence.multicam.changeCamera, the number-key switch). Just run it: the tool checks whether the clip under the playhead is a multicam source sequence and says so if not (sequence_overview marks them [MULTICAM SOURCE]). Runs on the working copy; renders the frame before and after and reports whether the picture changed and whether the clip count changed (a switch mid-clip cuts it like the number key does). Needs a multicam source sequence clip on the timeline.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, camera: { type: "number", description: "1-based camera number" }, record: { type: "boolean", description: "also toggle multicam record around the switch (as the 0 key does), default false" } }, required: ["at_seconds", "camera"] } },
   { name: "visible_at", description: "What the viewer sees at a time, by lookup from the visibility ledger (computed from Premiere's own clip data whenever the timeline changes: Motion position/scale, Crop, Opacity, source size vs sequence frame, Alpha on stills, masks). Reports 'hidden for certain' (footage over the track) and 'possibly' (alpha layers: AE comps, MOGRTs, alpha stills, which geometry cannot classify). With settle: true, every moment where those differ is settled by Premiere's own renderer: the composite is compared with the base track alone, and the share of the frame where they match is how much of the base track the viewer actually sees. Use it before deciding to hold on a face, cover a line, or put a transition on a cut.",
