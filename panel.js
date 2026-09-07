@@ -315,9 +315,27 @@ async function refreshFrameNote(snap) {
 }
 
 // Records changes only between Claude's turns; during a turn the edits are Claude's own.
+// The visibility ledger: what the viewer sees, computed once per timeline state from Premiere's own clip data
+// (one host call) and written next to the project, so decisions are lookups. Keyed by the timeline fingerprint.
+let ledgerCache = { key: "", ledger: null, transforms: null };
+async function getLedger(snap) {
+  snap = snap || timeline || (await readSnapshot().catch(() => null));
+  if (!snap || snap.error) return null;
+  const key = timelineFingerprint(snap) + "|" + snap.id;
+  if (ledgerCache.key === key && ledgerCache.ledger) return ledgerCache;
+  const transforms = await readTransforms();
+  const ledger = require("./src/ledger.cjs").buildLedger(snap, transforms);
+  ledgerCache = { key, ledger, transforms };
+  try { fs.mkdirSync(analysisDir(), { recursive: true }); fs.writeFileSync(seqFile(".visibility.json"), JSON.stringify({ timeline: key, ...ledger })); } catch (_) {}
+  return ledgerCache;
+}
+let ledgerTimer = null;
+function refreshLedgerSoon() { clearTimeout(ledgerTimer); ledgerTimer = setTimeout(() => { getLedger().catch((e) => log("ledger failed: " + e.message)); }, 800); }
+
 async function snapshotTimeline() {
   const next = await readSnapshot();
   refreshFrameNote(next);
+  if (!timeline || timelineFingerprint(timeline) !== timelineFingerprint(next) || (timeline && timeline.id !== next.id)) refreshLedgerSoon();
   if (!(session && session.busy) && timeline) {
     const changes = diffSnapshots(timeline, next);
     if (changes.length) { pendingChanges.push(...changes); if (pendingChanges.length > 40) pendingChanges = pendingChanges.slice(-40); }
@@ -1010,6 +1028,25 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
   return { text: copyNote + raw, isError: !ok };
 }
 
+// What the viewer sees at a time, or at every cut, from the ledger.
+async function visibleAtTool({ at_seconds, base_track = 1 } = {}) {
+  const card = addTool("visible_at" + (Number.isFinite(Number(at_seconds)) ? " @" + Number(at_seconds).toFixed(2) + "s" : " (all cuts)"), "");
+  let L; try { L = (await getLedger()).ledger; } catch (error) { return err(card, error.message); }
+  if (!L) return err(card, "no active sequence");
+  const { visibleAt } = require("./src/ledger.cjs");
+  const base = "V" + base_track;
+  let text;
+  if (Number.isFinite(Number(at_seconds))) {
+    const v = visibleAt({ ...L, base }, Number(at_seconds));
+    text = base + " at " + Number(at_seconds).toFixed(2) + "s: " + Math.round(v.baseVisible * 100) + "% visible, " + Math.round(v.hidden * 100) + "% hidden" + (v.over.length ? " under " + v.over.join(", ") : "") + ". (masked = a mask on that clip, real cover unknown; graphic = drawn over the picture, not cover)";
+  } else {
+    const lines = L.cuts.map((c) => c.t.toFixed(2) + "s  " + c.edges.join(" | ") + "  hidden before " + Math.round(c.hiddenBefore * 100) + "% after " + Math.round(c.hiddenAfter * 100) + "%" + (c.by.length ? "  by " + c.by.join(", ") : ""));
+    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + "):\n" + lines.join("\n") + "\nA cut hidden over 65% on either side is not a seam the viewer sees.";
+  }
+  card.done(text, true);
+  return { text };
+}
+
 // Sound events on the timeline (laughter, applause, reactions, music) from Apple's classifier over the rendered mix.
 async function soundEvents({ start_seconds = 0, end_seconds, min_confidence } = {}) {
   const card = addTool("sound_events", "");
@@ -1098,7 +1135,7 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
   // Motion position and scale, Opacity, source size, and the Alpha flag of stills. A side-by-side covers half,
   // a picture-in-picture a corner, a full-frame still with no alpha all of it; titles, MOGRTs and AE comps none.
   const { coverAt } = require("./src/cover.cjs");
-  let tf = null; try { tf = await readTransforms(); } catch (_) {}
+  let tf = null; try { tf = (await getLedger()).transforms; } catch (_) {}
   const hasAlpha = (p) => !!(tf && tf.rows.find((c) => c.mediaPath === p && c.alpha));
   const half = Math.max(0.1, Number(frames) / 25 / 2); // half the transition in seconds; 25 fps is close enough at any common rate for a visibility window
   const MAX_COVER = 0.65; // more than this hidden on either side of the cut and nobody sees the seam
@@ -1675,7 +1712,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1724,6 +1761,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "visible_at", description: "What the viewer sees at a time, by lookup from the visibility ledger (computed from Premiere's own clip data whenever the timeline changes: Motion position/scale, Crop, Opacity, source size vs sequence frame, Alpha on stills, masks). Returns how much of the base track is hidden, by which clips and how much each, and the same for every cut in the sequence when no time is given. Instant; use it before deciding to hold on a face, cover a line, or put a transition on a cut.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number", description: "omit for the per-cut table" }, base_track: { type: "number", description: "1-based track whose picture is asked about, default 1" } }, required: [] } },
   { name: "sound_events", description: "Laughter, applause, cheering, sighs and gasps, music and keyboard noise on the timeline, with times, from Apple's built-in sound classifier over Premiere's own render of the mix. Free, on this Mac. Use it before removing pauses (a pause next to a laugh is a beat, not dead air), to find reactions worth cutting to, and to see where music runs. Results are saved next to the project for reuse.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number", description: "default 0" }, end_seconds: { type: "number", description: "default the whole sequence" }, min_confidence: { type: "number", description: "default 0.35" } }, required: [] } },
   { name: "speaker_check", description: "Is the speaker worth staying on here? Renders frames across a span with the b-roll tracks hidden and reads the face with macOS's Vision framework: whether the head is square to the lens, eyes open, mouth mid-word, how big the face is, and Apple's own capture quality. Use it before deciding to hold on the face for a key line, and before covering one. Measured geometry only, no mood: energy comes from the voice.",
@@ -1894,7 +1933,7 @@ async function boot() {
       // cut is checked (holes on V1, flash gaps and blinks on the b-roll tracks, scroll stop on vertical) and any
       // finding is appended to that tool's own result, where the model cannot miss it.
       const run = async () => { const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline); const out = await TOOLS[name](args);
-        if (timelineFingerprint(timeline) !== fpBefore) { const note = require("./src/rhythm.cjs").rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
+        if (timelineFingerprint(timeline) !== fpBefore) { refreshLedgerSoon(); const note = require("./src/rhythm.cjs").rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
       const next = toolQueue.then(run, run);
       toolQueue = next.catch(() => {});
       return next;
