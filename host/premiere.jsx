@@ -141,30 +141,7 @@ var PCX = (function () {
     prep(s.videoTracks, "v");
     prep(s.audioTracks, "a");
     var before = num(s.end) / T;
-    // No range may touch or cross a clip edge on any track. 2026-09-07: a silence spanning the seam between two
-    // clips removed the whole first clip (Extract ran from zero with the out at that clip's end); the two isolated
-    // failures on 09-05 also sat on edges. Split every range at edges and keep one frame clear of each.
-    var edges = [];
-    (function () {
-      function walk(list) { for (var t = 0; t < list.numTracks; t++) { var tr = list[t]; for (var c = 0; c < tr.clips.numItems; c++) { edges.push(num(tr.clips[c].start.ticks) / T); edges.push(num(tr.clips[c].end.ticks) / T); } } }
-      walk(s.videoTracks); walk(s.audioTracks);
-      edges.sort(function (x, y) { return x - y; });
-    }());
-    var pieces = [];
-    for (var ri = 0; ri < R.length; ri++) {
-      var ra = R[ri][0], rb = R[ri][1], cur = ra;
-      for (var ei = 0; ei < edges.length; ei++) {
-        var e = edges[ei];
-        if (e <= ra + F * 0.5 || e >= rb - F * 0.5) { if (Math.abs(e - ra) <= F * 0.5) cur = Math.max(cur, e + F); continue; }
-        if (e - F > cur) pieces.push([cur, e - F]);
-        cur = e + F;
-      }
-      for (var ej = 0; ej < edges.length; ej++) if (Math.abs(edges[ej] - rb) <= F * 0.5) rb = edges[ej] - F;
-      if (rb > cur) pieces.push([cur, rb]);
-    }
-    pieces.sort(function (x, y) { return y[0] - x[0]; });
-    var split = pieces.length - R.length;
-    R = pieces;
+    var split = 0;
     var done = 0, errs = [], trace = [];
     for (var i = 0; i < R.length; i++) {
       var a = Math.ceil(R[i][0] / F - 0.000001) * F;
@@ -227,6 +204,7 @@ var PCX = (function () {
     var endBeforeGaps = num(s.end);
     var closed = closeGaps(q, s);
     trace.push("closeGaps closed=" + closed + " end_before=" + (endBeforeGaps / T).toFixed(3) + " end_after=" + (num(s.end) / T).toFixed(3));
+    if (closed < 0) errs.push("gap closing changed the sequence length from " + (endBeforeGaps / T).toFixed(2) + "s to " + (num(s.end) / T).toFixed(2) + "s; it must never; press Cmd+Z once and report this");
     for (var k = 0; k < saved.tracks.length; k++) {
       var w = saved.tracks[k];
       try { if (w.qt) w.qt.setSyncLock(w.sync); } catch (e) {}
@@ -284,32 +262,30 @@ var PCX = (function () {
   // Extract leaves an occasional one-frame hole where a range edge rounds to a frame. Find gaps under
   // two frames between consecutive clips on any video track and extract them (ripples all tracks).
   // Returns "closed=N".
+  // Close the one-to-two-frame holes Extract leaves where a range edge rounds to a frame. NOT with Extract:
+  // that was the wipe. 2026-09-07 trace: every range extracted exactly, then "closeGaps end_before=348.682
+  // end_after=79.288": setting an in point on a one-frame hole makes Premiere reset it to zero, and Extract runs
+  // from the head (the 09-05 pairs, 23.87 vs 23.90, were the same thing one pass later). A hole is now closed by
+  // extending the clip before it to the next clip's start, video and audio alike: no in/out points, no ripple,
+  // one repeated frame at a silence edge. The sequence length must not change; if it does, that is reported.
   function closeGaps(q, s) {
     var F = num(s.timebase);
-    var gaps = [];
+    var closed = 0, failed = 0, d0 = num(s.end);
     function scan(list) {
       for (var t = 0; t < list.numTracks; t++) {
         var c = list[t].clips;
         for (var i = 1; i < c.numItems; i++) {
           var g0 = num(c[i - 1].end.ticks), g1 = num(c[i].start.ticks);
-          if (g1 - g0 > 0 && g1 - g0 < F * 3) gaps.push([g0, g1]);
+          if (g1 - g0 > 0 && g1 - g0 < F * 3) {
+            try { var te = new Time(); te.seconds = g1 / T; c[i - 1].end = te; if (Math.abs(num(c[i - 1].end.ticks) - g1) <= F * 0.5) closed++; else failed++; } catch (e) { failed++; }
+          }
         }
       }
     }
     scan(s.videoTracks);
     scan(s.audioTracks);
-    gaps.sort(function (x, y) { return y[0] - x[0]; });
-    var closed = 0;
-    for (var k = 0; k < gaps.length; k++) {
-      try {
-        s.setInPoint(gaps[k][0] / T);
-        s.setOutPoint(gaps[k][1] / T);
-        var d0 = num(s.end);
-        q.extract();
-        if (num(s.end) !== d0) closed++;
-      } catch (e) {}
-    }
-    return closed;
+    if (num(s.end) !== d0) return -1; // must never happen: the caller reports it
+    return failed ? closed + 0.5 : closed; // a .5 marks that some hole could not be closed (media ended)
   }
 
   function closeGapsActive() {
