@@ -1086,6 +1086,73 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 }
 
 // What the viewer sees at a time, or at every cut, from the ledger.
+// The rough cut as a script: fixed order, each step a tool that already exists, a stop only where judgement is
+// needed. A prompt can drift; this cannot.
+async function roughCut({ bin = "", aspect, preset, width, height, name = "", language = "en" } = {}) {
+  const card = addTool("rough_cut " + (bin || "(selected bin)") + " " + (aspect || preset || (width && height ? width + "x" + height : "")), "");
+  card.open();
+  const steps = [];
+  const dur = async () => { const sn = await readSnapshot().catch(() => null); return sn && !sn.error ? sn.duration : NaN; };
+  const first = (t) => String(t || "").replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "").split("\n").find((l) => l.trim()) || "";
+  const stop = (why) => { const text = steps.concat(["STOPPED: " + why]).join("\n"); card.done(text, false); return { text, isError: true }; };
+  // 1. the sequence at the shape, no tracking
+  card.progress(0, 5, "sequence ");
+  const r1 = await createSequence({ bin, name, aspect, preset, width, height, insert_clips: true });
+  if (r1.isError) return stop("sequence: " + first(r1.text));
+  const d1 = await dur();
+  steps.push("1. Sequence: " + first(r1.text) + " (" + d1.toFixed(1) + "s, footage filled and centred, tracking deferred to the end)");
+  // 2. silences
+  card.progress(1, 5, "silences ");
+  const r2 = await removeSilences({ method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value), dry_run: false });
+  const d2 = await dur();
+  steps.push("2. Silences: " + first(r2.text) + " -> " + d2.toFixed(1) + "s");
+  if (r2.isError) return stop("silences failed; fix that first");
+  // 3. transcript
+  card.progress(2, 5, "transcript ");
+  let snap = await readSnapshot().catch(() => null);
+  if (!snap || snap.error) return stop("could not read the timeline after the silence pass");
+  let from = "";
+  if (freshTimelineWords(snap)) from = "exact timeline transcript (cached)";
+  else {
+    let transcripts = []; try { transcripts = project.path ? listTranscripts(project.path) : []; } catch (_) {}
+    const { clips } = await audioClipsIn(0, Infinity);
+    const allPremiere = clips.length && clips.every((c) => { try { return !!transcriptForClip(transcripts, c) || !!(c.mediaPath && cachedWords(c.mediaPath)); } catch (_) { return false; } });
+    if (allPremiere) from = "Premiere's transcript per clip (or Whisper cache)";
+    else {
+      if (!modelReady()) return stop("no transcript for these clips and the Whisper model is not installed: transcribe in Premiere's Text panel and save, or run transcribe_timeline once (it offers the download), then run rough_cut again");
+      const wav = seqFile(".mix.wav");
+      fs.mkdirSync(analysisDir(), { recursive: true });
+      try { fs.unlinkSync(wav); } catch (_) {}
+      const preset = wavPreset();
+      if (!preset) return stop("could not find Premiere's WAV export preset");
+      setStatus("Rendering timeline audio…");
+      const out = await host("exportSequenceAudio", wav, preset);
+      if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return stop("audio render failed: " + out.replace(/^ERR:/, ""));
+      setStatus("Whisper: timeline…");
+      try { const r = await transcribeRenderedTimeline(wav, snap, language); from = "Whisper on the timeline render (" + r.words.length + " words)"; } catch (error) { return stop("transcription failed: " + error.message); }
+      setStatus("Ready");
+    }
+  }
+  steps.push("3. Transcript: " + from);
+  // 4. fillers
+  card.progress(3, 5, "fillers ");
+  const r4 = await removeFillers({ dry_run: false });
+  const d4 = await dur();
+  steps.push("4. Fillers: " + first(r4.text) + " -> " + d4.toFixed(1) + "s");
+  // 5. takes
+  card.progress(4, 5, "takes ");
+  const r5 = await findTakesTool({ apply: true });
+  const d5 = await dur();
+  steps.push("5. Takes: " + first(r5.text) + " -> " + d5.toFixed(1) + "s");
+  // the material for the story
+  const rt = await readTranscript({});
+  const lines = String(rt.text || "").split("\n").slice(0, 120).join("\n");
+  const broll = /(\d+) clip\(s\) from a b-roll bin were NOT laid/.exec(r1.text || "");
+  const text = steps.join("\n") + "\n\nThe cut is " + d5.toFixed(1) + "s (from " + d1.toFixed(1) + "s raw). Original clips untouched; every step is Cmd+Z on the new sequence." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW THE JUDGEMENT, yours: read the transcript below, decide which lines carry the story, in what order, to what length; then keep_only, place_broll, and reframe (no bin) once for tracking and checks.\n\n" + lines;
+  card.done(steps.join("\n") + "\n-> " + d5.toFixed(1) + "s; the story is next", true);
+  return { text };
+}
+
 // Repeated takes on the timeline, from whatever transcript exists (the exact timeline transcript first, else per clip).
 async function findTakesTool({ window_seconds = 90, min_similarity = 0.6, apply = false, source = "auto" } = {}) {
   const card = addTool((apply ? "remove" : "find") + "_takes", "");
@@ -1904,7 +1971,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1953,6 +2020,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Runs the fixed order and cannot be reordered: (1) a new sequence at the shape from the talking-head bin, footage filled and centred, NO tracking; (2) silences removed with the Settings method; (3) the transcript: the exact timeline transcript if cached, Premiere's per clip if the clips carry one, else Whisper on the render (waits for it); (4) fillers, stutters and repeats removed; (5) repeated takes dropped, the most complete kept. Then it STOPS and returns the transcript lines and the b-roll bins for the one step that is judgement: the story, the order, the length. After keep_only and place_broll, call reframe (no bin) once for tracking and checks. Each step is one or more Cmd+Z steps on the new sequence; the original clips are untouched.",
+    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path of the talking-head footage; default the selected bin" }, aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9" }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, name: { type: "string" }, language: { type: "string", description: "for Whisper, default en" } }, required: [] } },
   { name: "find_takes", description: "Repeated takes from the transcript: a line said, stumbled, said again. Groups near-duplicate utterances within a window and picks the most complete take (most content words, fewest fillers, finished ending; later on a tie). Returns the groups with times and the ranges to drop; with apply: true it removes the dropped takes (working copy, one Cmd+Z step per range). Run after remove_silences and before story decisions; the transcript must exist (Premiere's or transcribe_timeline).",
     inputSchema: { type: "object", properties: { window_seconds: { type: "number", description: "how far apart two takes of the same line can be, default 90" }, min_similarity: { type: "number", description: "0-1, default 0.6" }, apply: { type: "boolean", description: "remove the dropped takes now, default false (report only)" }, source: { type: "string", description: "auto | premiere | whisper, default auto" } }, required: [] } },
   { name: "multicam_switch", description: "EXPERIMENTAL, first run pending: switch the camera of a multicam clip at a time through Premiere's own multicam editor (QE sequence.multicam.changeCamera, the number-key switch). Just run it: the tool checks whether the clip under the playhead is a multicam source sequence and says so if not (sequence_overview marks them [MULTICAM SOURCE]). Runs on the working copy; renders the frame before and after and reports whether the picture changed and whether the clip count changed (a switch mid-clip cuts it like the number key does). Needs a multicam source sequence clip on the timeline.",

@@ -26,3 +26,16 @@ test("timeline shape carries counts, not names", () => {
   const s = timelineShape({ width: 1080, height: 1920, duration: 20.5, clips: [{ track: "V1", name: "secret" }, { track: "V2", name: "x" }, { track: "A1", name: "y" }] });
   assert.strictEqual(s, "1080x1920, 20.50s, 3 clips: A1=1 V1=1 V2=1");
 });
+
+test("names the caller did not list still become tags: filenames, quoted names, bin paths", () => {
+  const log = [
+    "tool project_bins 0.0s -> v3.mov",
+    "selection: Project panel: bin \"BROLL\" (2 items), bin \"TALKING HEAD\" (2 items) [bin path 2_TO EDIT/090726_qRAFT/BROLL]",
+    "active sequence is now \"090726_qRAFT 9x16\" (1080x1920, 23.06s)",
+    "tool morph_cut 0.3s -> CHECK PASS after \"V1\"",
+  ].join("\n");
+  const r = redact(log, { names: [] });
+  assert.ok(!/v3|BROLL|TALKING HEAD|qRAFT|TO EDIT/.test(r), r);
+  assert.ok(/item-[0-9a-f]{5}\.mov/.test(r));
+  assert.ok(/"V1"/.test(r) && /PASS/.test(r), "track names and verdicts stay readable");
+});

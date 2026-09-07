@@ -26,6 +26,12 @@ function redact(text, { names = [] } = {}) {
   // transcript-bearing tool lines are dropped whole: quoted words are the editor's content
   out = out.split("\n").filter((l) => !/tool (read_transcript|find_in_transcript|transcribe_\w+|remove_fillers|remove_pauses|save_notes|list_analysis)/.test(l)).join("\n");
   out = redactNames(out, names);
+  // Names the caller did not know about: any media or project filename anywhere, every quoted name (bins, clips,
+  // sequences are logged in quotes), and bin paths segment by segment.
+  out = out.replace(/[^\s"'\[\]()|,;:]+\.(mov|mp4|m4v|mxf|braw|r3d|crm|arw|wav|aif|aiff|mp3|m4a|png|jpe?g|tiff?|psd|ai|svg|aep|mogrt|prproj|srt|vtt)\b/gi, (m) => { const ext = /\.[A-Za-z0-9]+$/.exec(m)[0]; return tag(m.slice(0, -ext.length)) + ext.toLowerCase(); });
+  out = out.replace(/"([^"\n]{1,120})"/g, (m, inner) => /^(V\d+|A\d+|item-[0-9a-f]{5}[^"]*|[\d.:]+s?|PASS|FAIL|[A-Z_]+)$/.test(inner) ? m : "\"" + tag(inner) + "\"");
+  out = out.replace(/\[bin path ([^\]]+)\]/g, (m, p) => "[bin path " + p.split("/").map((seg) => tag(seg)).join("/") + "]");
+  out = out.replace(/\bbin ("?)([^"\n(]+?)\1 \((\d+ items?)\)/g, (m, q, name, n) => "bin \"" + tag(name) + "\" (" + n + ")");
   // Any absolute path under /Users or /Volumes (spaces included) becomes root + tag(basename) + extension. A path
   // in a log line runs to the closing quote when quoted, else to the end of the line.
   out = out.split("\n").map((line) => {

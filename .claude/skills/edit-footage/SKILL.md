@@ -10,9 +10,7 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 **The order for "make me a 9:16 (or 4:5, 16:9) video from this folder".** Tracking, frames and checks are the
 expensive steps; cutting is cheap. They come last, once, on what survives. Never run Auto Reframe,
 snapshot_moments or seam_frames on six minutes of raw footage that will become one.
-1. `create_sequence` at the asked shape (fill and centre, no tracking): the talking head bin only; b-roll stays out.
-2. `remove_silences` (voice). Then the transcript: Premiere's if the clips have one (`read_transcript`), else `transcribe_timeline`, which runs while you go on.
-3. `remove_fillers`, then `find_takes` (report), decide, then `find_takes` with apply: true or `keep_only` with your choice.
+1. `rough_cut` with the talking-head bin and the shape. ONE call; it runs steps 1 to 5 in order and cannot drift: sequence at the shape without tracking, silences, transcript (Premiere's, cached, or Whisper), fillers, repeated takes. It stops and hands you the transcript.
 4. The story: which lines carry it, in what order, to what length (`speaker_check` on the line that matters).
 5. `keep_only` to the target length. `sound_events` before cutting any pause on a conversation.
 6. B-roll from its bin over the lines that call for it (`place_broll`), to the rhythm rules.
