@@ -12,8 +12,26 @@ const GROUPS = {
   noise: ["typing", "typing_computer_keyboard", "door", "door_slam", "knock", "cough"],
 };
 const MIN_CONF = 0.35; // below this the classifier is guessing; laughter under speech usually reads 0.35-0.7
+// Calibrated 2026-09-07 on a talking head with no music: "music" read 0.38-0.58 in windows where "speech" read
+// 0.8-0.9. A runner-up label is not an event. Music and noise count only as the strongest label in the window;
+// laughter, applause and reactions count when strongest, or under speech only above a higher bar.
+const RULES = { laughter: { top: 0.35, under: 0.55 }, applause: { top: 0.35, under: 0.55 }, reaction: { top: 0.35, under: 0.6 }, music: { top: 0.35, under: 1.01 }, noise: { top: 0.35, under: 1.01 } };
 
 function groupOf(label) { for (const g in GROUPS) if (GROUPS[g].includes(label)) return g; return null; }
+
+// Which groups a window supports: label at or above the group's bar for its rank (strongest label or not).
+function hitsIn(window, minConf) {
+  const labels = (window.labels || []).slice().sort((a, b) => b[1] - a[1]);
+  const topConf = labels.length ? labels[0][1] : 0;
+  const hit = {};
+  for (const [id, conf] of labels) {
+    const g = groupOf(id); if (!g) continue;
+    const isTop = conf >= topConf - 1e-9;
+    const bar = Math.max(minConf, isTop ? RULES[g].top : RULES[g].under);
+    if (conf >= bar && (!hit[g] || conf > hit[g].conf)) hit[g] = { id, conf, top: isTop, dominant: labels[0][0] };
+  }
+  return hit;
+}
 
 // Parse the helper's output into windows [{t0, t1, labels: [[id, conf]...]}].
 function parseWindows(text) {
@@ -26,8 +44,7 @@ function segments(windows, { minConf = MIN_CONF, offset = 0 } = {}) {
   const out = [];
   const open = {};
   for (const w of windows) {
-    const hit = {};
-    for (const [id, conf] of w.labels || []) { const g = groupOf(id); if (g && conf >= minConf && (!hit[g] || conf > hit[g].conf)) hit[g] = { id, conf }; }
+    const hit = hitsIn(w, minConf);
     for (const g in GROUPS) {
       if (hit[g]) {
         if (open[g] && w.t0 <= open[g].end + 0.01) { open[g].end = w.t1; if (hit[g].conf > open[g].peak) { open[g].peak = hit[g].conf; open[g].label = hit[g].id; } }
@@ -47,4 +64,4 @@ function report(segs) {
   return Object.keys(by).map((g) => g + " (" + by[g].length + "): " + by[g].map((s) => f(s.start) + "-" + f(s.end) + " " + s.label + " " + s.peak).join(", ")).join("\n");
 }
 
-module.exports = { GROUPS, MIN_CONF, parseWindows, segments, report, groupOf };
+module.exports = { GROUPS, MIN_CONF, RULES, parseWindows, segments, report, groupOf, hitsIn };
