@@ -535,7 +535,7 @@ async function applyCuts(card, cuts, dryRun, summary) {
       // and nothing else. The first mismatch stops the loop before it can compound.
       const now = (await readSnapshot().catch(() => ({ duration: NaN }))).duration;
       const plannedSoFar = ordered.slice(0, i + 1).reduce((s, c) => s + (c.end - c.start), 0);
-      if (Number.isFinite(now) && Math.abs((durBefore - now) - plannedSoFar) > (i + 1) * 0.05 + 0.1) {
+      if (Number.isFinite(now) && Math.abs((durBefore - now) - plannedSoFar) > (i + 1) * 0.12 + 0.1) { // a range split at a clip edge legitimately leaves two frames behind, so allow that per range
         ok = false;
         raw = "after range " + batch[0].start.toFixed(2) + "-" + batch[0].end.toFixed(2) + "s the timeline is " + now.toFixed(2) + "s, expected " + (durBefore - plannedSoFar).toFixed(2) + "s; stopped before the remaining " + (ordered.length - i - 1) + " range(s). Cmd+Z " + (i + 1) + " time(s) restores it.";
       }

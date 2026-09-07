@@ -141,6 +141,30 @@ var PCX = (function () {
     prep(s.videoTracks, "v");
     prep(s.audioTracks, "a");
     var before = num(s.end) / T;
+    // No range may touch or cross a clip edge on any track. 2026-09-07: a silence spanning the seam between two
+    // clips removed the whole first clip (Extract ran from zero with the out at that clip's end); the two isolated
+    // failures on 09-05 also sat on edges. Split every range at edges and keep one frame clear of each.
+    var edges = [];
+    (function () {
+      function walk(list) { for (var t = 0; t < list.numTracks; t++) { var tr = list[t]; for (var c = 0; c < tr.clips.numItems; c++) { edges.push(num(tr.clips[c].start.ticks) / T); edges.push(num(tr.clips[c].end.ticks) / T); } } }
+      walk(s.videoTracks); walk(s.audioTracks);
+      edges.sort(function (x, y) { return x - y; });
+    }());
+    var pieces = [];
+    for (var ri = 0; ri < R.length; ri++) {
+      var ra = R[ri][0], rb = R[ri][1], cur = ra;
+      for (var ei = 0; ei < edges.length; ei++) {
+        var e = edges[ei];
+        if (e <= ra + F * 0.5 || e >= rb - F * 0.5) { if (Math.abs(e - ra) <= F * 0.5) cur = Math.max(cur, e + F); continue; }
+        if (e - F > cur) pieces.push([cur, e - F]);
+        cur = e + F;
+      }
+      for (var ej = 0; ej < edges.length; ej++) if (Math.abs(edges[ej] - rb) <= F * 0.5) rb = edges[ej] - F;
+      if (rb > cur) pieces.push([cur, rb]);
+    }
+    pieces.sort(function (x, y) { return y[0] - x[0]; });
+    var split = pieces.length - R.length;
+    R = pieces;
     var done = 0, errs = [];
     for (var i = 0; i < R.length; i++) {
       var a = Math.ceil(R[i][0] / F - 0.000001) * F;
@@ -189,8 +213,11 @@ var PCX = (function () {
         var removed = (d0 - num(s.end)) / T, want = b - a;
         if (num(s.end) === d0) errs.push(a.toFixed(2) + ": no change");
         else if (Math.abs(removed - want) > 2 * F + 0.01) {
-          // Premiere took out something other than the range asked for: stop here, do not compound it.
-          errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": removed " + removed.toFixed(2) + "s instead of " + want.toFixed(2) + "s (in/out read back as " + ri.toFixed(3) + "-" + ro.toFixed(3) + " before the call); edges near the range: " + edgesNear(s, a, b) + "; stopped");
+          // Premiere took out something other than the range asked for. Undo it through QE (one History step),
+          // confirm the length came back, then stop: nothing compounds and the editor has nothing to repair.
+          var undone = "not undone";
+          try { qe.project.undo(); if (num(s.end) === d0) undone = "UNDONE (timeline restored)"; else undone = "undo did not restore the length (" + (num(s.end) / T).toFixed(2) + "s vs " + (d0 / T).toFixed(2) + "s): press Cmd+Z once"; } catch (eU) { undone = "undo failed: " + eU + "; press Cmd+Z once"; }
+          errs.push(a.toFixed(2) + "-" + b.toFixed(2) + ": removed " + removed.toFixed(2) + "s instead of " + want.toFixed(2) + "s (in/out read back as " + ri.toFixed(3) + "-" + ro.toFixed(3) + " before the call); edges near the range: " + edgesNear(s, a, b) + "; " + undone + "; stopped");
           break;
         } else done++;
       } catch (e) { errs.push(a.toFixed(2) + ": " + e); break; }
@@ -207,7 +234,7 @@ var PCX = (function () {
     var mismatches = 0;
     var vt = s.videoTracks[0], at = s.audioTracks[0];
     for (var j = 0; j < Math.min(vt.clips.numItems, at.clips.numItems); j++) if (vt.clips[j].start.ticks !== at.clips[j].start.ticks) mismatches++;
-    return "extracted=" + done + "/" + R.length + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
+    return "extracted=" + done + "/" + R.length + (split > 0 ? " (" + split + " range(s) split at clip edges)" : "") + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
   }
 
   // Clip starts and ends on every track within a second of a range, as "V1 s3.20 e23.87". A failing Extract
