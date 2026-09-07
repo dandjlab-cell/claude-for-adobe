@@ -1113,7 +1113,7 @@ async function settleMoments(times, baseIdx, card, label) {
 function alphaCoverCache() { try { return JSON.parse(fs.readFileSync(path.join(analysisDir(), "alpha-cover.json"), "utf8")); } catch (_) { return {}; } }
 async function settleAlphaLayers(L, baseIdx, card) {
   const cache = alphaCoverCache();
-  const layers = L.clips.filter((c) => c.track !== L.base && (c.alpha || c.graphic) && c.share && c.mediaPath !== undefined);
+  const layers = L.clips.filter((c) => c.track !== L.base && (c.alpha || c.graphic) && c.share > 0 && c.mediaPath);
   const need = [];
   for (const c of layers) if (!cache[c.mediaPath]) need.push(c);
   if (need.length) {
@@ -1155,7 +1155,7 @@ async function visibleAtTool({ at_seconds, base_track = 1, settle = false } = {}
     const over = [...new Set(layersOver(c.t - 0.25).concat(layersOver(c.t + 0.25)))];
     if (!over.length) return "";
     const known = over.map((l) => ({ l, v: layerVerdict(l.mediaPath) }));
-    if (known.some((k) => !k.v)) return " (alpha layers not settled yet: call with settle: true)";
+    if (known.some((k) => !k.v)) return settle ? " (could not settle: a render failed for " + known.filter((k) => !k.v).map((k) => "\"" + k.l.name + "\"").join(", ") + ")" : " (alpha layers not settled yet: call with settle: true)";
     const hides = known.filter((k) => k.v.verdict === "hides"), partial = known.filter((k) => k.v.verdict === "partial");
     if (hides.length) return " -> NOT SEEN: " + hides.map((k) => "\"" + k.l.name + "\" hides it (" + Math.round(k.v.baseVisible * 100) + "% of " + base + " shows through, rendered)").join(", ");
     if (partial.length) return " -> PARTLY SEEN: " + partial.map((k) => "\"" + k.l.name + "\" leaves " + Math.round(k.v.baseVisible * 100) + "% of " + base + " showing (rendered)").join(", ");

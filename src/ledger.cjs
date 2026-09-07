@@ -9,7 +9,9 @@ const { coverAt, clipRect } = require("./cover.cjs");
 function buildLedger(snap, transforms, { base = "V1", step = 0.5, half = 0.25 } = {}) {
   const rows = transforms.rows, W = transforms.w, H = transforms.h;
   const hasAlpha = (p) => !!rows.find((c) => c.mediaPath === p && c.alpha);
-  const clips = rows.map((c) => { const r = clipRect(c, W, H); return { track: c.track, name: c.name, mediaPath: c.mediaPath || "", start: c.start, end: c.end, rect: r, share: r ? Number((((r.x1 - r.x0) * (r.y1 - r.y0))).toFixed(3)) : null, opacity: c.opacity, crop: c.crop, alpha: c.alpha, masked: c.masked, graphic: c.graphic }; });
+  // A clip whose geometry cannot be read (AE comps and MOGRTs report no source size) is assumed to fill the frame:
+  // that is the conservative reading, and the renderer settles it.
+  const clips = rows.map((c) => { const r = clipRect(c, W, H); const known = !!r; const rr = r || { x0: 0, y0: 0, x1: 1, y1: 1 }; return { track: c.track, name: c.name, mediaPath: c.mediaPath || "", start: c.start, end: c.end, rect: rr, geometryKnown: known, share: Number((((rr.x1 - rr.x0) * (rr.y1 - rr.y0))).toFixed(3)), opacity: c.opacity, crop: c.crop, alpha: c.alpha, masked: c.masked, graphic: c.graphic }; });
   // Every footage edge on every track is a cut worth grading (seams() only lists the ones that change the
   // picture in the binary model; here the fraction is the point).
   const edges = new Map();
