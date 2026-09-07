@@ -5,13 +5,13 @@
 // per-token timestamps (one word per segment), roughly tens of milliseconds.
 const { spawn } = require("node:child_process");
 // Async spawn so a minutes-long transcription never blocks the panel's event loop (the MCP reply, the UI).
-function run(bin, args) {
+function run(bin, args, onStderr) {
   return new Promise((resolve) => {
     let stdout = "", stderr = "";
     let p;
     try { p = spawn(bin, args); } catch (e) { resolve({ status: -1, stdout, stderr: String(e) }); return; }
     p.stdout.on("data", (d) => { stdout += d; });
-    p.stderr.on("data", (d) => { stderr += d; });
+    p.stderr.on("data", (d) => { stderr += d; if (onStderr) onStderr(String(d)); });
     p.on("error", (e) => resolve({ status: -1, stdout, stderr: String(e) }));
     p.on("close", (status) => resolve({ status, stdout, stderr }));
   });
@@ -121,8 +121,10 @@ async function transcribe(mediaPath, { language = "en", onLog = () => {}, onProg
     require("./vad.cjs").extractWav16k(mediaPath, wav);
     onLog("whisper: transcribing " + path.basename(mediaPath));
     const args = ["-m", modelPath(), "-f", wav, "-l", language || "auto", "-t", String(Math.max(2, Math.min(8, os.cpus().length - 2))),
-      "--vad", "-vm", VAD_MODEL, "-vt", "0.5", "-ml", "1", "-sow", "-oj", "-of", outBase, "-np", ...KNOBS];
-    const r = await run(BIN, args);
+      "--vad", "-vm", VAD_MODEL, "-vt", "0.5", "-ml", "1", "-sow", "-oj", "-of", outBase, "-np", "-pp", ...KNOBS];
+    // -pp prints "progress = NN%" on stderr as it goes: the only sign of life during a minutes-long transcription.
+    let lastPct = -1;
+    const r = await run(BIN, args, (chunk) => { const m = /progress\s*=\s*(\d+)%/g; let x, pct = null; while ((x = m.exec(chunk))) pct = Number(x[1]); if (pct !== null && pct !== lastPct) { lastPct = pct; try { onProgress({ transcribing: pct }); } catch (_) {} } });
     if (r.status !== 0) throw new Error("whisper failed: " + (r.stderr || r.stdout || "").trim().slice(-400));
     const json = JSON.parse(fs.readFileSync(outBase + ".json", "utf8"));
     const result = { words: wordsFromWhisperCpp(json), language: (json.result && json.result.language) || language || "en", model: current, knobs: KNOBS.join(" "), vad: true, createdAt: new Date().toISOString() };

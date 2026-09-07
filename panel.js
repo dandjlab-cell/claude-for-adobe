@@ -766,8 +766,8 @@ function freshTimelineWords(snap) {
   try { const j = JSON.parse(fs.readFileSync(timelineTranscriptPath(), "utf8")); return j.fingerprint === timelineFingerprint(snap) ? j : null; } catch (_) { return null; }
 }
 // Transcribe an already rendered timeline mix and write the analysis files. Returns { words, md }.
-async function transcribeRenderedTimeline(wav, snap, language) {
-  const r = await transcribe(wav, { language, vad: true, onLog: log });
+async function transcribeRenderedTimeline(wav, snap, language, onProgress) {
+  const r = await transcribe(wav, { language, vad: true, onLog: log, onProgress: (p) => { if (p && p.transcribing !== undefined) { setStatus("Whisper: " + p.transcribing + "%…"); if (onProgress) onProgress(p.transcribing); } } });
   const lines = linesFromWords(r.words, 0).map((l) => "[" + tc(l.start) + "] " + l.text);
   const md = writeAnalysis((project.sequence || "sequence") + ".timeline.transcript.md", "# Timeline transcript of \"" + (project.sequence || "sequence") + "\" (exact for this cut)\n<!-- timeline " + timelineFingerprint(snap) + " -->\n" + snap.duration.toFixed(1) + "s, " + snap.clips.length + " clips, " + r.words.length + " words, timestamps are sequence seconds.\n\n" + lines.join("\n") + "\n");
   fs.writeFileSync(timelineTranscriptPath(), JSON.stringify({ fingerprint: timelineFingerprint(snap), words: r.words, md, createdAt: new Date().toISOString() }));
@@ -1217,14 +1217,29 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const rendered = await host("exportSequenceAudio", wav, wavPresetPath);
   if (rendered.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return stop("audio render failed: " + rendered.replace(/^ERR:/, ""));
   try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(snapAfter1) })); } catch (_) {}
-  // 3. the transcript: the exact timeline transcript from that render (Whisper), the one source every step shares
+  // 3. the transcript, one exact timeline transcript every step shares. Premiere's own first (instant, when the
+  // clips were transcribed in the Text panel and the project saved), else Whisper on the render, with progress.
   if (cancelRequested) return stop("stopped by the editor");
   card.progress(2, 4, "transcript ");
-  if (!modelReady()) return stop("the Whisper model is not installed: run transcribe_timeline once (it offers the download), then rough_cut again");
-  setStatus("Whisper: timeline…");
-  let r3; try { r3 = await transcribeRenderedTimeline(wav, snapAfter1, language); } catch (error) { return stop("transcription failed: " + error.message); }
-  setStatus("Ready");
-  steps.push("2. Transcript: Whisper on the timeline render, " + r3.words.length + " words");
+  let transcriptFrom = "";
+  try {
+    const transcripts = project.path ? listTranscripts(project.path) : [];
+    const { clips } = await audioClipsIn(0, Infinity);
+    if (clips.length && clips.every((c) => { try { return !!transcriptForClip(transcripts, c); } catch (_) { return false; } })) {
+      const words = [];
+      clips.forEach((c) => { const t = transcriptForClip(transcripts, c); const off = c.start - c.inPoint; decodeWords(t.base64).forEach((w) => { const st = w.start + off, en = w.end + off; if (en > c.s0 && st < c.s1) words.push({ text: w.text, start: Number(st.toFixed(3)), end: Number(en.toFixed(3)) }); }); });
+      words.sort((x, y) => x.start - y.start);
+      if (words.length) { fs.writeFileSync(timelineTranscriptPath(), JSON.stringify({ fingerprint: timelineFingerprint(snapAfter1), words, from: "premiere", createdAt: new Date().toISOString() })); transcriptFrom = "Premiere's transcript (Text panel), " + words.length + " words, no Whisper needed"; }
+    }
+  } catch (_) {}
+  if (!transcriptFrom) {
+    if (!modelReady()) return stop("no Premiere transcript on these clips and the Whisper model is not installed: transcribe in the Text panel and save (instant next time), or run transcribe_timeline once (it offers the download)");
+    setStatus("Whisper: timeline…");
+    let r3; try { r3 = await transcribeRenderedTimeline(wav, snapAfter1, language, (pct) => card.progress(2, 4, "transcribing " + pct + "% ")); } catch (error) { return stop("transcription failed: " + error.message); }
+    setStatus("Ready");
+    transcriptFrom = "Whisper on the timeline render, " + r3.words.length + " words (transcribe in Premiere's Text panel and save to skip this next time)";
+  }
+  steps.push("2. Transcript: " + transcriptFrom);
   // 4. hand over: the indexed transcript for the one model pass that must be recall-minded (author the thoughts)
   card.progress(3, 4, "index ");
   const idx = await transcriptIndex({});
