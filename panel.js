@@ -70,7 +70,12 @@ window.addEventListener("resize", resetPageScroll);
 document.addEventListener("DOMContentLoaded", resetPageScroll);
 setTimeout(resetPageScroll, 0);
 
-function followBottom(el) { if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight; }
+// Keep the message list pinned to the newest message unless the reader has scrolled up to read. The decision is
+// taken from the reader's last scroll position, never from the geometry after new content landed (measuring
+// afterwards made any card taller than the margin stop the list from following, which read as "stuck").
+let stickToBottom = true;
+ui.messages.addEventListener("scroll", () => { stickToBottom = ui.messages.scrollHeight - ui.messages.scrollTop - ui.messages.clientHeight < 80; }, { passive: true });
+function followBottom(el) { if (el !== ui.messages || stickToBottom) el.scrollTop = el.scrollHeight; }
 
 function evalScript(code) {
   return new Promise((resolve) => window.__adobe_cep__.evalScript(code, (result) => resolve(String(result == null ? "" : result))));
