@@ -774,9 +774,24 @@ var PCX = (function () {
   // can pass 1.5, so the cut is at 4: no pixel position of a real clip sits inside (0..4, 0..4).
   function isNormalized(p) { return !!(p && p.length === 2 && Math.abs(p[0]) <= 4 && Math.abs(p[1]) <= 4); }
 
-  function findItemByMedia(mediaPath) {
-    function walk(b) { for (var k = 0; k < b.children.numItems; k++) { var c = b.children[k]; if (c.type === 2) { var r = walk(c); if (r) return r; } else { var mp = ""; try { mp = c.getMediaPath(); } catch (e) {} if (mp === mediaPath) return c; } } return null; }
-    return walk(app.project.rootItem);
+  // Resolve a clip the way the model names it: full media path, "bin/path/name" as project_bins prints it, the
+  // item's name, or the file's basename. Returns the project item, or an "ERR:" string (none, or more than one).
+  // Until 2026-09-07 only a full media path matched, so place_broll failed on every name from project_bins.
+  function findItemByMedia(ref) {
+    var want = String(ref || ""), wantBase = want.replace(/^.*\//, ""), hits = [], where = [], exact = false;
+    function walk(b, path) {
+      for (var k = 0; k < b.children.numItems && !exact; k++) {
+        var c = b.children[k];
+        if (c.type === 2) { walk(c, path + c.name + "/"); continue; }
+        var mp = ""; try { mp = String(c.getMediaPath() || ""); } catch (e) {}
+        if (mp === want) { hits = [c]; where = [path + c.name]; exact = true; return; }
+        if (path + c.name === want || c.name === wantBase || (mp && mp.replace(/^.*\//, "") === wantBase)) { hits.push(c); where.push(path + c.name); }
+      }
+    }
+    walk(app.project.rootItem, "");
+    if (!hits.length) return "ERR:no project item for " + want + " (give the clip name or bin/path/name as project_bins lists it)";
+    if (hits.length > 1) return "ERR:" + hits.length + " project items match " + want + ": " + where.join(", ") + " (give the bin/path/name)";
+    return hits[0];
   }
 
   // Lay a clip on a video track at a time for a duration (overwrite), sound off. trackIndex 0-based (1 = V2).
@@ -786,7 +801,8 @@ var PCX = (function () {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var item = findItemByMedia(mediaPath);
-    if (!item) return "ERR:no project item for " + mediaPath;
+    if (typeof item === "string") return item;
+    try { mediaPath = String(item.getMediaPath() || mediaPath); } catch (e0) {}
     var idx = Number(trackIndex); if (isNaN(idx)) idx = 1;
     if (s.videoTracks.numTracks <= idx) return "ERR:video track V" + (idx + 1) + " does not exist (add it in the timeline)";
     var track = s.videoTracks[idx];

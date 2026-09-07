@@ -12,9 +12,25 @@ const PACING_REVIEW = 2.0;  // silence between this and CHEAP_CUT is a finishing
 const PAD = 0.15;
 const norm = (w) => String(w || "").toLowerCase().replace(/[^a-z0-9']/g, "");
 
-// Immediate self-repeats inside a run of words: an exact 4+-word run that recurs within 30 tokens. The FIRST
-// attempt is the failed one. Returns [{cutStart, cutEnd, phrase}] in seconds (cut = [start of first attempt,
-// start of the retake)). Port of story_harness._find_restarts with its parallel-construction exceptions.
+// Self-repeats inside one authored thought: a run of words that recurs within 30 tokens. The FIRST attempt is the
+// failed one. Returns [{cutStart, cutEnd, phrase}] in seconds (cut = [start of first attempt, start of the retake)).
+// Port of story_harness._find_restarts, retuned on the 2026-09-07 run where it missed every real restart:
+//   - tokens match fuzzily (one a prefix of the other, or edit distance 1): "premier" / "premiere";
+//   - a comma before the retake no longer reads as a list: Whisper puts one at every retake inside a thought;
+//   - a run opening on "and" is a list only when the words between the attempts are a short slot ("and we painted
+//     the WALLS and we painted the ceiling"); a long first attempt restarted on "and" is a restart;
+//   - an immediate repeat needs only 2 words ("reach which reach which"); a repeat with words between needs 4;
+//   - a long stretch between the attempts is not a connector: the cut is exactly [first attempt, retake).
+// A retake preceded by and/or/nor is still a list ("the walls and we painted the ceiling").
+function same(a, b) {
+  if (a === b) return true;
+  if (a.length < 4 || b.length < 4) return false;
+  if (a.indexOf(b) === 0 || b.indexOf(a) === 0) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
 function findRestarts(rows) {
   const toks = rows.map((r) => norm(r.text));
   const out = [];
@@ -22,22 +38,20 @@ function findRestarts(rows) {
   for (let i = 0; i < toks.length - 1; i++) {
     if (i < usedUntil || !toks[i]) continue;
     for (let j = i + 2; j < Math.min(toks.length - 1, i + 30); j++) {
-      if (toks[i] !== toks[j]) continue;
-      if (i > 0 && j > 0 && toks[i - 1] === toks[j - 1]) continue;
+      if (!same(toks[i], toks[j])) continue;
+      if (i > 0 && j > 0 && same(toks[i - 1], toks[j - 1])) continue;
       let length = 0;
-      while (i + length < j && j + length < toks.length && toks[i + length] === toks[j + length]) length++;
-      if (length < 4) continue;
+      while (i + length < j && j + length < toks.length && same(toks[i + length], toks[j + length])) length++;
       const between = rows.slice(i + length, j);
-      const endsPunct = (r) => /[,;:.!?]$/.test(String(r.text).trim());
-      if (j + length < rows.length && j > 0 && (["and", "or", "nor"].includes(toks[j - 1]) || endsPunct(rows[j - 1]))) continue;
-      if (["and", "or", "nor", "but", "so"].includes(toks[i])) continue; // a repeated run that opens on a conjunction is a list, not a flub
-      if (i === 0 && between.length === 1 && /,$/.test(String(between[0].text).trim()) && j + length < rows.length) continue;
+      if (length < (between.length ? 4 : 2)) continue;
+      if (between.length && ["and", "or", "nor"].includes(toks[j - 1])) continue;
+      if (between.length && between.length <= 3 && ["and", "or", "nor", "but", "so"].includes(toks[i])) continue;
       let startI = i, secondI = j;
       if (between.length) {
         const phraseStart = (k) => { while (k > 0 && rows[k].start - rows[k - 1].end < 0.35 && rows[j].start - rows[k - 1].start <= 6) k--; return k; };
         const fs = phraseStart(i), ss = phraseStart(j);
-        if (ss > fs) { startI = fs; secondI = ss; }
-        else { const changed = Math.min(3, between.length); startI = Math.max(0, i - changed); secondI = Math.max(i + length, j - changed); }
+        if (ss > fs && ss > i + length) { startI = fs; secondI = ss; }
+        else if (between.length <= 3) { const changed = between.length; startI = Math.max(0, i - changed); secondI = Math.max(i + length, j - changed); }
       }
       out.push({ cutStart: rows[startI].start, cutEnd: rows[secondI].start, phrase: rows.slice(startI, j + length).map((r) => r.text).join(" ") });
       usedUntil = j + length;
@@ -154,7 +168,7 @@ function report(plan) {
   const kept = plan.keep.map((k, i) => (i + 1) + ". " + f(k.start) + "-" + f(k.end) + "  [" + k.id + (k.label ? " " + k.label : "") + "]  " + k.text);
   const dropped = plan.drop.map((d) => "  - " + f(d.start) + "-" + f(d.end) + "  " + d.reason + ": \"" + d.text.slice(0, 80) + (d.text.length > 80 ? "…" : "") + "\"");
   const total = plan.ranges.reduce((n, r) => n + (r.end - r.start), 0);
-  return "Kept (" + plan.keep.length + " piece(s), " + total.toFixed(1) + "s in " + plan.ranges.length + " range(s); cuts only between thoughts, never inside one):\n" + kept.join("\n") + (dropped.length ? "\nDropped (" + dropped.length + "):\n" + dropped.join("\n") : "\nDropped: nothing") + (plan.notes.length ? "\nListen to:\n  - " + plan.notes.join("\n  - ") : "");
+  return "Kept (" + plan.keep.length + " piece(s), " + total.toFixed(1) + "s in " + plan.ranges.length + " range(s); failed restarts cut inside a thought, otherwise cuts only between thoughts):\n" + kept.join("\n") + (dropped.length ? "\nDropped (" + dropped.length + "):\n" + dropped.join("\n") : "\nDropped: nothing") + (plan.notes.length ? "\nListen to:\n  - " + plan.notes.join("\n  - ") : "");
 }
 
 module.exports = { findRestarts, validateDraft, qualify, planFromThoughts, report, CRUMBS, CUT_IN_PAUSE, CHEAP_CUT, PACING_REVIEW, PAD };

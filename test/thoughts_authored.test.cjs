@@ -20,6 +20,18 @@ test("a parallel construction is not a restart", () => {
   const rows = say(["we painted the walls and we painted the ceiling and we painted the doors."]);
   assert.deepStrictEqual(findRestarts(rows), []);
 });
+test("the four restarts the 2026-09-07 run missed are found: fuzzy token, comma before the retake, run opening on and, two-word stutter", () => {
+  const one = (line, re, si, ei) => { const w = say([line]); const r = findRestarts(w); assert.strictEqual(r.length, 1, line + " -> " + JSON.stringify(r)); assert.ok(re.test(r[0].phrase), r[0].phrase); assert.strictEqual(r[0].cutStart, w[si].start); assert.strictEqual(r[0].cutEnd, w[ei].start); };
+  one("It creates a premier project, it creates a premiere project file", /^It creates a premier project,/, 0, 5);
+  one("reach that has all the potential reach which reach which surfaces all the options for the editors", /^reach which reach which/, 6, 8);
+  one("and tight, which makes decisions on what to keep, and generates on-screen text on what parts and tight, which makes editorial decisions", /^and tight, which makes decisions on what to keep/, 0, 16);
+  one("and tight which makes decisions on what to keep and generates text on what parts and tight which makes decisions", /^and tight/, 0, 15);
+  // still not a restart: a list joined by and, a single repeated word, unrelated words sharing four letters
+  assert.deepStrictEqual(findRestarts(say(["and we painted the walls and we painted the ceiling"])), []);
+  assert.deepStrictEqual(findRestarts(say(["I painted the walls and I painted the ceiling"])), []);
+  assert.deepStrictEqual(findRestarts(say(["it was very very good"])), []);
+  assert.deepStrictEqual(findRestarts(say(["the project projected a projection"])), []);
+});
 test("a draft is validated: overlaps fail, uncovered words are reported, times come from the words", () => {
   const words = say(["Hello there everyone.", "We shot it on Tuesday.", "Okay cool.", "We shot it on Tuesday, in the rain."]);
   const v = validateDraft(words, { thoughts: [
