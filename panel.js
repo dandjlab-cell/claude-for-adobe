@@ -1354,7 +1354,7 @@ async function readTransforms(sequence = "") {
   if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") throw new Error(raw);
   const rows = raw.split(ROW);
   const [, , w, h] = rows[0].split(COL);
-  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH, opacity, mediaPath, alpha] = r.split(COL); return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null, opacity: opacity === "" || opacity === undefined ? 100 : Number(opacity), mediaPath: mediaPath || "", alpha: alpha === "1" }; }) };
+  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH, opacity, mediaPath, alpha, crop] = r.split(COL); const cr = crop ? crop.split("/").map(Number) : null; return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null, opacity: opacity === "" || opacity === undefined ? 100 : Number(opacity), mediaPath: mediaPath || "", alpha: alpha === "1", crop: cr && cr.length === 4 && cr.some((v) => v > 0) ? { left: cr[0], top: cr[1], right: cr[2], bottom: cr[3] } : null }; }) };
 }
 
 // Place a region of a clip's SOURCE (the action: a control, a face, a panel) inside a target rectangle of the

@@ -1,8 +1,10 @@
 // How much of the picture on one track is hidden at a moment, from what the panel already reads for every clip:
-// Motion position and scale, source size, opacity, and whether a still has an alpha channel. Geometry, not frames.
+// Motion position and scale, the Crop effect, source size, opacity, and whether a still has an alpha channel
+// (Premiere's own Video Info flag). Geometry, not frames.
 // A side-by-side covers half; a picture-in-picture covers a corner; a full-frame PNG with no alpha covers all;
 // a title, MOGRT, AE comp or alpha still covers nothing (it is drawn over the picture, not instead of it).
-// Masks, track mattes and blend modes are not modelled: those are the residual the frame renders exist for.
+// Masks, track mattes, blend modes and the Transform effect's own position/scale are not modelled: that residual
+// is what the frame renders exist for.
 "use strict";
 const { roiInFrame } = require("./frame.cjs");
 
@@ -11,7 +13,11 @@ const trackNo = (t) => Number(String(t).slice(1)) || 0;
 // Rectangle (frame fractions, clipped to the frame) that a clip's source occupies, or null when unknown.
 function clipRect(c, frameW, frameH) {
   if (!c.srcW || !c.srcH || c.x === null || c.x === undefined || !Number.isFinite(c.scale)) return null;
-  const r = roiInFrame({ srcW: c.srcW, srcH: c.srcH, frameW, frameH, x: c.x, y: c.y, scale: c.scale }, { x0: 0, y0: 0, x1: c.srcW, y1: c.srcH });
+  // The Crop effect removes a percentage from each edge of the SOURCE before Motion places it.
+  const cr = c.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+  const roi = { x0: c.srcW * cr.left / 100, y0: c.srcH * cr.top / 100, x1: c.srcW * (1 - cr.right / 100), y1: c.srcH * (1 - cr.bottom / 100) };
+  if (roi.x1 <= roi.x0 || roi.y1 <= roi.y0) return null;
+  const r = roiInFrame({ srcW: c.srcW, srcH: c.srcH, frameW, frameH, x: c.x, y: c.y, scale: c.scale }, roi);
   const x0 = Math.max(0, Math.min(1, r.x0)), y0 = Math.max(0, Math.min(1, r.y0)), x1 = Math.max(0, Math.min(1, r.x1)), y1 = Math.max(0, Math.min(1, r.y1));
   return x1 > x0 && y1 > y0 ? { x0, y0, x1, y1 } : null;
 }

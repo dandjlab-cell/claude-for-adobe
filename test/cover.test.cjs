@@ -31,3 +31,11 @@ test("coverAt sums what sits above the track at that moment", () => {
   assert.ok(Math.abs(at6.covered - 0.5) < 0.02);
   assert.deepStrictEqual(at6.by.map((b) => b.name), ["sbs"]);
 });
+
+test("the Crop effect shrinks what a clip covers", () => {
+  const full = clipRect(clip(), W, H);
+  const cropped = clipRect(clip({ crop: { left: 50, top: 0, right: 0, bottom: 0 } }), W, H); // left half cut away
+  assert.ok(Math.abs(coverage([full]) - 1) < 0.01);
+  assert.ok(Math.abs(coverage([cropped]) - 0.5) < 0.02);
+  assert.strictEqual(clipRect(clip({ crop: { left: 60, top: 0, right: 60, bottom: 0 } }), W, H), null, "cropped away entirely");
+});
