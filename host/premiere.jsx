@@ -1163,7 +1163,15 @@ var PCX = (function () {
     if (!s) { rows.push("multicam" + COL + "no active sequence"); return rows.join(ROW); }
     var q = null; try { app.enableQE(); q = qe.project.getActiveSequence(); } catch (e1) {}
     if (!q) { rows.push("multicam" + COL + "QE unavailable"); return rows.join(ROW); }
-    try { rows.push("qeSeq.multicam" + COL + String(q.multicam)); } catch (e2) { rows.push("qeSeq.multicam" + COL + "ERR:" + e2); }
+    try {
+      var mc = q.multicam, mnames = [];
+      try { var mm = mc.reflect.methods; for (var mi = 0; mi < mm.length; mi++) mnames.push("m:" + mm[mi].name); } catch (eR1) {}
+      try { var mpp = mc.reflect.properties; for (var mj = 0; mj < mpp.length; mj++) mnames.push("p:" + mpp[mj].name); } catch (eR2) {}
+      try { for (var mk in mc) { var tag = (typeof mc[mk] === "function" ? "m:" : "p:") + mk; if (mnames.join(",").indexOf(tag) < 0) mnames.push(tag); } } catch (eR3) {}
+      var mvals = [];
+      for (var mv = 0; mv < mnames.length; mv++) { if (mnames[mv].indexOf("p:") === 0) { var pn = mnames[mv].substring(2); try { mvals.push(pn + "=" + String(mc[pn]).substring(0, 60)); } catch (eR4) {} } }
+      rows.push("qeSeq.multicam" + COL + String(mc) + " names: " + mnames.join(",") + (mvals.length ? " values: " + mvals.join(" | ") : ""));
+    } catch (e2) { rows.push("qeSeq.multicam" + COL + "ERR:" + e2); }
     for (var t = 0; t < q.numVideoTracks && t < 4; t++) {
       var tr = null; try { tr = q.getVideoTrackAt(t); } catch (e3) { continue; }
       for (var c = 0; c < tr.numItems && c < 12; c++) {
@@ -1171,7 +1179,7 @@ var PCX = (function () {
         if (!it || String(it.type) === "Empty") continue;
         var mc = "", sw = "", can = "", isMc = "";
         try { mc = String(it.multicamEnabled); } catch (e5) { mc = "ERR"; }
-        try { sw = String(it.switchSources); } catch (e6) { sw = "ERR"; }
+        try { sw = String(it.switchSources); } catch (e6) { sw = "ERR:" + String(e6).substring(0, 60); }
         try { can = String(it.canDoMulticam()); } catch (e7) { can = "ERR:" + e7; }
         try { var pi = it.getProjectItem(); isMc = pi ? String(pi.isMultiCamClip ? pi.isMultiCamClip() : "n/a") : "no item"; } catch (e8) { isMc = "ERR"; }
         rows.push("V" + (t + 1) + "[" + c + "] " + it.name + COL + "multicamEnabled=" + mc + " switchSources=" + sw + " canDoMulticam=" + can + " isMultiCamClip=" + isMc);

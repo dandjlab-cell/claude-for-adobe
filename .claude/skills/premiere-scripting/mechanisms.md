@@ -46,7 +46,7 @@ Two facts that decide the shape of everything below:
 
 | Job | Premiere mechanism | Status | Call | CHECK |
 |---|---|---|---|---|
-| Remove a range and ripple | Extract | verified (`extract_ranges`, `keep_only`) | `seq.setInPoint/setOutPoint` then `qeSeq.extract()`; a range reaching the end is a tail trim instead (Extract at the last frame wipes the timeline) | removed length vs wanted, per range |
+| Remove a range and ripple | Extract | verified (`extract_ranges`, `keep_only`); the 2026-09 wipes were the gap-closing pass, fixed 09-07 | `seq.setInPoint/setOutPoint`, read both back, then `qeSeq.extract()`; a range reaching the end is a tail trim; one-frame holes afterwards are closed by extending the previous clip's `.end`, never by Extract | removed length vs wanted, per range, with a trace of every call next to the project |
 | Remove a range, leave a gap | Lift | listed | `qeSeq.left()` (QE's Lift; name as reflected) | |
 | Close gaps | `cmd.sequence.close.gaps` (unbound) | key (the panel closes gaps its own way) | | |
 | Razor at a time | `qeSeq.razor(time)` / `qeTrack.razor(time)` | listed (ExtendScript has none) | | clip count +1 |
@@ -59,7 +59,7 @@ Two facts that decide the shape of everything below:
 | Link / unlink | `seq.linkSelection()`, `unlinkSelection()` | listed | | |
 | Join through edits | `cmd.sequence.jointhroughedits` (unbound) | key | | |
 | Default transition on every cut | `cmd.sequence.applydefaulttransitions` — Shift+D | key | | |
-| Transitions by name | `qeClip.addTransition(qe.project.getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")` (the shape shipped panels use); 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is Premiere's own fix for the jump cut every filler removal leaves | tool built (`morph_cut`): display name then match name (`matchnames.md`), only on seams the viewer sees (b-roll over a cut skips it; graphics over it are reported), awaiting its first clean run | | `qeTrack.numTransitions` before/after |
+| Transitions by name | `qeClip.addTransition(qe.project.getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")` (the shape shipped panels use); 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is Premiere's own fix for the jump cut every filler removal leaves | verified 2026-09-07 (`morph_cut`: ten Morph Cuts on a ten-cut talking head in 0.7 s); display name then match name (`matchnames.md`); only on seams the viewer sees (cover from the ledger) | | `qeTrack.numTransitions` before/after |
 | Remix (retime music) | `cmd.clip.remix.*`, tool `cmd.tools.16Remix` | key | | |
 | Multicam | `qeClip.setMulticam`, `canDoMulticam`; angle switching is not exposed | listed / none | | |
 
@@ -143,7 +143,7 @@ confirm a number Premiere gave, never to invent one.
 
 1. ~~Auto Reframe keyframe read~~ verified 2026-09-05: `subject_path`.
 2. ~~Scene Edit Detection~~ verified 2026-09-05: `scene_cuts`.
-3. **Morph Cut by QE**: `morph_cut` is built on the shipped-panel call shape; run it once on a talking head after `remove_pauses`.
+3. ~~Morph Cut by QE~~ verified 2026-09-07: `morph_cut`.
 4. **Razor / ripple delete by QE**: closes the two "no" rows in reference.md (split, move to track).
 5. **Audio effect by name** (DeNoise, Hard Limiter): sound cleanup as a tool with `numComponents` read-back.
 
