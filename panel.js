@@ -1107,8 +1107,9 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
     if (!tf) { visible.push({ t, note: "" }); continue; }
     const before = coverAt(tf.rows, tf.w, tf.h, "V" + track, t - half, hasAlpha), after = coverAt(tf.rows, tf.w, tf.h, "V" + track, t + half, hasAlpha);
     const worst = before.covered > after.covered ? before : after;
-    const who = [...new Set(worst.by.map((b) => b.track + " \"" + b.name + "\" " + Math.round(b.share * 100) + "%"))].join(", ");
-    if (worst.covered > MAX_COVER) skipped.push({ t, why: Math.round(worst.covered * 100) + "% hidden by " + who });
+    const who = [...new Set(worst.by.map((b) => b.track + " \"" + b.name + "\" " + Math.round(b.share * 100) + "%" + (b.masked ? " (masked: real cover unknown)" : "")))].join(", ");
+    if (worst.covered > MAX_COVER && worst.by.some((b) => b.masked)) visible.push({ t, note: "would be " + Math.round(worst.covered * 100) + "% hidden by " + who + " but a mask makes the real cover unknown; applied, confirm with seam_frames" });
+    else if (worst.covered > MAX_COVER) skipped.push({ t, why: Math.round(worst.covered * 100) + "% hidden by " + who });
     else visible.push({ t, note: worst.covered > 0.02 ? Math.round(worst.covered * 100) + "% hidden by " + who : "" });
   }
   if (!visible.length) { const text = "No visible seam on V" + track + ": " + skipped.map((k) => k.t.toFixed(2) + "s " + k.why).join("; ") + ". Nothing applied; a transition the viewer cannot see is wasted analysis."; card.done(text, true); return { text }; }
@@ -1354,7 +1355,7 @@ async function readTransforms(sequence = "") {
   if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") throw new Error(raw);
   const rows = raw.split(ROW);
   const [, , w, h] = rows[0].split(COL);
-  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH, opacity, mediaPath, alpha, crop] = r.split(COL); const cr = crop ? crop.split("/").map(Number) : null; return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null, opacity: opacity === "" || opacity === undefined ? 100 : Number(opacity), mediaPath: mediaPath || "", alpha: alpha === "1", crop: cr && cr.length === 4 && cr.some((v) => v > 0) ? { left: cr[0], top: cr[1], right: cr[2], bottom: cr[3] } : null }; }) };
+  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH, opacity, mediaPath, alpha, crop, masked] = r.split(COL); const cr = crop ? crop.split("/").map(Number) : null; return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null, opacity: opacity === "" || opacity === undefined ? 100 : Number(opacity), mediaPath: mediaPath || "", alpha: alpha === "1", crop: cr && cr.length === 4 && cr.some((v) => v > 0) ? { left: cr[0], top: cr[1], right: cr[2], bottom: cr[3] } : null, masked: masked === "1" }; }) };
 }
 
 // Place a region of a clip's SOURCE (the action: a control, a face, a panel) inside a target rectangle of the

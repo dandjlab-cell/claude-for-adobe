@@ -48,7 +48,7 @@ function coverAt(transforms, frameW, frameH, track, t, hasAlpha) {
   const above = transforms.filter((c) => trackNo(c.track) > trackNo(track) && c.start <= t && t < c.end && isOpaque(c, hasAlpha));
   const rects = above.map((c) => ({ c, r: clipRect(c, frameW, frameH) || { x0: 0, y0: 0, x1: 1, y1: 1 } })); // unknown geometry: assume full frame (footage fills by default)
   const covered = coverage(rects.map((x) => x.r));
-  return { covered, by: rects.map((x) => ({ track: x.c.track, name: x.c.name, share: coverage([x.r]) })) };
+  return { covered, by: rects.map((x) => ({ track: x.c.track, name: x.c.name, share: coverage([x.r]), masked: !!x.c.masked })) };
 }
 
 module.exports = { clipRect, coverage, isOpaque, coverAt };

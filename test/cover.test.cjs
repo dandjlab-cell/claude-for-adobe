@@ -39,3 +39,17 @@ test("the Crop effect shrinks what a clip covers", () => {
   assert.ok(Math.abs(coverage([cropped]) - 0.5) < 0.02);
   assert.strictEqual(clipRect(clip({ crop: { left: 60, top: 0, right: 60, bottom: 0 } }), W, H), null, "cropped away entirely");
 });
+
+test("footage smaller than the sequence frame leaves the picture underneath showing", () => {
+  // 16:9 footage at 100% in a 9:16 sequence: full width, 1080 of 1920 rows -> about 56% cover, the rest shows V1
+  const wide = clipRect(clip({ srcW: 1920, srcH: 1080 }), W, H);
+  assert.ok(Math.abs(coverage([wide]) - 1080 / 1920) < 0.02);
+  // scaled to fill the height instead: covers everything
+  const filled = clipRect(clip({ srcW: 1920, srcH: 1080, scale: 178 }), W, H);
+  assert.ok(coverage([filled]) > 0.98);
+});
+test("a masked clip is reported so the renders can settle it", () => {
+  const rows = [clip({ track: "V1", name: "head" }), clip({ track: "V2", name: "shape", masked: true })];
+  const c = coverAt(rows, W, H, "V1", 1);
+  assert.strictEqual(c.by[0].masked, true);
+});
