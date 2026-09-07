@@ -59,7 +59,7 @@ Two facts that decide the shape of everything below:
 | Link / unlink | `seq.linkSelection()`, `unlinkSelection()` | listed | | |
 | Join through edits | `cmd.sequence.jointhroughedits` (unbound) | key | | |
 | Default transition on every cut | `cmd.sequence.applydefaulttransitions` — Shift+D | key | | |
-| Transitions by name | `qeClip.addTransition(qe.project.getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")` (the shape shipped panels use); 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is Premiere's own fix for the jump cut every filler removal leaves | tool built (`morph_cut`), awaiting its first run | | `qeTrack.numTransitions` before/after |
+| Transitions by name | `qeClip.addTransition(qe.project.getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")` (the shape shipped panels use); 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is Premiere's own fix for the jump cut every filler removal leaves | tool built (`morph_cut`): display name then match name (`matchnames.md`), only on seams the viewer sees (b-roll over a cut skips it; graphics over it are reported), awaiting its first clean run | | `qeTrack.numTransitions` before/after |
 | Remix (retime music) | `cmd.clip.remix.*`, tool `cmd.tools.16Remix` | key | | |
 | Multicam | `qeClip.setMulticam`, `canDoMulticam`; angle switching is not exposed | listed / none | | |
 

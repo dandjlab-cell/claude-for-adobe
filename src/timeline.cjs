@@ -91,6 +91,18 @@ function firstVisibleTime(snap, c, step = 0.5) {
   for (let t = c.start + 0.1; t < c.end; t += step) { const top = topFootageAt(snap, t); if (top && top.id === c.id) return t; }
   return null;
 }
+// Is a cut on `track` at time t what the viewer sees? Only if the picture just before and just after the cut is
+// that track's own clip: b-roll or any footage on a higher track covering either side hides it, and a Morph Cut or
+// any transition there is wasted. Graphics (titles, AE comps, MOGRTs, stills with alpha) sit over the picture
+// without hiding it; they are reported, not treated as cover. `half` is half the transition length in seconds.
+function seamVisible(snap, track, t, half = 0.25) {
+  const before = topFootageAt(snap, t - half), after = topFootageAt(snap, t + half);
+  const cover = [before, after].find((c) => c && c.track !== track) || null;
+  const graphics = videoClips(snap).filter((c) => isGraphic(c) && !isGuide(snap, c) && trackNo(c) > (Number(String(track).slice(1)) || 0) && c.start < t + half && c.end > t - half).map((c) => c.track + " \"" + c.name + "\"");
+  if (cover) return { visible: false, cover: cover.track + " \"" + cover.name + "\"", graphics };
+  if (!before || !after || before.track !== track || after.track !== track) return { visible: false, cover: before && after ? null : "nothing on " + track + " on one side", graphics };
+  return { visible: true, cover: null, graphics };
+}
 // Cuts where the visible picture changes: [{ t, from, to }] with the clip names either side, in time order.
 function seams(snap, eps = 0.04) {
   const times = new Set();
@@ -106,4 +118,4 @@ function seams(snap, eps = 0.04) {
   return out;
 }
 
-module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams };
+module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams, seamVisible };

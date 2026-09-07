@@ -51,3 +51,25 @@ test("summarizeChanges folds repeated clip ranges into one line", () => {
   const lines = ['removed A1 "clip.braw" 374.92s-433.60s', 'removed A1 "clip.braw" 433.60s-466.59s', 'removed A1 "clip.braw" 700.00s-712.47s', 'added V2 "title" 1.00s-2.00s', 'sequence duration 800.00s -> 710.00s'];
   assert.deepEqual(summarizeChanges(lines), ['removed 3 ranges of A1 "clip.braw" (374.92s-712.47s)', 'added V2 "title" 1.00s-2.00s', 'sequence duration 800.00s -> 710.00s']);
 });
+
+
+test("seamVisible: b-roll over a cut hides it, graphics do not", () => {
+  const { seamVisible } = require("../src/timeline.cjs");
+  const clip = (track, name, start, end, mediaPath = "/m/" + name + ".mp4") => ({ id: name + start, track, name, start, end, inPoint: 0, mediaPath });
+  const snap = { name: "s", width: 1080, height: 1920, duration: 30, clips: [
+    clip("V1", "head a", 0, 10), clip("V1", "head b", 10, 20), clip("V1", "head c", 20, 30),
+    clip("V2", "broll", 8, 12),                       // covers the 10 s cut on both sides
+    clip("V2", "broll2", 20, 24),                     // starts exactly on the 20 s cut: covers the after side
+    clip("V3", "title", 9, 11, "/g/title.aep"),       // AE comp over the 10 s cut: reported, not cover
+  ] };
+  const at10 = seamVisible(snap, "V1", 10);
+  assert.strictEqual(at10.visible, false);
+  assert.strictEqual(at10.cover, "V2 \"broll\"");
+  assert.deepStrictEqual(at10.graphics, ["V3 \"title\""]);
+  const at20 = seamVisible(snap, "V1", 20);
+  assert.strictEqual(at20.visible, false);
+  assert.strictEqual(at20.cover, "V2 \"broll2\"");
+  const open = { ...snap, clips: snap.clips.filter((c) => c.track === "V1").concat([clip("V2", "over", 12, 18, "/g/over.png")]) };
+  assert.strictEqual(seamVisible(open, "V1", 10).visible, true);
+  assert.strictEqual(seamVisible(open, "V1", 20).visible, true);
+});

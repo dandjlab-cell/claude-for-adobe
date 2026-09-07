@@ -1094,6 +1094,14 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
   }
   list = [...new Set(list.map((x) => Number(x.toFixed(3))))];
   if (!list.length) return err(card, all_seams ? "No cuts where two clips touch on V" + track : "seams is required (or all_seams)");
+  // Only seams the viewer sees: a cut under b-roll (or any footage on a higher track) gets nothing, and says why.
+  const { seamVisible } = require("./src/timeline.cjs");
+  const snapNow = await readSnapshot().catch(() => null);
+  const half = Math.max(0.1, Number(frames) / 25 / 2); // half the transition in seconds; 25 fps is close enough at any common rate for a visibility window
+  const skipped = [], visible = [];
+  for (const t of list) { const v = snapNow ? seamVisible(snapNow, "V" + track, t, half) : { visible: true, graphics: [] }; if (v.visible) visible.push({ t, graphics: v.graphics }); else skipped.push({ t, why: v.cover || "no picture from V" + track + " on one side" }); }
+  if (!visible.length) { const text = "No visible seam on V" + track + ": " + skipped.map((k) => k.t.toFixed(2) + "s under " + k.why).join("; ") + ". Nothing applied; a transition under b-roll is never seen."; card.done(text, true); return { text }; }
+  list = visible.map((v) => v.t);
   let copyNote = "";
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
   const raw = await host("addTransitions", JSON.stringify({ track: Number(track), seams: list, name: transition, frames: Number(frames) }));
@@ -1105,7 +1113,8 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
   const delta = Number(after) - Number(before);
   const ok = applied > 0 && delta >= applied;
   timeline = await readSnapshot().catch(() => timeline);
-  const text = copyNote + name + " (" + dur + ") on V" + track + ": " + applied + " of " + list.length + " applied\n" + results.join("\n") + "\nTransitions on the track: " + before + " before, " + after + " after | CHECK " + (ok ? "PASS" : "FAIL: the track's transition count rose by " + delta + " for " + applied + " applied; read the frames at a seam") + (name === "Morph Cut" && ok ? ". Morph Cut analyses in the background; frames at a seam show a red bar until it is done." : "");
+  const under = visible.filter((v) => v.graphics.length).map((v) => v.t.toFixed(2) + "s under " + v.graphics.join(", "));
+  const text = copyNote + name + " (" + dur + ") on V" + track + ": " + applied + " of " + list.length + " visible seam(s) applied" + (skipped.length ? ", " + skipped.length + " skipped as not visible" : "") + "\n" + results.join("\n") + (skipped.length ? "\nSkipped: " + skipped.map((k) => k.t.toFixed(2) + "s under " + k.why).join("; ") : "") + (under.length ? "\nGraphics over applied seams (not cover, just so you know): " + under.join("; ") : "") + "\nTransitions on the track: " + before + " before, " + after + " after | CHECK " + (ok ? "PASS" : "FAIL: the track's transition count rose by " + delta + " for " + applied + " applied; read the frames at a seam") + (name === "Morph Cut" && ok ? ". Morph Cut analyses in the background; frames at a seam show a red bar until it is done." : "");
   card.done(text, ok);
   return { text, isError: !ok };
 }
@@ -1707,7 +1716,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number", description: "default 0" }, end_seconds: { type: "number", description: "default the whole sequence" }, min_confidence: { type: "number", description: "default 0.35" } }, required: [] } },
   { name: "speaker_check", description: "Is the speaker worth staying on here? Renders frames across a span with the b-roll tracks hidden and reads the face with macOS's Vision framework: whether the head is square to the lens, eyes open, mouth mid-word, how big the face is, and Apple's own capture quality. Use it before deciding to hold on the face for a key line, and before covering one. Measured geometry only, no mood: energy comes from the voice.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 0.5" }, track: { type: "number", description: "1-based video track holding the speaker, default 1" } }, required: ["start_seconds", "end_seconds"] } },
-  { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
+  { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Only seams the viewer actually sees get one: a cut under b-roll or any footage on a higher track is skipped and named; graphics, titles and AE comps over it are reported but do not count as cover. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
     inputSchema: { type: "object", properties: { seams: { type: "array", items: { type: "number" }, description: "cut times in seconds (end of the outgoing clip)" }, all_seams: { type: "boolean", description: "every cut on the track where clips touch" }, track: { type: "number", description: "1-based video track, default 1" }, transition: { type: "string", description: "default Morph Cut" }, frames: { type: "number", description: "duration in frames, default 12" } }, required: [] } },
   { name: "subject_path", description: "Where Premiere's Auto Reframe put the subject over time: every keyframed parameter on every clip of one video track, sampled (time=x,y in frame fractions). Read this instead of judging head room from frames. Read-only. Key times are as Premiere returns them; the result says whether they read as sequence or clip time.",
     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1" }, max_keys: { type: "number", description: "samples per parameter, default 40" } }, required: [] } },
