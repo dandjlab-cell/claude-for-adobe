@@ -48,3 +48,10 @@ test("planCuts applies the minimum to the real gap, then pads", () => {
   // a 0.2 s gap is below the minimum and stays
   assert.deepEqual(planCuts([{ start: 10, end: 10.2 }], { minLen: 0.3, pad: 0.05, minKeep: 0.4 }), []);
 });
+
+test("a clip with no loud evidence anywhere is unheard, not silent", () => {
+  const { unheardClips } = require("../src/silence.cjs");
+  const clips = [{ s0: 0, s1: 10 }, { s0: 10, s1: 20 }, { s0: 20, s1: 20.5 }];
+  const loud = [{ start: 1, end: 9 }];
+  assert.deepStrictEqual(unheardClips(clips, loud), [1], "the second clip has nothing; the half-second one is left to the planner");
+});

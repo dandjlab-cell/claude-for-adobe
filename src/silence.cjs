@@ -31,6 +31,13 @@ function union(intervals) {
   return out;
 }
 
+// Clips (by index) whose span holds no loud interval at all. A talking-head clip with zero speech is far more
+// likely unreadable audio than silence, and cutting it whole is the worst outcome, so callers drop these from
+// coverage and say so. Very short clips (under minLen seconds) are left to the planner.
+function unheardClips(clips, loud, minLen = 2) {
+  return clips.map((c, i) => ({ c, i })).filter(({ c }) => (c.s1 - c.s0) >= minLen && !loud.some((l) => l.end > c.s0 && l.start < c.s1)).map(({ i }) => i);
+}
+
 // coverage: union of audio clip spans; loud: union of loud intervals. Returns silences = coverage minus loud.
 function silencesFrom(coverage, loud, rangeStart, rangeEnd) {
   const cov = union(coverage.map((c) => ({ start: Math.max(rangeStart, c.start), end: Math.min(rangeEnd, c.end) })).filter((c) => c.end > c.start));
@@ -62,4 +69,4 @@ function planCuts(silences, { minLen = 1.0, pad = 0.2, minKeep = MIN_KEEP_S, ran
   return merged.filter((s) => s.end > s.start).sort((a, b) => b.start - a.start);
 }
 
-module.exports = { MIN_KEEP_S, MIN_LOUD_S, loudIntervals, peakThreshold, planCuts, silencesFrom, union };
+module.exports = { MIN_KEEP_S, MIN_LOUD_S, loudIntervals, peakThreshold, planCuts, silencesFrom, union, unheardClips };

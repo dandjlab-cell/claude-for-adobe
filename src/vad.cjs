@@ -44,6 +44,18 @@ function parseSegments(stdout) {
   return out;
 }
 
+// Peak sample level of a 16-bit PCM WAV as a fraction of full scale (reads the data chunk, no library).
+function wavPeak(file) {
+  const buf = fs.readFileSync(file);
+  let off = 12, data = null;
+  while (off + 8 <= buf.length) { const id = buf.toString("ascii", off, off + 4), len = buf.readUInt32LE(off + 4); if (id === "data") { data = [off + 8, Math.min(buf.length, off + 8 + len)]; break; } off += 8 + len + (len % 2); }
+  if (!data || data[1] - data[0] < 4) return 0;
+  let peak = 0;
+  for (let i = data[0]; i + 1 < data[1]; i += 2) { const v = Math.abs(buf.readInt16LE(i)); if (v > peak) peak = v; }
+  return peak / 32768;
+}
+const SILENT_PEAK = 0.003; // about -50 dBFS: a decoder that produced nothing, not a quiet room
+
 // Speech segments [{start,end}] in source seconds for a whole media file.
 function speechSegments(mediaPath, options = {}) {
   const opts = { ...DEFAULTS, ...options };
@@ -54,6 +66,10 @@ function speechSegments(mediaPath, options = {}) {
   const wav = path.join(os.tmpdir(), "pcx-vad-" + Date.now().toString(36) + ".wav");
   try {
     extractWav16k(mediaPath, wav);
+    // A wav with no signal means the decoder could not read this file (BRAW, R3D and other camera formats are
+    // outside ffmpeg). "No speech" from silence is not evidence; refuse so the caller never cuts the clip whole.
+    const peak = wavPeak(wav);
+    if (peak < SILENT_PEAK) throw new Error("decoded audio is silent (peak " + peak.toFixed(4) + "): this format could not be read here; use Premiere's waveform (dB method)");
     const args = ["-vm", VAD_MODEL, "-np", "-vt", String(opts.threshold), "-vspd", String(opts.minSpeechMs), "-vsd", String(opts.minSilenceMs), "-vp", String(opts.padMs), "-f", wav];
     let r = spawnSync(VAD_BIN, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: ENV });
     let segments = parseSegments(r.stdout);
@@ -69,4 +85,4 @@ function speechSegments(mediaPath, options = {}) {
   } finally { try { fs.unlinkSync(wav); } catch (_) {} }
 }
 
-module.exports = { extractWav16k, DEFAULTS, VAD_BIN, VAD_MODEL, available, parseSegments, speechSegments };
+module.exports = { extractWav16k, DEFAULTS, VAD_BIN, VAD_MODEL, available, parseSegments, speechSegments, wavPeak, SILENT_PEAK };

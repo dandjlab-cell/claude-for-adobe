@@ -567,24 +567,42 @@ async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 
   let snap, clips;
   try { ({ snap, clips } = await audioClipsIn(Math.max(0, Number(start_seconds)), end_seconds ? Number(end_seconds) : Infinity)); } catch (error) { return err(card, error.message); }
   const a = Math.max(0, Number(start_seconds)), b = Math.min(snap.duration, end_seconds ? Number(end_seconds) : snap.duration);
-  const coverage = [], loud = [], skipped = [];
+  const coverage = [], loud = [], skipped = [], covered = [];
+  const CAMERA_RAW = /\.(braw|r3d|crm|arw)$/i; // ffmpeg cannot open these; Premiere's own waveform can
+  const byWaveform = (c) => {
+    if (!c.pek) { skipped.push(c.track + " " + c.name + " (no waveform yet)"); loud.push({ start: c.start, end: c.end }); return; }
+    coverage.push({ start: c.s0, end: c.s1 }); covered.push(c);
+    try { loud.push(...loudIntervals(peakWindows(parsePeakFile(c.pek), c.rate, c.inPoint + (c.s0 - c.start), c.s1 - c.s0, 0.1, c.s0), 0.1, threshold_db === undefined ? undefined : Number(threshold_db))); }
+    catch (error) { skipped.push(c.track + " " + c.name + " (" + error.message + ")"); loud.push({ start: c.start, end: c.end }); }
+  };
   clips.forEach((c) => {
     const offset = c.start - c.inPoint; // source seconds -> timeline seconds
-    if (useVad) {
+    if (useVad && !CAMERA_RAW.test(c.mediaPath || "")) {
       if (!c.mediaPath || !fs.existsSync(c.mediaPath)) { skipped.push(c.track + " " + c.name + " (media offline)"); loud.push({ start: c.start, end: c.end }); return; }
       try {
         setStatus("Silero VAD: " + c.name + "…");
         const r = vad.speechSegments(c.mediaPath);
-        coverage.push({ start: c.s0, end: c.s1 });
+        coverage.push({ start: c.s0, end: c.s1 }); covered.push(c);
         r.segments.forEach((g) => { const st = g.start + offset, en = g.end + offset; if (en > c.s0 && st < c.s1) loud.push({ start: Math.max(c.s0, st), end: Math.min(c.s1, en) }); });
-      } catch (error) { skipped.push(c.track + " " + c.name + " (" + error.message + ")"); loud.push({ start: c.start, end: c.end }); }
+      } catch (error) {
+        // Voice detection could not read it (silent decode, unsupported format): Premiere's waveform is the fallback, never "all silence".
+        if (c.pek) { skipped.push(c.track + " " + c.name + " (voice detection: " + error.message.split(":")[0] + "; used Premiere's waveform)"); byWaveform(c); }
+        else { skipped.push(c.track + " " + c.name + " (" + error.message + ")"); loud.push({ start: c.start, end: c.end }); }
+      }
       return;
     }
-    if (!c.pek) { skipped.push(c.track + " " + c.name + " (no waveform yet)"); loud.push({ start: c.start, end: c.end }); return; }
-    coverage.push({ start: c.s0, end: c.s1 });
-    try { loud.push(...loudIntervals(peakWindows(parsePeakFile(c.pek), c.rate, c.inPoint + (c.s0 - c.start), c.s1 - c.s0, 0.1, c.s0), 0.1, threshold_db === undefined ? undefined : Number(threshold_db))); }
-    catch (error) { skipped.push(c.track + " " + c.name + " (" + error.message + ")"); loud.push({ start: c.start, end: c.end }); }
+    byWaveform(c);
   });
+  // A clip with no speech or level anywhere in it is unreadable audio far more often than silence. It is never
+  // cut whole from a silence pass (2026-09-07: two camera clips were removed entirely this way); it is dropped
+  // from coverage and named, and the editor decides.
+  const { unheardClips } = require("./src/silence.cjs");
+  const unheard = unheardClips(covered, loud);
+  if (unheard.length) {
+    const names = unheard.map((i) => covered[i]);
+    names.forEach((c) => { const k = coverage.findIndex((x) => x.start === c.s0 && x.end === c.s1); if (k >= 0) coverage.splice(k, 1); loud.push({ start: c.start, end: c.end }); });
+    skipped.push(...names.map((c) => c.track + " " + c.name + " (no speech or level found anywhere in it: treated as unreadable, NOT cut; check its audio)"));
+  }
   const cuts = planCuts(silencesFrom(coverage, loud, a, b), { minLen: Number(min_silence_s), pad: Number(pad_s), rangeStart: a, rangeEnd: b });
   const total = cuts.reduce((n, c) => n + (c.end - c.start), 0);
   const how = useVad ? "voice: Silero VAD speech regions, min " + min_silence_s + "s, pad " + pad_s + "s" : "waveform" + (threshold_db === undefined ? ", threshold auto = noise floor + 8 dB" : ", threshold " + threshold_db + " dBFS");
