@@ -13,7 +13,7 @@ const { checkForUpdate, currentVersion, installUpdate } = require(path.join(exte
 const { classifyMedia, formatClassification } = require(path.join(extensionRoot, "src", "classify.cjs"));
 const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captions.cjs"));
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
-const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
+const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
@@ -340,7 +340,12 @@ async function bindHostEvents() {
   window.__adobe_cep__.addEventListener(HOST_EVENT, (evt) => onHostEvent(String(evt && evt.data || "")));
 }
 
+// While a cut loop runs, Premiere fires dozens of change events per range; refreshing the snapshot and the ledger
+// on each one competes with the cuts on the host's single thread and made Cut silences several times slower.
+// The loop suspends refreshes and does one at the end.
+let refreshSuspended = false;
 function onHostEvent(name) {
+  if (refreshSuspended) return;
   log("host event " + name);
   if (/SelectionChanged/.test(name)) return; // selection is not timeline state
   clearTimeout(snapshotTimer);
@@ -375,7 +380,7 @@ async function getLedger(snap) {
   return ledgerCache;
 }
 let ledgerTimer = null;
-function refreshLedgerSoon() { clearTimeout(ledgerTimer); ledgerTimer = setTimeout(() => { getLedger().catch((e) => log("ledger failed: " + e.message)); }, 800); }
+function refreshLedgerSoon() { if (refreshSuspended) return; clearTimeout(ledgerTimer); ledgerTimer = setTimeout(() => { getLedger().catch((e) => log("ledger failed: " + e.message)); }, 800); }
 
 async function snapshotTimeline() {
   const next = await readSnapshot();
@@ -568,7 +573,9 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const fpBefore = snapBefore.error ? "" : timelineFingerprint(snapBefore); // taken BEFORE any extract; the module timeline is refreshed by Premiere's events mid-cut and cannot be trusted for this
   const planned = cuts.reduce((s, c) => s + Math.max(0, Math.min(c.end, durBefore || c.end) - c.start), 0);
   const t0 = Date.now();
+  refreshSuspended = true; clearTimeout(snapshotTimer); clearTimeout(ledgerTimer);
   for (let i = 0; i < ordered.length && ok; i += BATCH) {
+    if (cancelRequested) { ok = false; raw = "stopped by the editor after " + doneRanges + " of " + ordered.length + " range(s); the rest were not cut (Cmd+Z per range undoes the done ones)"; break; }
     const batch = ordered.slice(i, i + BATCH);
     setStatus("Cutting " + Math.min(i + batch.length, ordered.length) + " / " + ordered.length + " ranges…");
     card.progress(i, ordered.length, "cutting ");
@@ -594,7 +601,9 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   raw = (ok ? "extracted " + doneRanges + " range(s) in " + secs + "s" : raw);
   setStatus("Thinking…");
+  refreshSuspended = false;
   timeline = await readSnapshot();
+  refreshLedgerSoon();
   // The exact timeline transcript rides along with the cut: words in the removed ranges go, the rest move
   // earlier, and it is re-stamped for the new timeline, so fillers, takes and captions after a cut stay exact.
   if (ok) { try { const tp = timelineTranscriptPath(); const j = JSON.parse(fs.readFileSync(tp, "utf8")); if (j.fingerprint === fpBefore) { const { remapWordsThroughCuts } = require(path.join(extensionRoot, "src", "transcript.cjs")); j.words = remapWordsThroughCuts(j.words, cuts); j.fingerprint = timelineFingerprint(timeline); j.remappedAt = new Date().toISOString(); fs.writeFileSync(tp, JSON.stringify(j)); } } catch (_) {} }
@@ -1113,6 +1122,25 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 }
 
 // What the viewer sees at a time, or at every cut, from the ledger.
+// Fill the frame from the panel side: each footage clip's source size from Premiere's clip data, or from the file
+// itself (ffprobe) when Premiere's Video Info is empty (seen on BRAW), scale = 100 x max(W/srcW, H/srcH), position
+// centred, applied with a read-back. Independent of the host's fill, which had nothing to compute from.
+async function fillFrame(track = 1) {
+  let tf; try { tf = await readTransforms(); } catch (error) { return "fill skipped: " + error.message; }
+  const clips = tf.rows.filter((c) => c.track === "V" + track && !c.graphic);
+  const out = [];
+  for (const c of clips) {
+    let srcW = c.srcW, srcH = c.srcH, from = "Premiere";
+    if (!srcW || !srcH) { const d = c.mediaPath ? mediaDims(c.mediaPath) : null; if (d) { srcW = d.w; srcH = d.h; from = "file"; } }
+    if (!srcW || !srcH) { out.push(c.name + ": source size unknown, left as is"); continue; }
+    const scale = Number((100 * Math.max(tf.w / srcW, tf.h / srcH)).toFixed(2));
+    const t = Number(((c.start + c.end) / 2).toFixed(3));
+    const res = await host("nudgeClip", String(t), String(track - 1), "0", "0", "1", "0.5", "0.5", String(scale), "true");
+    out.push(c.name + ": " + srcW + "x" + srcH + " (" + from + ") -> scale " + scale + "% centred " + (res.indexOf("CHECK PASS") >= 0 ? "(read back)" : "(" + res.replace(/^ERR:/, "").slice(0, 80) + ")"));
+  }
+  return out.length ? out.join("; ") : "no footage clips on V" + track;
+}
+
 // Centre each footage clip on the face, statically: one Vision read at the clip's midpoint with the other tracks
 // hidden, then the Motion position moved so the face sits at the frame's horizontal centre, within what the fill
 // scale allows (no blank canvas). The cheap stand-in for tracking until reframe runs on the finished cut.
@@ -1120,7 +1148,7 @@ async function focusFaces(track = 1) {
   if (!fs.existsSync(OCR_BIN)) return ["face focus skipped: vision helper missing"];
   const { readFrame } = require(path.join(extensionRoot, "src", "face.cjs"));
   let tf; try { tf = await readTransforms(); } catch (error) { return ["face focus skipped: " + error.message]; }
-  const clips = tf.rows.filter((c) => c.track === "V" + track && !c.graphic && c.srcW && c.srcH && c.x !== null);
+  const clips = tf.rows.filter((c) => c.track === "V" + track && !c.graphic && c.x !== null).map((c) => { if (c.srcW && c.srcH) return c; const d = c.mediaPath ? mediaDims(c.mediaPath) : null; return d ? { ...c, srcW: d.w, srcH: d.h } : c; }).filter((c) => c.srcW && c.srcH);
   const out = [];
   for (const c of clips) {
     const t = Number(((c.start + c.end) / 2).toFixed(3));
@@ -1160,16 +1188,18 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const r1 = await createSequence({ bin, name, aspect, preset, width, height, insert_clips: true });
   if (r1.isError) return stop("sequence: " + first(r1.text));
   // Fill the frame (a 16:9 or 4K shot in a 9:16 sequence must cover it), then centre each clip on the face.
-  const fillRes = await host("reframeActive", "fill");
+  const fillRes = await fillFrame(1);
   const faces = await focusFaces(1);
   const d1 = await dur();
   steps.push("1. Sequence: " + first(r1.text) + " (" + d1.toFixed(1) + "s). Fill: " + first(fillRes).slice(0, 120) + ". Face focus: " + faces.join("; ") + ". Tracking deferred to the end.");
+  if (cancelRequested) return stop("stopped by the editor");
   // 2. silences
   card.progress(1, 5, "silences ");
   const r2 = await removeSilences({ method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value), dry_run: false });
   const d2 = await dur();
   steps.push("2. Silences: " + first(r2.text) + " -> " + d2.toFixed(1) + "s");
   if (r2.isError) return stop("silences failed; fix that first");
+  if (cancelRequested) return stop("stopped by the editor");
   // 3. transcript
   card.progress(2, 5, "transcript ");
   let snap = await readSnapshot().catch(() => null);
@@ -1198,6 +1228,7 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
     }
   }
   steps.push("3. Transcript: " + from);
+  if (cancelRequested) return stop("stopped by the editor");
   // 4. fillers
   card.progress(3, 5, "fillers ");
   const r4 = await removeFillers({ dry_run: false });
@@ -1209,6 +1240,7 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
     try { fresh = fs.existsSync(wav) && JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8")).timeline === timelineFingerprint(sn); } catch (_) {}
     if (!fresh) { const preset = wavPreset(); if (preset) { setStatus("Rendering timeline audio…"); const out = await host("exportSequenceAudio", wav, preset); if (out.indexOf("ERR:") !== 0 && fs.existsSync(wav)) fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(sn) })); } }
   } catch (_) {}
+  if (cancelRequested) return stop("stopped by the editor");
   // 5. takes
   card.progress(4, 5, "takes ");
   const r5 = await findTakesTool({ apply: true });
@@ -1663,6 +1695,7 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
     const raw = await host("reframeActive", reframe); // footage fills the frame and is centred; graphics untouched
     if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return { text: "CLAUDE_FOR_ADOBE_ERROR:" + raw.replace(/^ERR:/, ""), isError: true };
     parts.push(raw);
+    if (reframe === "fill") parts.push("Fill (panel, source size from the file when Premiere has none): " + (await fillFrame(1)));
     if (trackingDeferred) parts.push("Face focus: " + (await focusFaces(1)).join("; "));
     timeline = await readSnapshot().catch(() => timeline);
   } else {
@@ -2330,11 +2363,15 @@ let buttonJob = "";
 function beginButtonJob(label) {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return false; }
   if (buttonJob) { addMessage("assistant error", "Wait for the running job (" + buttonJob + ") to finish first."); return false; }
-  buttonJob = label;
+  buttonJob = label; cancelRequested = false;
   [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = true; });
+  ui.stop.disabled = false; // Stop ends the job at its next range or step
   return true;
 }
-function endButtonJob() { buttonJob = ""; quietCard = null; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = false; }); }
+// Stop for long jobs: Cut silences, Captions and rough_cut check this between ranges and between steps.
+let cancelRequested = false;
+function requestCancel() { cancelRequested = true; setStatus("Stopping after the current step…"); }
+function endButtonJob() { buttonJob = ""; quietCard = null; cancelRequested = false; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = false; }); }
 async function runCutButton(tool, params, label) {
   if (!beginButtonJob(label)) return;
   const card = addTool(label, "");
@@ -2691,7 +2728,7 @@ document.getElementById("copy-log").onclick = () => {
 document.getElementById("clear-log").onclick = () => { ui.log.textContent = ""; };
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
-ui.stop.onclick = () => restartSession(session && session.sessionId);
+ui.stop.onclick = () => { if (buttonJob) { requestCancel(); return; } cancelRequested = true; restartSession(session && session.sessionId); };
 ui.model.onchange = () => restartSession(session && session.sessionId);
 // Chats are tabs. Each holds its own agent, model, messages and session; switching parks the one on screen
 // (its session stays alive) and shows another. New chats open next to it. Not while a turn is running.

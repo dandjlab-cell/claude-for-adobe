@@ -27,6 +27,20 @@ function mediaInfo(file) {
   return `${file}\nduration ${Number(fmt.duration || 0).toFixed(3)} s, ${fmt.format_name}, ${(Number(fmt.size || 0) / 1e6).toFixed(1)} MB\n` + streams.join("\n");
 }
 
+// Width and height of a media file's first video stream, or null. ffprobe reads BRAW/R3D containers for this.
+const dimsCache = new Map();
+function mediaDims(file) {
+  if (dimsCache.has(file)) return dimsCache.get(file);
+  let out = null;
+  try {
+    const r = spawnSync(FFPROBE, ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file], { encoding: "utf8" });
+    const m = /^(\d+),(\d+)/.exec((r.stdout || "").trim());
+    if (m) out = { w: Number(m[1]), h: Number(m[2]) };
+  } catch (_) {}
+  dimsCache.set(file, out);
+  return out;
+}
+
 function decodePcm(file, startSeconds, durationSeconds, sampleRate = 8000) {
   const r = spawnSync(FFMPEG, ["-v", "error", "-ss", String(Math.max(0, startSeconds)), "-t", String(durationSeconds), "-i", file, "-vn", "-ac", "1", "-ar", String(sampleRate), "-f", "s16le", "-"], { maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new Error("ffmpeg failed: " + String(r.stderr || "").trim().slice(0, 300));
@@ -125,4 +139,4 @@ function frameMatchShare(a, b, tol = 24) {
   return same / 4096;
 }
 
-module.exports = { FFMPEG, MAX_WINDOWS, SILENCE_DB, analyzeLevels, audioLevels, decodePcm, formatLevels, formatPeakWindows, mediaInfo, resizeImage, frameMatchShare };
+module.exports = { FFMPEG, MAX_WINDOWS, SILENCE_DB, analyzeLevels, audioLevels, decodePcm, formatLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare };
