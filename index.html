@@ -24,9 +24,12 @@
     footer { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; }
     .view { display: none; min-height: 0; }
     .view.active { display: grid; grid-template-columns: minmax(0, 1fr); }
-    #view-chat.active { grid-template-rows: auto auto minmax(0, 1fr) auto; }
-    #view-chat.active.with-options { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
-    #view-chat.active.with-options.with-options-2 { grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; }
+    /* The chat is a column whose members come and go (selection line, job bar, option strips): a flex column,
+       where the message list takes whatever is left, never a grid with a fixed row count. */
+    #view-chat.active { display: flex; flex-direction: column; min-height: 0; }
+    #view-chat.active > * { flex: 0 0 auto; }
+    #view-chat.active > #messages { flex: 1 1 auto; min-height: 0; }
+    #view-chat.active > #starter { flex: 1 1 auto; min-height: 0; }
     #caption-options, #cut-options { border-bottom: 1px solid var(--line); background: var(--raised); }
     #caption-options[hidden], #cut-options[hidden] { display: none; }
     #caption-options label, #cut-options label { display: flex; align-items: center; gap: 4px; color: var(--ink-60); font-size: 12px; }
@@ -101,7 +104,7 @@
     #starter { display: none; padding: 28px 16px 16px; }
     body.landing #starter { display: block; overflow-y: auto; }
     body.landing .composer, body.landing #selection-bar, body.landing .scripts, body.landing #messages { display: none; }
-    body.landing #view-chat.active { grid-template-rows: minmax(0, 1fr); }
+    body.landing #view-chat.active { display: flex; }
     #starter h1 { font-size: 20px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 6px; }
     #starter p { margin: 0 0 14px; color: var(--ink-60); max-width: 48ch; }
     #starter ol { margin: 0 0 18px; padding-left: 20px; color: var(--ink-60); max-width: 48ch; }
