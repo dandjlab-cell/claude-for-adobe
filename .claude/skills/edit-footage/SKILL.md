@@ -10,7 +10,7 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 **The order for "make me a 9:16 (or 4:5, 16:9) video from this folder".** Tracking, frames and checks are the
 expensive steps; cutting is cheap. They come last, once, on what survives. Never run Auto Reframe,
 snapshot_moments or seam_frames on six minutes of raw footage that will become one.
-1. `rough_cut` with the talking-head bin and the shape. ONE call; it runs steps 1 to 5 in order and cannot drift: sequence at the shape without tracking, silences, transcript (Premiere's, cached, or Whisper), fillers, repeated takes. It stops and hands you the transcript.
+1. `rough_cut` with the talking-head bin and the shape. ONE call; it cannot drift: sequence at the shape without tracking, render, Whisper transcript, then the audio cut at the level of thoughts (`audio_cut`: fragments and false starts dropped whole, losing takes dropped whole, every complete thought kept with air, cuts only between thoughts). It stops and hands you the kept thoughts, numbered.
 4. The story: which lines carry it, in what order, to what length (`speaker_check` on the line that matters).
 5. `keep_only` to the target length. `sound_events` before cutting any pause on a conversation.
 6. B-roll from its bin over the lines that call for it (`place_broll`), to the rhythm rules.

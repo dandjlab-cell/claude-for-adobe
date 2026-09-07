@@ -1186,12 +1186,12 @@ async function focusFaces(track = 1) {
 async function roughCut({ bin = "", aspect, preset, width, height, name = "", language = "en" } = {}) {
   const card = addTool("rough_cut " + (bin || "(selected bin)") + " " + (aspect || preset || (width && height ? width + "x" + height : "")), "");
   card.open();
-  const steps = [];
+  const steps = []; let snapAfter1 = null;
   const dur = async () => { const sn = await readSnapshot().catch(() => null); return sn && !sn.error ? sn.duration : NaN; };
   const first = (t) => String(t || "").replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "").split("\n").find((l) => l.trim()) || "";
   const stop = (why) => { const text = steps.concat(["STOPPED: " + why]).join("\n"); card.done(text, false); return { text, isError: true }; };
   // 1. the sequence at the shape, no tracking. The name is the macro's job: "<folder> <shape>".
-  card.progress(0, 5, "sequence ");
+  card.progress(0, 4, "sequence ");
   if (!bin) bin = await selectedBin();
   if (!bin) return stop("no bin: select the talking-head bin (or the folder holding it) in the Project panel, or pass bin");
   if (!name) name = (bin.split("/").pop() || "cut") + " " + (aspect || preset || (width && height ? width + "x" + height : "9x16")).replace(/:/g, "x");
@@ -1203,59 +1203,35 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const d1 = await dur();
   steps.push("1. Sequence: " + first(r1.text) + " (" + d1.toFixed(1) + "s). Fill: " + first(fillRes).slice(0, 120) + ". Face focus: " + faces.join("; ") + ". Tracking deferred to the end.");
   if (cancelRequested) return stop("stopped by the editor");
-  // 2. silences
-  card.progress(1, 5, "silences ");
-  const r2 = await removeSilences({ method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value), dry_run: false });
-  const d2 = await dur();
-  steps.push("2. Silences: " + first(r2.text) + " -> " + d2.toFixed(1) + "s");
-  if (r2.isError) return stop("silences failed; fix that first");
+  // 2. the timeline render (for Whisper and for delivery scoring), on the untouched sequence
   if (cancelRequested) return stop("stopped by the editor");
-  // 3. transcript
-  card.progress(2, 5, "transcript ");
-  let snap = await readSnapshot().catch(() => null);
-  if (!snap || snap.error) return stop("could not read the timeline after the silence pass");
-  let from = "";
-  if (freshTimelineWords(snap)) from = "exact timeline transcript (cached)";
-  else {
-    let transcripts = []; try { transcripts = project.path ? listTranscripts(project.path) : []; } catch (_) {}
-    const { clips } = await audioClipsIn(0, Infinity);
-    const allPremiere = clips.length && clips.every((c) => { try { return !!transcriptForClip(transcripts, c) || !!(c.mediaPath && cachedWords(c.mediaPath)); } catch (_) { return false; } });
-    if (allPremiere) from = "Premiere's transcript per clip (or Whisper cache)";
-    else {
-      if (!modelReady()) return stop("no transcript for these clips and the Whisper model is not installed: transcribe in Premiere's Text panel and save, or run transcribe_timeline once (it offers the download), then run rough_cut again");
-      const wav = seqFile(".mix.wav");
-      fs.mkdirSync(analysisDir(), { recursive: true });
-      try { fs.unlinkSync(wav); } catch (_) {}
-      const preset = wavPreset();
-      if (!preset) return stop("could not find Premiere's WAV export preset");
-      setStatus("Rendering timeline audio…");
-      const out = await host("exportSequenceAudio", wav, preset);
-      if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return stop("audio render failed: " + out.replace(/^ERR:/, ""));
-      try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(snap) })); } catch (_) {}
-      setStatus("Whisper: timeline…");
-      try { const r = await transcribeRenderedTimeline(wav, snap, language); from = "Whisper on the timeline render (" + r.words.length + " words)"; } catch (error) { return stop("transcription failed: " + error.message); }
-      setStatus("Ready");
-    }
-  }
-  steps.push("3. Transcript: " + from);
+  card.progress(1, 4, "render ");
+  snapAfter1 = await readSnapshot().catch(() => null);
+  if (!snapAfter1 || snapAfter1.error) return stop("could not read the new sequence");
+  const wav = seqFile(".mix.wav");
+  fs.mkdirSync(analysisDir(), { recursive: true });
+  try { fs.unlinkSync(wav); } catch (_) {}
+  const wavPresetPath = wavPreset();
+  if (!wavPresetPath) return stop("could not find Premiere's WAV export preset");
+  setStatus("Rendering timeline audio…");
+  const rendered = await host("exportSequenceAudio", wav, wavPresetPath);
+  if (rendered.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return stop("audio render failed: " + rendered.replace(/^ERR:/, ""));
+  try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(snapAfter1) })); } catch (_) {}
+  // 3. the transcript: the exact timeline transcript from that render (Whisper), the one source every step shares
   if (cancelRequested) return stop("stopped by the editor");
-  // 4. fillers
-  card.progress(3, 5, "fillers ");
-  const r4 = await removeFillers({ dry_run: false });
-  const d4 = await dur();
-  steps.push("4. Fillers: " + first(r4.text) + " -> " + d4.toFixed(1) + "s");
-  // The timeline render for delivery scoring, made AFTER the last cut so it matches the timeline the takes are on.
-  try {
-    const sn = await readSnapshot(); const wav = seqFile(".mix.wav"); let fresh = false;
-    try { fresh = fs.existsSync(wav) && JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8")).timeline === timelineFingerprint(sn); } catch (_) {}
-    if (!fresh) { const preset = wavPreset(); if (preset) { setStatus("Rendering timeline audio…"); const out = await host("exportSequenceAudio", wav, preset); if (out.indexOf("ERR:") !== 0 && fs.existsSync(wav)) fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(sn) })); } }
-  } catch (_) {}
+  card.progress(2, 4, "transcript ");
+  if (!modelReady()) return stop("the Whisper model is not installed: run transcribe_timeline once (it offers the download), then rough_cut again");
+  setStatus("Whisper: timeline…");
+  let r3; try { r3 = await transcribeRenderedTimeline(wav, snapAfter1, language); } catch (error) { return stop("transcription failed: " + error.message); }
+  setStatus("Ready");
+  steps.push("2. Transcript: Whisper on the timeline render, " + r3.words.length + " words");
+  // 4. the audio cut, at the level of thoughts, one keep_only
   if (cancelRequested) return stop("stopped by the editor");
-  // 5. takes
-  card.progress(4, 5, "takes ");
-  const r5 = await findTakesTool({ apply: true });
+  card.progress(3, 4, "thoughts ");
+  const r4 = await audioCut({ apply: true });
   const d5 = await dur();
-  steps.push("5. Takes: " + first(r5.text) + " -> " + d5.toFixed(1) + "s (only groups with similarity " + require(path.join(extensionRoot, "src", "takes.cjs")).SURE + " or more were cut; the rest are listed below for you)\n" + String(r5.text || "").split("\n").filter((l) => /^(Take group|  KEEP|  drop)/.test(l)).join("\n"));
+  steps.push("3. Audio cut (thoughts): " + first(r4.text) + " -> " + d5.toFixed(1) + "s\n" + String(r4.text || "").split("\n").filter((l) => /^(Kept thoughts|\d+\. |Dropped|  - )/.test(l)).join("\n"));
+  if (r4.isError) return stop("the audio cut failed: " + first(r4.text));
   // the material for the story: the timeline transcript as it stands after the cuts (carried through each one)
   const finalSnap = await readSnapshot().catch(() => null);
   const tlw = finalSnap && !finalSnap.error ? freshTimelineWords(finalSnap) : null;
@@ -1263,9 +1239,32 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   if (tlw) lines = linesFromWords(tlw.words, 0).slice(0, 120).map((l) => "[" + tc(l.start) + "] " + l.text).join("\n") + "\n(exact timeline transcript, " + tlw.words.length + " words, carried through the cuts)";
   else { const rt = await readTranscript({}); lines = String(rt.text || "").split("\n").slice(0, 120).join("\n"); }
   const broll = /(\d+) clip\(s\) from a b-roll bin were NOT laid/.exec(r1.text || "");
-  const text = steps.join("\n") + "\n\nThe cut is " + d5.toFixed(1) + "s (from " + d1.toFixed(1) + "s raw). Original clips untouched; every step is Cmd+Z on the new sequence." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW THE JUDGEMENT, yours: read the transcript below, decide which lines carry the story, in what order, to what length; then keep_only, place_broll, and reframe (no bin) once for tracking and checks.\n\n" + lines;
+  const text = steps.join("\n") + "\n\nThe cut is " + d5.toFixed(1) + "s (from " + d1.toFixed(1) + "s raw): complete thoughts only, cuts only between them. Original clips untouched; every step is Cmd+Z on the new sequence." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW THE JUDGEMENT, yours: the kept thoughts are numbered above with their text; decide which carry the story, in what order, to what length; then keep_only with whole thoughts (their times are above), place_broll, and reframe (no bin) once for tracking and checks.\n\n" + lines;
   card.done(steps.join("\n") + "\n-> " + d5.toFixed(1) + "s; the story is next", true);
   return { text };
+}
+
+// The thought-level audio cut: plan from the exact timeline transcript (with delivery from the render), report, apply as one keep_only.
+async function audioCut({ apply = false, gap_seconds, pad_seconds } = {}) {
+  const card = addTool((apply ? "cut" : "plan") + "_thoughts", "");
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const tlw = freshTimelineWords(snap);
+  if (!tlw) return err(card, "no transcript for this exact timeline: run transcribe_timeline (or rough_cut) first");
+  const { planThoughts, report, PAD } = require(path.join(extensionRoot, "src", "thoughts.cjs"));
+  // Delivery per take group from the timeline render, when it matches this exact timeline.
+  let scoreGroup;
+  try {
+    const wav = seqFile(".mix.wav"); const meta = JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8"));
+    if (fs.existsSync(wav) && meta.timeline === timelineFingerprint(snap)) {
+      const { prosodyForRanges, deliveryScores } = require(path.join(extensionRoot, "src", "prosody.cjs"));
+      scoreGroup = (cands) => deliveryScores(prosodyForRanges(wav, cands.map((c) => ({ start: c.start, end: c.end, words: c.words }))));
+    }
+  } catch (_) {}
+  const plan = planThoughts(tlw.words, { gap: Number(gap_seconds) || 0.6, pad: Number.isFinite(Number(pad_seconds)) ? Number(pad_seconds) : PAD, scoreGroup });
+  const text = report(plan) + "\n(from the exact timeline transcript, " + tlw.words.length + " words" + (scoreGroup ? "; take choice includes delivery from the timeline render" : "; no delivery data") + ")";
+  if (!apply || !plan.ranges.length) { card.done(text, true); return { text: text + (plan.ranges.length ? "\naudio_cut with apply: true makes this cut as one keep_only." : "") }; }
+  const res = await keepOnly({ ranges: plan.ranges.map((r) => [r.start, r.end]), dry_run: false });
+  return { ...res, text: res.text + "\n" + text };
 }
 
 // Repeated takes on the timeline, from whatever transcript exists (the exact timeline transcript first, else per clip).
@@ -2112,7 +2111,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -2161,7 +2160,9 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
-  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Runs the fixed order and cannot be reordered: (1) a new sequence at the shape from the talking-head bin, footage filled and centred, NO tracking; (2) silences removed with the Settings method; (3) the transcript: the exact timeline transcript if cached, Premiere's per clip if the clips carry one, else Whisper on the render (waits for it); (4) fillers, stutters and repeats removed; (5) repeated takes dropped, the most complete kept. Then it STOPS and returns the transcript lines and the b-roll bins for the one step that is judgement: the story, the order, the length. After keep_only and place_broll, call reframe (no bin) once for tracking and checks. Each step is one or more Cmd+Z steps on the new sequence; the original clips are untouched.",
+  { name: "audio_cut", description: "The audio cut at the level of thoughts, one pass: the transcript is split into thoughts, fragments and false starts are dropped whole, the losing take of a repeated line is dropped whole (completeness plus delivery from the timeline render), every complete thought is kept in order with a little air on each side, and the cut lands only between thoughts. Nothing is ever cut inside a sentence. Report first (kept thoughts numbered with times and text, dropped ones with reasons); apply: true does it as one keep_only. Needs a transcript for this exact timeline (rough_cut and transcribe_timeline make it).",
+    inputSchema: { type: "object", properties: { apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "air on each side of a thought, default 0.18" } }, required: [] } },
+  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Fixed order, cannot be reordered: (1) a new sequence at the shape from the talking-head bin, footage filled and centred on the face, NO tracking; (2) the timeline rendered and transcribed (Whisper), one exact transcript every step shares; (3) the audio cut at the level of thoughts, one keep_only: fragments and false starts dropped whole, the losing take of a repeated line dropped whole (completeness plus delivery), every complete thought kept in order with air on each side, cuts only between thoughts, never inside a sentence. Then it STOPS with the kept thoughts numbered for the one step that is judgement: which carry the story, in what order, to what length. After keep_only (whole thoughts) and place_broll, call reframe (no bin) once for tracking and checks.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path of the talking-head footage; default the selected bin" }, aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9" }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, name: { type: "string" }, language: { type: "string", description: "for Whisper, default en" } }, required: [] } },
   { name: "find_takes", description: "Repeated takes from the transcript: a line said, stumbled, said again. Groups near-duplicate utterances within a window and picks the most complete take (most content words, fewest fillers, finished ending; later on a tie). Returns the groups with times and the ranges to drop; with apply: true it removes the dropped takes (working copy, one Cmd+Z step per range). Run after remove_silences and before story decisions; the transcript must exist (Premiere's or transcribe_timeline).",
     inputSchema: { type: "object", properties: { window_seconds: { type: "number", description: "how far apart two takes of the same line can be, default 90" }, min_similarity: { type: "number", description: "0-1, default 0.6" }, apply: { type: "boolean", description: "remove the dropped takes now, default false (report only)" }, source: { type: "string", description: "auto | premiere | whisper, default auto" } }, required: [] } },
