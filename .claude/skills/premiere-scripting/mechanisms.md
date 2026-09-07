@@ -96,7 +96,7 @@ Two facts that decide the shape of everything below:
 
 | Job | Premiere mechanism | Status | Call | CHECK |
 |---|---|---|---|---|
-| New sequence from clips | `app.project.createNewSequenceFromClips(name, items, bin)` | verified (`create_sequence`, `reframe` from a bin) | | |
+| New sequence from clips | `app.project.createNewSequenceFromClips(name, items, bin)` | verified (`create_sequence`, `rough_cut`) | | |
 | Duplicate a sequence | `seq.clone()` | verified (working copies) | | |
 | Sequence size / rate | `seq.getSettings()` + `setSettings(s)` | verified (`set_sequence_size`) | | |
 | Bins, move, rename | `createBin`, `moveBin`, `renameBin`, `createSmartBin` | verified / listed | | |

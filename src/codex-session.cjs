@@ -43,7 +43,7 @@ function readCodexConfig() { try { return fs.readFileSync(path.join(os.homedir()
 
 const CODEX_NOTES = [
   "You are Codex, not Claude: there is no Agent tool and no Skill tool. The workflows are the SKILL.md files under .agents/skills in this folder (edit-footage, reframe, cut-silences, organize-project, how-to-use, premiere-scripting); read the matching one before starting a workflow, and premiere-scripting's reference.md and snippets.md before any ExtendScript.",
-  "Where the rules say to hand a long file to a subagent, read it yourself and keep what you quote short. The shell is read-only and only for reading analysis files; never write files or run anything else. Every Premiere action goes through the premiere tools.",
+  "Where the rules say to hand a long file to a subagent, read it yourself and keep what you quote short. The shell is read-only and only for reading analysis files and the skill files under .agents/skills; never write files or run anything else. Every Premiere action goes through the premiere tools.",
 ].join("\n");
 
 // Codex reads its instructions from AGENTS.md in the working folder and skills from .agents/skills there.

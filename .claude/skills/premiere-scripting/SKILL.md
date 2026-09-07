@@ -14,7 +14,7 @@ escape hatch. Check first: `sequence_overview`, `classify_clips`, `find_in_trans
 
 Premiere first: `mechanisms.md` is the catalog of Premiere's own mechanisms by job (picture, cut, sound, words,
 project) with a status per row: verified from this panel, listed on this build but not yet run, the editor's key,
-or none. Read it before deciding how to do a job at all; if a row exists, call that, never re-implement it.
+or none. Read it whenever no tool covers a job; if a row exists, call that, never re-implement it.
 `native-first.md` is the shorter decision table of Premiere's feature versus the panel's engine.
 
 Before writing a script: read `reference.md` for the can/cannot table and the exact property names, then copy

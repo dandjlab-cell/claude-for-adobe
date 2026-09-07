@@ -4,7 +4,7 @@
 **Worktree:** ~/DevApps/claude-for-adobe
 **Date:** 2026-09-07 (night)
 **Branch:** `main`
-**Last commit:** `336637d` doubles fix (findRestarts) + place_broll by name/bin path + prompt rules (everything after v0.1.77 `a39b166`-era is unreleased main; see Current State)
+**Last commit:** see `git log -1`; the night of 09-07/08 landed the doubles fix (`336637d`), the place_broll name resolver, and the system-prompt restructure (`3049f17` + Codex-review fix-up) (everything after v0.1.77 `a39b166`-era is unreleased main; see Current State)
 **Role:** BUILDER (make changes, run tests, ship releases; VERIFIER = reproduce and confirm without editing. Default here is BUILDER; confirm with the user before a release.)
 
 ---
@@ -86,6 +86,10 @@ Private, per-machine notes under `~/.claude/projects/<this repo's scope>/memory/
 | Transcripts belong to clips; `transcribe_timeline` for an exact transcript of a cut | Re-cut timelines reuse clip transcripts; render-the-mix gives timeline time |
 | Never publish from a chain gated only on tests that don't cover the edit | Two broken releases; see the memory note `feedback_release_chain_guard.md` under Key Files |
 | `premiere-codex` is frozen | The public repo is canonical |
+
+## System prompt restructure (2026-09-08, Codex APPROVED round 2)
+
+`buildSystemPrompt` went from 3,200 words / 32 paragraphs to ~700 words: header parsing, one-line rules that bind on turn one (plan first, act don't ask, CHECK, stop on a tool error, never edit the original, never guess, long jobs, reading, RHYTHM, undo), a skill index by job, and the voice. Procedure moved to where it binds: edit-footage (authoring semantics, b-roll bin rule, transcripts belong to clips, Premiere first, subagents), reframe (looking loop, visible_at, reframe-is-a-loop, "check the framing" starts with snapshot_moments), how-to-use (bug reports), rough_cut's result text (retake_of), the RHYTHM header (fix in this turn), the snapshot_moments result (graphics usually untouched). `reframe` now REFUSES a bin (raw footage is rough_cut's job; the old bin branch and `name` parameter are gone). A test caps the prompt at 700 words: when a rule is needed, put it in a skill, a tool description, a tool result, or the guard, not the prompt. Review trail: `docs/codex-review-log.md` Rounds 1-2 (2026-09-08). Not yet run against Premiere: the first live session on the new prompt is the re-run in What's Next 1.
 
 ## What's Next
 

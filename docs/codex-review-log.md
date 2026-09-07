@@ -141,3 +141,28 @@ defects only: timeline-destroying paths, load/action crashes, hangs, private dat
   the clip's span from coverage before planning; every new tool is in both TOOLS and TOOL_DEFS; every host action
   the panel calls is exported; no relative requires (test enforces); media-analysis preference write only after
   the editor's click; no private data in the diff. 124 tests, 123 pass, 1 skipped (network-only).
+
+## Round 1 (2026-09-08) — system prompt restructure (commit 3049f17)
+
+Scope: `buildSystemPrompt` cut from 3,200 to ~650 words; procedure moved to skills, tool descriptions and tool results. Question put to Codex: lost turn-one rules, reachability of moved rules, contradictions.
+
+Verdict: NOT APPROVED. 3 HIGH, 4 MEDIUM, 1 LOW.
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| H1 | HIGH | reframe skill step 1 and the reframe tool description still send a bin to `reframe`, which builds a second sequence from raw footage; loading the skill during finishing could restart assembly | `reframeTool` now refuses `bin` with an error naming rough_cut (enforced in code, not prose); skill step 1 and the description say raw bin = rough_cut, tracking pass = reframe without a bin |
+| H2 | HIGH | The `snapshot_moments` result text said "GRAPHICS: layer_frames on each graphic track, then nudge_clip into clear space", contradicting the title/guide protections that now live only in the reframe skill | Result text rewritten: graphics usually untouched, clip_transforms is where they sit, move only if the crop pushed one out of the safe zone, a title over a face is the editor's call, guides never judged or moved |
+| H3 | HIGH | The skill index routed "framing check" to `reframe`, a mutating call | Prompt: a shape change is one reframe call; "check the framing" starts with snapshot_moments, which moves nothing; the skill loads before moving any graphic or title |
+| M1 | MEDIUM | Saved-file rule lost its "if still missing" condition | Restored: re-read live state; if still missing or stale and from the saved project file, ask for Cmd+S |
+| M2 | MEDIUM | "Read only the analysis folder" excluded the skill files, worse for Codex whose shell note said the same | Prompt and CODEX_NOTES both allow the skill files |
+| M3 | MEDIUM | Inherited contradictions: cut-silences asks for a go vs act-don't-ask; premiere-scripting "before deciding how a job is done" vs the no-skill shape path; audio_cut "nothing cut inside a sentence" vs restart cuts; nudge_clip recommends preview_frames which says never to verify edits | cut-silences: report then apply in the same turn, wait only when the editor asked to see the plan; premiere-scripting loads before ExtendScript or when no tool covers the job; audio_cut names the one inside cut (a failed restart); nudge_clip points at layer_frames/snapshot_moments |
+| M4 | MEDIUM | "Existing analysis is the source of truth, reuse before recomputing" survived only in edit-footage | Restored as part of the reading rule in the prompt |
+| L1 | LOW | Media Intelligence "never ask twice" clause dropped; code remembers the decline, conversational nagging no longer forbidden | Follow-up; not restored (the model only learns about the switch from the panel's own ask) |
+
+**Status after Round 1:** fixes applied, 145 tests pass, prompt at 696 words (cap 700). Sending Round 2.
+
+## Round 2 (2026-09-08) — system prompt restructure
+
+Verdict: **APPROVED.** H2, H3, M1, M2, M4 resolved. H1 partial (now MEDIUM): the `name`/`motion` parameter descriptions and `mechanisms.md` still advertised reframe from a bin; fixed after the verdict (parameters and the dead bin branch removed from `reframeTool`, `motion` description rewritten, mechanisms row points at rough_cut). M3 partial: cut-silences description said "confirm" and premiere-scripting said "before deciding how to do a job at all"; both fixed. L1 (Media Intelligence never-ask-twice) deferred on purpose. Codex's note on the budget: the 700-word test measures the shared base; Codex receives ~795 words with CODEX_NOTES, still short of any concern.
+
+**Final status:** prompt restructure ready for the dev panel; no release.
