@@ -933,7 +933,18 @@ async function moveToBin({ moves = [] } = {}) {
 // Cheap pass over every source file in the sequence: speech coverage (Silero VAD; Premiere's waveform when the
 // codec cannot be decoded here, e.g. BRAW), duration, transcript presence, naming. Frames only where it says so.
 // The bin the editor has selected in the Project panel (first one), as a path like "Footage/Day 2". "" when none.
-async function selectedBin() { try { const r = await host("selectedBinPaths"); return r && r.indexOf("ERR:") !== 0 ? r.split("\n")[0] : ""; } catch (_) { return ""; } }
+// The selected bin as ONE source: a single bin is itself; several bins are their common parent (TALKING HEAD and
+// BROLL selected together mean the project folder, and the builder lays the talking head and keeps b-roll out).
+function commonParent(paths) {
+  if (!paths.length) return "";
+  if (paths.length === 1) return paths[0];
+  const segs = paths.map((p) => p.split("/"));
+  const out = [];
+  for (let i = 0; i < segs[0].length; i++) { const seg = segs[0][i]; if (segs.every((x) => x[i] === seg)) out.push(seg); else break; }
+  return out.join("/");
+}
+async function selectedBins() { try { const r = await host("selectedBinPaths"); return r && r.indexOf("ERR:") !== 0 ? r.split("\n").filter(Boolean) : []; } catch (_) { return []; } }
+async function selectedBin() { return commonParent(await selectedBins()); }
 
 async function classifyClips({ bin = "" } = {}) {
   if (!bin) bin = await selectedBin(); // the selected bin is the default; no need for Claude to name it
@@ -2239,8 +2250,9 @@ async function sendMessage() {
     if (!frameNote) { try { await refreshFrameNote(timeline || await readSnapshot()); } catch (_) {} }
     if (frameNote) payload = "[" + frameNote + "]\n" + payload;
     const sel = await host("selectionInfo");
-    const binPath = await selectedBin();
-    log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)") + (binPath ? " [bin path " + binPath + "]" : ""));
+    const bins = await selectedBins();
+    const binPath = commonParent(bins);
+    log("selection: " + (sel ? sel.split("\u0003").join("; ") : "(none)") + (binPath ? " [bin path " + binPath + (bins.length > 1 ? " = parent of " + bins.join(", ") : "") + "]" : ""));
     const active = project.sequence ? "Open timeline (active sequence): \"" + project.sequence + "\". Anything about the timeline, the sequence, its frame size, cuts, silences or captions means THIS sequence; never switch to another one for those." : "No sequence is open.";
     const selNote = sel && sel.indexOf("ERR:") !== 0 ? " Selected in Premiere: " + sel.split("\u0003").join("; ") + (binPath ? ". The selected bin \"" + binPath + "\" is the scope only for footage inspection and organizing (classify_clips, project_bins, create_sequence default to it)." : ".") : "";
     // The source verdict, so "make a video" never has to guess between the Project panel and the timeline:
@@ -2248,7 +2260,7 @@ async function sendMessage() {
     const hasProjectSel = !!(binPath || (sel && /Project panel:/.test(sel)));
     const hasTimelineSel = !!(sel && /Timeline: \d+ clip/.test(sel));
     const source = hasProjectSel
-      ? " SOURCE: the Project panel selection" + (binPath ? " (bin \"" + binPath + "\")" : "") + ". A request to make, build or create a video means a NEW sequence from these items; the open timeline is the target only when the request says 'this timeline', 'this sequence' or 'this cut'."
+      ? " SOURCE: the Project panel selection" + (bins.length > 1 ? " (bins " + bins.map((b) => "\"" + b.split("/").pop() + "\"").join(" and ") + ", together: folder \"" + binPath + "\"; the builder lays the talking head and keeps the b-roll bin out)" : binPath ? " (bin \"" + binPath + "\")" : "") + ". A request to make, build or create a video means a NEW sequence from these items; the open timeline is the target only when the request says 'this timeline', 'this sequence' or 'this cut'."
       : hasTimelineSel ? " SOURCE: the open sequence, the selected clips in particular. Nothing is selected in the Project panel, so there is no other source."
       : project.sequence ? " SOURCE: the open sequence. Nothing is selected anywhere else." : " SOURCE: nothing is open or selected; ask which bin or sequence in one line.";
     payload = "[" + active + selNote + source + " State the source in the first line of your reply.]\n\n" + payload;
