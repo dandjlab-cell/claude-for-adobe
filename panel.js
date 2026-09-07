@@ -13,7 +13,7 @@ const { checkForUpdate, currentVersion, installUpdate } = require(path.join(exte
 const { classifyMedia, formatClassification } = require(path.join(extensionRoot, "src", "classify.cjs"));
 const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captions.cjs"));
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
-const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage } = require(path.join(extensionRoot, "src", "media.cjs"));
+const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
@@ -1067,19 +1067,45 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 }
 
 // What the viewer sees at a time, or at every cut, from the ledger.
-async function visibleAtTool({ at_seconds, base_track = 1 } = {}) {
-  const card = addTool("visible_at" + (Number.isFinite(Number(at_seconds)) ? " @" + Number(at_seconds).toFixed(2) + "s" : " (all cuts)"), "");
+// Settle a moment by Premiere's renderer: composite vs base track alone; the matching share is what the viewer sees of the base.
+async function settleMoment(t, baseIdx) {
+  const dir = path.join(os.tmpdir(), "claude-for-adobe-settle-" + Date.now().toString(36));
+  const tt = Number(t.toFixed(3));
+  const comp = await host("frames", JSON.stringify([tt]), dir + "-c", "");
+  const solo = await host("frames", JSON.stringify([tt]), dir + "-s", String(baseIdx));
+  const file = (raw) => { if (raw.indexOf("ERR:") === 0) return null; const rows = raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0); const [f] = (rows[0] || "").split(COL); return [f + ".png", f].find((p) => p && fs.existsSync(p)) || null; };
+  const a = file(comp), b = file(solo);
+  let share = null;
+  if (a && b) share = frameMatchShare(a, b);
+  [a, b].forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
+  return share;
+}
+
+async function visibleAtTool({ at_seconds, base_track = 1, settle = false } = {}) {
+  const card = addTool("visible_at" + (Number.isFinite(Number(at_seconds)) ? " @" + Number(at_seconds).toFixed(2) + "s" : " (all cuts)") + (settle ? " settle" : ""), "");
   let L; try { L = (await getLedger()).ledger; } catch (error) { return err(card, error.message); }
   if (!L) return err(card, "no active sequence");
   const { visibleAt } = require(path.join(extensionRoot, "src", "ledger.cjs"));
   const base = "V" + base_track;
+  const settled = new Map(); // t -> base-visible share from the renderer
+  if (settle) {
+    card.open();
+    const moments = Number.isFinite(Number(at_seconds)) ? [Number(at_seconds)] : L.cuts.filter((c) => (c.maybeBefore || 0) > c.hiddenBefore + 0.01 || (c.maybeAfter || 0) > c.hiddenAfter + 0.01).flatMap((c) => [c.t - 0.25, c.t + 0.25]).filter((t) => t >= 0 && t < L.cover.length * L.coverEvery);
+    for (let i = 0; i < moments.length; i++) { card.progress(i, moments.length, "rendering composite vs " + base + " alone "); const sh = await settleMoment(moments[i], base_track - 1); if (sh !== null) settled.set(Number(moments[i].toFixed(3)), sh); }
+  }
+  const settledText = (t) => { const k = [...settled.keys()].find((x) => Math.abs(x - t) < 0.01); return k === undefined ? "" : " RENDERED: " + base + " is " + Math.round(settled.get(k) * 100) + "% of what the viewer sees"; };
   let text;
   if (Number.isFinite(Number(at_seconds))) {
     const v = visibleAt({ ...L, base }, Number(at_seconds));
-    text = base + " at " + Number(at_seconds).toFixed(2) + "s: hidden for certain " + Math.round(v.hidden * 100) + "% (footage over it); possibly up to " + Math.round(v.maybe * 100) + "% counting alpha layers" + (v.over.length ? "; over it: " + v.over.join(", ") : "") + ". Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, a frame render can (layer_frames on the base track, or snapshot_moments). Masked = a mask on that clip, real cover unknown.";
+    text = base + " at " + Number(at_seconds).toFixed(2) + "s: hidden for certain " + Math.round(v.hidden * 100) + "% (footage over it); possibly up to " + Math.round(v.maybe * 100) + "% counting alpha layers" + (v.over.length ? "; over it: " + v.over.join(", ") : "") + "." + settledText(Number(at_seconds)) + (settle ? "" : " Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell; call again with settle: true to have Premiere's renderer decide. Masked = a mask on that clip, real cover unknown.");
   } else {
-    const lines = L.cuts.map((c) => c.t.toFixed(2) + "s  " + c.edges.join(" | ") + "  hidden for certain: before " + Math.round(c.hiddenBefore * 100) + "% after " + Math.round(c.hiddenAfter * 100) + "%" + ((c.maybeBefore > c.hiddenBefore + 0.01 || c.maybeAfter > c.hiddenAfter + 0.01) ? "; possibly up to " + Math.round(Math.max(c.maybeBefore || 0, c.maybeAfter || 0) * 100) + "% with alpha layers" : "") + (c.by.length ? "  over it: " + c.by.join(", ") : ""));
-    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + "):\n" + lines.join("\n") + "\n'Hidden for certain' counts footage over the track. Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, so they are named and counted in 'possibly'; settle one with layer_frames or snapshot_moments. A cut hidden over 65% for certain on either side is not a seam the viewer sees.";
+    const lines = L.cuts.map((c) => {
+      const open = (c.maybeBefore || 0) > c.hiddenBefore + 0.01 || (c.maybeAfter || 0) > c.hiddenAfter + 0.01;
+      const r = [settledText(c.t - 0.25), settledText(c.t + 0.25)].filter(Boolean);
+      const verdict = r.length ? " -> " + (r.every((x) => /is (\d+)%/.test(x) && Number(/is (\d+)%/.exec(x)[1]) >= 35) ? "SEAM SEEN" : "NOT SEEN") + " (" + r.map((x) => x.replace(/.*is /, "").replace(/ of what.*/, "")).join(" before / ") + " after, rendered)" : "";
+      return c.t.toFixed(2) + "s  " + c.edges.join(" | ") + "  hidden for certain: before " + Math.round(c.hiddenBefore * 100) + "% after " + Math.round(c.hiddenAfter * 100) + "%" + (open ? "; possibly up to " + Math.round(Math.max(c.maybeBefore || 0, c.maybeAfter || 0) * 100) + "% with alpha layers" : "") + (c.by.length ? "  over it: " + c.by.join(", ") : "") + verdict;
+    });
+    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + (settle ? ", alpha layers settled by Premiere's renderer" : "") + "):\n" + lines.join("\n") + "\n'Hidden for certain' counts footage over the track. Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, so they are named and counted in 'possibly'" + (settle ? "; where the renderer was asked, the verdict is on the line." : "; call again with settle: true to have Premiere's renderer decide each open one (composite vs " + L.base + " alone).") + " A cut hidden over 65% for certain on either side is not a seam the viewer sees.";
   }
   card.done(text, true);
   return { text };
@@ -1799,8 +1825,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
-  { name: "visible_at", description: "What the viewer sees at a time, by lookup from the visibility ledger (computed from Premiere's own clip data whenever the timeline changes: Motion position/scale, Crop, Opacity, source size vs sequence frame, Alpha on stills, masks). Returns how much of the base track is hidden, by which clips and how much each, and the same for every cut in the sequence when no time is given. Instant; use it before deciding to hold on a face, cover a line, or put a transition on a cut.",
-    inputSchema: { type: "object", properties: { at_seconds: { type: "number", description: "omit for the per-cut table" }, base_track: { type: "number", description: "1-based track whose picture is asked about, default 1" } }, required: [] } },
+  { name: "visible_at", description: "What the viewer sees at a time, by lookup from the visibility ledger (computed from Premiere's own clip data whenever the timeline changes: Motion position/scale, Crop, Opacity, source size vs sequence frame, Alpha on stills, masks). Reports 'hidden for certain' (footage over the track) and 'possibly' (alpha layers: AE comps, MOGRTs, alpha stills, which geometry cannot classify). With settle: true, every moment where those differ is settled by Premiere's own renderer: the composite is compared with the base track alone, and the share of the frame where they match is how much of the base track the viewer actually sees. Use it before deciding to hold on a face, cover a line, or put a transition on a cut.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number", description: "omit for the per-cut table" }, base_track: { type: "number", description: "1-based track whose picture is asked about, default 1" }, settle: { type: "boolean", description: "render composite vs base-alone wherever alpha layers leave the answer open (two frames per moment)" } }, required: [] } },
   { name: "sound_events", description: "Laughter, applause, cheering, sighs and gasps, music and keyboard noise on the timeline, with times, from Apple's built-in sound classifier over Premiere's own render of the mix. Free, on this Mac. Use it before removing pauses (a pause next to a laugh is a beat, not dead air), to find reactions worth cutting to, and to see where music runs. Results are saved next to the project for reuse.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number", description: "default 0" }, end_seconds: { type: "number", description: "default the whole sequence" }, min_confidence: { type: "number", description: "default 0.35" } }, required: [] } },
   { name: "speaker_check", description: "Is the speaker worth staying on here? Renders frames across a span with the b-roll tracks hidden and reads the face with macOS's Vision framework: whether the head is square to the lens, eyes open, mouth mid-word, how big the face is, and Apple's own capture quality. Use it before deciding to hold on the face for a key line, and before covering one. Measured geometry only, no mood: energy comes from the voice.",

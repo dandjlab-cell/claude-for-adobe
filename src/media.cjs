@@ -114,4 +114,15 @@ function audioLevels({ file, sourceStart, duration, timelineStart, windowMs = 10
   return formatLevels(analyzeLevels(samples, rate, windowMs, timelineStart), label);
 }
 
-module.exports = { FFMPEG, MAX_WINDOWS, SILENCE_DB, analyzeLevels, audioLevels, decodePcm, formatLevels, formatPeakWindows, mediaInfo, resizeImage };
+// How much of frame A is the same picture as frame B, as a fraction of pixels (both downscaled to a 64x64 grey
+// grid, difference under `tol` of 255 counts as the same). Used to settle what the viewer sees: Premiere's
+// composite against the base track alone; where they match, the base track is what is on screen.
+function frameMatchShare(a, b, tol = 24) {
+  const r = spawnSync(FFMPEG, ["-v", "error", "-i", a, "-i", b, "-filter_complex", "[0:v]scale=64:64,format=gray[x];[1:v]scale=64:64,format=gray[y];[x][y]blend=all_mode=difference", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], { maxBuffer: 1024 * 1024 });
+  if (r.status !== 0 || !r.stdout || r.stdout.length < 4096) return null;
+  let same = 0;
+  for (let i = 0; i < 4096; i++) if (r.stdout[i] <= tol) same++;
+  return same / 4096;
+}
+
+module.exports = { FFMPEG, MAX_WINDOWS, SILENCE_DB, analyzeLevels, audioLevels, decodePcm, formatLevels, formatPeakWindows, mediaInfo, resizeImage, frameMatchShare };
