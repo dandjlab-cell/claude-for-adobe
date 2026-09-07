@@ -42,7 +42,7 @@ var PCX = (function () {
     return "ok" + COL + p + COL + (s ? s.sequenceID : "");
   }
 
-  // Sequence header row + one row per clip: nodeId|track|name|startTicks|endTicks|inPointTicks|mediaPath
+  // Sequence header row + one row per clip: nodeId|track|name|startTicks|endTicks|inPointTicks|mediaPath|kind (multicam|sequence|"")
   function snapshot() {
     var s = seq();
     if (!s) return "ERR:no active sequence";
@@ -53,9 +53,11 @@ var PCX = (function () {
         var tr = list[t];
         for (var c = 0; c < tr.clips.numItems; c++) {
           var cl = tr.clips[c];
-          var mp = "";
+          var mp = "", kind = "";
           try { mp = cl.projectItem ? cl.projectItem.getMediaPath() : ""; } catch (e) {}
-          rows.push([cl.nodeId, prefix + (t + 1), cl.name, cl.start.ticks, cl.end.ticks, cl.inPoint.ticks, mp].join(COL));
+          // What the item is, so a multicam source sequence or a nested sequence is never mistaken for footage.
+          try { var pi = cl.projectItem; if (pi && typeof pi.isMultiCamClip === "function" && pi.isMultiCamClip()) kind = "multicam"; else if (pi && typeof pi.isSequence === "function" && pi.isSequence()) kind = "sequence"; } catch (e2) {}
+          rows.push([cl.nodeId, prefix + (t + 1), cl.name, cl.start.ticks, cl.end.ticks, cl.inPoint.ticks, mp, kind].join(COL));
           if (rows.length > 600) return;
         }
       }
@@ -1202,6 +1204,15 @@ var PCX = (function () {
     var mc = null; try { mc = q.multicam; } catch (e1) {}
     if (!mc) return "ERR:no multicam object on the QE sequence";
     var rows = [], ticks = String(Math.round(num(a.at) * T));
+    // The clip under the playhead on V1 must be a multicam source sequence; the tool decides, not the caller.
+    var under = null;
+    for (var ui = 0; s.videoTracks[0] && ui < s.videoTracks[0].clips.numItems; ui++) { var uc = s.videoTracks[0].clips[ui]; if (num(uc.start.ticks) <= num(ticks) && num(ticks) < num(uc.end.ticks)) { under = uc; break; } }
+    if (!under) return "ERR:no clip on V1 at " + num(a.at).toFixed(2) + "s";
+    var isMc = false, isSeq = false;
+    try { isMc = !!(under.projectItem && under.projectItem.isMultiCamClip && under.projectItem.isMultiCamClip()); } catch (e9) {}
+    try { isSeq = !!(under.projectItem && under.projectItem.isSequence && under.projectItem.isSequence()); } catch (e10) {}
+    rows.push("clip under playhead" + COL + under.name + (isMc ? " [multicam source]" : isSeq ? " [nested sequence, not multicam]" : " [footage, not multicam]"));
+    if (!isMc) return "ERR:" + under.name + " is " + (isSeq ? "a nested sequence" : "plain footage") + ", not a multicam source sequence: nothing to switch. Make one: select the angle clips in the Project panel, right-click, Create Multi-Camera Source Sequence, then put that source sequence on V1.";
     var before = s.videoTracks[0] ? s.videoTracks[0].clips.numItems : -1;
     try { s.setPlayerPosition(ticks); rows.push("playhead" + COL + "set to " + num(a.at).toFixed(3) + "s"); } catch (e2) { rows.push("playhead" + COL + "ERR " + e2); }
     try { var r0 = mc.enable(); rows.push("enable()" + COL + String(r0)); } catch (e3) { rows.push("enable()" + COL + "ERR " + e3); }

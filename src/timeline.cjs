@@ -9,8 +9,8 @@ function parseSnapshot(raw) {
   if (!rows.length || rows[0].indexOf("ERR:") === 0) return { error: rows[0] || "empty snapshot", clips: [] };
   const [name, id, width, height, endTicks] = rows[0].split(COL);
   const clips = rows.slice(1).map((r) => {
-    const [nodeId, track, clipName, start, end, inPoint, mediaPath] = r.split(COL);
-    return { id: nodeId, track, name: clipName, start: Number(start) / TICKS, end: Number(end) / TICKS, inPoint: Number(inPoint) / TICKS, mediaPath };
+    const [nodeId, track, clipName, start, end, inPoint, mediaPath, kind] = r.split(COL);
+    return { id: nodeId, track, name: clipName, start: Number(start) / TICKS, end: Number(end) / TICKS, inPoint: Number(inPoint) / TICKS, mediaPath, kind: kind || "" };
   });
   return { name, id, width: Number(width), height: Number(height), duration: Number(endTicks) / TICKS, clips };
 }
@@ -49,7 +49,7 @@ function formatSnapshot(s, limit = 300) {
   let n = 0;
   byTrack.forEach((clips, track) => {
     lines.push(track + ":");
-    clips.forEach((c) => { if (n++ < limit) lines.push(`  ${f(c.start)}-${f(c.end)} "${c.name}" in ${f(c.inPoint)}${c.mediaPath ? " <" + c.mediaPath + ">" : ""}`); });
+    clips.forEach((c) => { if (n++ < limit) lines.push(`  ${f(c.start)}-${f(c.end)} "${c.name}" in ${f(c.inPoint)}${c.kind === "multicam" ? " [MULTICAM SOURCE]" : c.kind === "sequence" ? " [nested sequence]" : ""}${c.mediaPath ? " <" + c.mediaPath + ">" : ""}`); });
   });
   if (n > limit) lines.push(`  ... ${n - limit} more clips`);
   return lines.join("\n");
