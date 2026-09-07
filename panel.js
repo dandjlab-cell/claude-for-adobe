@@ -1094,13 +1094,24 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
   }
   list = [...new Set(list.map((x) => Number(x.toFixed(3))))];
   if (!list.length) return err(card, all_seams ? "No cuts where two clips touch on V" + track : "seams is required (or all_seams)");
-  // Only seams the viewer sees: a cut under b-roll (or any footage on a higher track) gets nothing, and says why.
-  const { seamVisible } = require("./src/timeline.cjs");
-  const snapNow = await readSnapshot().catch(() => null);
+  // Only seams the viewer sees. Cover is a fraction from Premiere's own data for every clip above the track:
+  // Motion position and scale, Opacity, source size, and the Alpha flag of stills. A side-by-side covers half,
+  // a picture-in-picture a corner, a full-frame still with no alpha all of it; titles, MOGRTs and AE comps none.
+  const { coverAt } = require("./src/cover.cjs");
+  let tf = null; try { tf = await readTransforms(); } catch (_) {}
+  const hasAlpha = (p) => !!(tf && tf.rows.find((c) => c.mediaPath === p && c.alpha));
   const half = Math.max(0.1, Number(frames) / 25 / 2); // half the transition in seconds; 25 fps is close enough at any common rate for a visibility window
+  const MAX_COVER = 0.65; // more than this hidden on either side of the cut and nobody sees the seam
   const skipped = [], visible = [];
-  for (const t of list) { const v = snapNow ? seamVisible(snapNow, "V" + track, t, half) : { visible: true, graphics: [] }; if (v.visible) visible.push({ t, graphics: v.graphics }); else skipped.push({ t, why: v.cover || "no picture from V" + track + " on one side" }); }
-  if (!visible.length) { const text = "No visible seam on V" + track + ": " + skipped.map((k) => k.t.toFixed(2) + "s under " + k.why).join("; ") + ". Nothing applied; a transition under b-roll is never seen."; card.done(text, true); return { text }; }
+  for (const t of list) {
+    if (!tf) { visible.push({ t, note: "" }); continue; }
+    const before = coverAt(tf.rows, tf.w, tf.h, "V" + track, t - half, hasAlpha), after = coverAt(tf.rows, tf.w, tf.h, "V" + track, t + half, hasAlpha);
+    const worst = before.covered > after.covered ? before : after;
+    const who = [...new Set(worst.by.map((b) => b.track + " \"" + b.name + "\" " + Math.round(b.share * 100) + "%"))].join(", ");
+    if (worst.covered > MAX_COVER) skipped.push({ t, why: Math.round(worst.covered * 100) + "% hidden by " + who });
+    else visible.push({ t, note: worst.covered > 0.02 ? Math.round(worst.covered * 100) + "% hidden by " + who : "" });
+  }
+  if (!visible.length) { const text = "No visible seam on V" + track + ": " + skipped.map((k) => k.t.toFixed(2) + "s " + k.why).join("; ") + ". Nothing applied; a transition the viewer cannot see is wasted analysis."; card.done(text, true); return { text }; }
   list = visible.map((v) => v.t);
   let copyNote = "";
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
@@ -1113,8 +1124,8 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
   const delta = Number(after) - Number(before);
   const ok = applied > 0 && delta >= applied;
   timeline = await readSnapshot().catch(() => timeline);
-  const under = visible.filter((v) => v.graphics.length).map((v) => v.t.toFixed(2) + "s under " + v.graphics.join(", "));
-  const text = copyNote + name + " (" + dur + ") on V" + track + ": " + applied + " of " + list.length + " visible seam(s) applied" + (skipped.length ? ", " + skipped.length + " skipped as not visible" : "") + "\n" + results.join("\n") + (skipped.length ? "\nSkipped: " + skipped.map((k) => k.t.toFixed(2) + "s under " + k.why).join("; ") : "") + (under.length ? "\nGraphics over applied seams (not cover, just so you know): " + under.join("; ") : "") + "\nTransitions on the track: " + before + " before, " + after + " after | CHECK " + (ok ? "PASS" : "FAIL: the track's transition count rose by " + delta + " for " + applied + " applied; read the frames at a seam") + (name === "Morph Cut" && ok ? ". Morph Cut analyses in the background; frames at a seam show a red bar until it is done." : "");
+  const under = visible.filter((v) => v.note).map((v) => v.t.toFixed(2) + "s " + v.note);
+  const text = copyNote + name + " (" + dur + ") on V" + track + ": " + applied + " of " + list.length + " visible seam(s) applied" + (skipped.length ? ", " + skipped.length + " skipped as not visible" : "") + "\n" + results.join("\n") + (skipped.length ? "\nSkipped as not visible: " + skipped.map((k) => k.t.toFixed(2) + "s " + k.why).join("; ") : "") + (under.length ? "\nPartly covered but applied: " + under.join("; ") : "") + "\nTransitions on the track: " + before + " before, " + after + " after | CHECK " + (ok ? "PASS" : "FAIL: the track's transition count rose by " + delta + " for " + applied + " applied; read the frames at a seam") + (name === "Morph Cut" && ok ? ". Morph Cut analyses in the background; frames at a seam show a red bar until it is done." : "");
   card.done(text, ok);
   return { text, isError: !ok };
 }
@@ -1343,7 +1354,7 @@ async function readTransforms(sequence = "") {
   if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") throw new Error(raw);
   const rows = raw.split(ROW);
   const [, , w, h] = rows[0].split(COL);
-  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH] = r.split(COL); return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null }; }) };
+  return { w: Number(w), h: Number(h), rows: rows.slice(1).map((r) => { const [track, idx, name, x, y, scale, graphic, a, b, srcW, srcH, opacity, mediaPath, alpha] = r.split(COL); return { key: track + "#" + idx, track, name, x: x === "" ? null : Number(x), y: Number(y), scale: Number(scale), graphic: graphic === "1", start: Number(a), end: Number(b), srcW: Number(srcW) || null, srcH: Number(srcH) || null, opacity: opacity === "" || opacity === undefined ? 100 : Number(opacity), mediaPath: mediaPath || "", alpha: alpha === "1" }; }) };
 }
 
 // Place a region of a clip's SOURCE (the action: a control, a face, a panel) inside a target rectangle of the
@@ -1716,7 +1727,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number", description: "default 0" }, end_seconds: { type: "number", description: "default the whole sequence" }, min_confidence: { type: "number", description: "default 0.35" } }, required: [] } },
   { name: "speaker_check", description: "Is the speaker worth staying on here? Renders frames across a span with the b-roll tracks hidden and reads the face with macOS's Vision framework: whether the head is square to the lens, eyes open, mouth mid-word, how big the face is, and Apple's own capture quality. Use it before deciding to hold on the face for a key line, and before covering one. Measured geometry only, no mood: energy comes from the voice.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 0.5" }, track: { type: "number", description: "1-based video track holding the speaker, default 1" } }, required: ["start_seconds", "end_seconds"] } },
-  { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Only seams the viewer actually sees get one: a cut under b-roll or any footage on a higher track is skipped and named; graphics, titles and AE comps over it are reported but do not count as cover. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
+  { name: "morph_cut", description: "Premiere's own transition on cuts of one video track, through QE: default Morph Cut, the fix for the jump cut that every pause and filler removal leaves on a talking head (any name from the transition list works: Cross Dissolve, Dip to Black...). Give seams (the cut times) or all_seams to do every cut where two clips touch. Only seams the viewer actually sees get one: cover is computed from every clip above the track (Motion position and scale, Opacity, source size, Premiere's Alpha flag for stills), so a side-by-side or picture-in-picture counts by how much it hides; a seam more than 65% hidden on either side is skipped and named. Runs on the working copy; the read-back is the track's transition count before/after. Morph Cut analyses in the background after this returns.",
     inputSchema: { type: "object", properties: { seams: { type: "array", items: { type: "number" }, description: "cut times in seconds (end of the outgoing clip)" }, all_seams: { type: "boolean", description: "every cut on the track where clips touch" }, track: { type: "number", description: "1-based video track, default 1" }, transition: { type: "string", description: "default Morph Cut" }, frames: { type: "number", description: "duration in frames, default 12" } }, required: [] } },
   { name: "subject_path", description: "Where Premiere's Auto Reframe put the subject over time: every keyframed parameter on every clip of one video track, sampled (time=x,y in frame fractions). Read this instead of judging head room from frames. Read-only. Key times are as Premiere returns them; the result says whether they read as sequence or clip time.",
     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1" }, max_keys: { type: "number", description: "samples per parameter, default 40" } }, required: [] } },

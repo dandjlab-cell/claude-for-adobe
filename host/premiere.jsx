@@ -707,7 +707,8 @@ var PCX = (function () {
   }
 
   // Every video clip's Motion Position and Scale, for the active sequence or one named. Read-only.
-  // Rows: track|index|name|x|y|scale|graphic|startSec|endSec ; header: SEQ|name|w|h
+  // Rows: track|index|name|x|y|scale|graphic|startSec|endSec|srcW|srcH|opacity|mediaPath|alpha ; header: SEQ|name|w|h
+  // alpha comes from Premiere's own Video Info column ("1920 x 1080 (1.0), Alpha"), so a still's transparency is Premiere's word, not a guess.
   function clipTransforms(seqName) {
     var s = null;
     if (seqName) { for (var i = 0; i < app.project.sequences.numSequences; i++) { if (app.project.sequences[i].name === seqName) { s = app.project.sequences[i]; break; } } if (!s) return "ERR:no sequence named " + seqName; }
@@ -724,7 +725,9 @@ var PCX = (function () {
         if (motion) { try { var p = motion.properties[0].getValue(); var n = isNormalized(p); x = (n ? p[0] : p[0] / W).toFixed(4); y = (n ? p[1] : p[1] / H).toFixed(4); sc = num(motion.properties[1].getValue()).toFixed(2); } catch (e0) {} }
         var vi = ""; try { vi = String(cl.projectItem.getProjectColumnsMetadata()); } catch (e1) {}
         var srcW = "", srcH = ""; var mm = /<Column\.Intrinsic\.VideoInfo>(\d+)\s*x\s*(\d+)/.exec(vi); if (mm) { srcW = mm[1]; srcH = mm[2]; }
-        rows.push(["V" + (t + 1), c, cl.name, x, y, sc, isGraphicItem(cl.projectItem, vi) ? 1 : 0, (num(cl.start.ticks) / T).toFixed(2), (num(cl.end.ticks) / T).toFixed(2), srcW, srcH].join(COL));
+        var op = "";
+        for (var k2 = 0; k2 < cl.components.numItems; k2++) { var oc = cl.components[k2]; if (oc.displayName === "Opacity") { try { var opp = oc.properties.getParamForDisplayName("Opacity") || oc.properties[0]; op = num(opp.getValue()).toFixed(1); } catch (e2) {} break; } }
+        rows.push(["V" + (t + 1), c, cl.name, x, y, sc, isGraphicItem(cl.projectItem, vi) ? 1 : 0, (num(cl.start.ticks) / T).toFixed(2), (num(cl.end.ticks) / T).toFixed(2), srcW, srcH, op, (function () { try { return String(cl.projectItem.getMediaPath() || ""); } catch (e3) { return ""; } }()), /alpha/i.test(vi) ? 1 : 0].join(COL));
       }
     }
     return rows.join(ROW);
