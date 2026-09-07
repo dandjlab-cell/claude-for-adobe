@@ -1086,6 +1086,36 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 }
 
 // What the viewer sees at a time, or at every cut, from the ledger.
+// Centre each footage clip on the face, statically: one Vision read at the clip's midpoint with the other tracks
+// hidden, then the Motion position moved so the face sits at the frame's horizontal centre, within what the fill
+// scale allows (no blank canvas). The cheap stand-in for tracking until reframe runs on the finished cut.
+async function focusFaces(track = 1) {
+  if (!fs.existsSync(OCR_BIN)) return ["face focus skipped: vision helper missing"];
+  const { readFrame } = require(path.join(extensionRoot, "src", "face.cjs"));
+  let tf; try { tf = await readTransforms(); } catch (error) { return ["face focus skipped: " + error.message]; }
+  const clips = tf.rows.filter((c) => c.track === "V" + track && !c.graphic && c.srcW && c.srcH && c.x !== null);
+  const out = [];
+  for (const c of clips) {
+    const t = Number(((c.start + c.end) / 2).toFixed(3));
+    const dir = path.join(os.tmpdir(), "claude-for-adobe-focus-" + Date.now().toString(36));
+    const raw = await host("frames", JSON.stringify([t]), dir, String(track - 1));
+    const rows = raw.indexOf("ERR:") === 0 ? [] : raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0);
+    const [f0] = (rows[0] || "").split(COL); const file = [f0 + ".png", f0].find((p) => p && fs.existsSync(p)) || null;
+    if (!file) { out.push(c.name + ": no frame"); continue; }
+    let entry = null;
+    try { const o = require("node:child_process").execFileSync(OCR_BIN, ["--faces", file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); entry = JSON.parse(o.split("\n").filter(Boolean)[0] || "null"); } catch (_) {}
+    try { fs.unlinkSync(file); } catch (_) {}
+    const r = readFrame(entry, t);
+    if (!r.face) { out.push(c.name + ": no face at " + t.toFixed(1) + "s, left centred"); continue; }
+    const scaledW = c.srcW * c.scale / 100, maxShift = Math.max(0, (scaledW / tf.w - 1) / 2);
+    const dx = Math.max(-maxShift, Math.min(maxShift, 0.5 - r.centre[0]));
+    if (Math.abs(dx) < 0.02) { out.push(c.name + ": face already centred (" + Math.round(r.centre[0] * 100) + "% across)"); continue; }
+    const res = await host("nudgeClip", String(t), String(track - 1), "0", "0", "1", String((c.x + dx).toFixed(4)), "", "", "true");
+    out.push(c.name + ": face at " + Math.round(r.centre[0] * 100) + "% across, moved " + (dx > 0 ? "right" : "left") + " " + Math.round(Math.abs(dx) * 100) + "% " + (res.indexOf("CHECK PASS") >= 0 ? "(read back)" : "(" + res.slice(0, 80) + ")"));
+  }
+  return out.length ? out : ["no footage clips on V" + track];
+}
+
 // The rough cut as a script: fixed order, each step a tool that already exists, a stop only where judgement is
 // needed. A prompt can drift; this cannot.
 async function roughCut({ bin = "", aspect, preset, width, height, name = "", language = "en" } = {}) {
@@ -1099,8 +1129,11 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   card.progress(0, 5, "sequence ");
   const r1 = await createSequence({ bin, name, aspect, preset, width, height, insert_clips: true });
   if (r1.isError) return stop("sequence: " + first(r1.text));
+  // Fill the frame (a 16:9 or 4K shot in a 9:16 sequence must cover it), then centre each clip on the face.
+  const fillRes = await host("reframeActive", "fill");
+  const faces = await focusFaces(1);
   const d1 = await dur();
-  steps.push("1. Sequence: " + first(r1.text) + " (" + d1.toFixed(1) + "s, footage filled and centred, tracking deferred to the end)");
+  steps.push("1. Sequence: " + first(r1.text) + " (" + d1.toFixed(1) + "s). Fill: " + first(fillRes).slice(0, 120) + ". Face focus: " + faces.join("; ") + ". Tracking deferred to the end.");
   // 2. silences
   card.progress(1, 5, "silences ");
   const r2 = await removeSilences({ method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value), dry_run: false });
@@ -1554,7 +1587,7 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
   // expensive step (139 s on six minutes that became one) and belongs after the cut. On an open timeline, track.
   const trackingDeferred = !!bin && motion !== "track";
   if (motion === undefined) motion = bin ? "static" : "track";
-  if (trackingDeferred) parts.push("Tracking deferred: the sequence is built at the shape with footage filled and centred; run reframe again (no bin) after the cut to apply Auto Reframe to what survives.");
+  if (trackingDeferred) parts.push("Tracking deferred: the sequence is built at the shape with footage filled and each clip centred on its face; run reframe again (no bin) after the cut to apply Auto Reframe to what survives.");
   const target = targetSize({ aspect, preset, width, height });
   if (!target && !fps) return { text: "CLAUDE_FOR_ADOBE_ERROR:reframe needs the shape: aspect (9:16, 4:5, 1:1, 16:9), a preset (vertical, four_five, square, hd) or width+height. Nothing was changed.", isError: true };
   if (bin) {
@@ -1566,6 +1599,7 @@ async function reframeTool({ aspect, preset, width, height, fps, bin, name, refr
     const raw = await host("reframeActive", reframe); // footage fills the frame and is centred; graphics untouched
     if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") return { text: "CLAUDE_FOR_ADOBE_ERROR:" + raw.replace(/^ERR:/, ""), isError: true };
     parts.push(raw);
+    if (trackingDeferred) parts.push("Face focus: " + (await focusFaces(1)).join("; "));
     timeline = await readSnapshot().catch(() => timeline);
   } else {
     step = await setSequenceSize({ preset, aspect, width, height, fps, reframe });
