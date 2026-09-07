@@ -19,6 +19,8 @@ test("opacity, alpha and graphics decide whether a clip hides the picture", () =
   assert.strictEqual(isOpaque(clip(), null), true);
   assert.strictEqual(isOpaque(clip({ opacity: 30 }), null), false);
   assert.strictEqual(isOpaque(clip({ mediaPath: "/g/title.aep" }), null), false);
+  const { coverKind } = require("../src/cover.cjs");
+  assert.strictEqual(coverKind(clip({ mediaPath: "/g/title.aep" }), null), "alpha", "an AE comp may hide the picture; it is reported, not assumed");
   assert.strictEqual(isOpaque(clip({ mediaPath: "" }), null), false);
   assert.strictEqual(isOpaque(clip({ mediaPath: "/g/full.png" }), () => false), true);
   assert.strictEqual(isOpaque(clip({ mediaPath: "/g/logo.png" }), () => true), false);
@@ -29,7 +31,8 @@ test("coverAt sums what sits above the track at that moment", () => {
   assert.strictEqual(coverAt(rows, W, H, "V1", 2).covered, 0);
   const at6 = coverAt(rows, W, H, "V1", 6);
   assert.ok(Math.abs(at6.covered - 0.5) < 0.02);
-  assert.deepStrictEqual(at6.by.map((b) => b.name), ["sbs"]);
+  assert.deepStrictEqual(at6.by.map((b) => b.name + ":" + b.kind), ["sbs:opaque", "title:alpha"], "the AE comp is listed as alpha, counted only in possiblyCovered");
+  assert.ok(Math.abs(at6.possiblyCovered - 1) < 0.02);
 });
 
 test("the Crop effect shrinks what a clip covers", () => {
@@ -52,4 +55,12 @@ test("a masked clip is reported so the renders can settle it", () => {
   const rows = [clip({ track: "V1", name: "head" }), clip({ track: "V2", name: "shape", masked: true })];
   const c = coverAt(rows, W, H, "V1", 1);
   assert.strictEqual(c.by[0].masked, true);
+});
+
+test("alpha layers count in possiblyCovered, never in covered", () => {
+  const rows = [clip({ track: "V1", name: "head" }), clip({ track: "V2", name: "comp", mediaPath: "/g/full.aep" })];
+  const c = coverAt(rows, W, H, "V1", 1);
+  assert.strictEqual(c.covered, 0);
+  assert.ok(c.possiblyCovered > 0.98);
+  assert.strictEqual(c.by[0].kind, "alpha");
 });

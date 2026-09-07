@@ -16,5 +16,5 @@ test("ledger answers visibility by lookup and grades every cut", () => {
   assert.strictEqual(L.cuts.length, 3, "V1 cut at 10 plus the b-roll edges at 8 and 12 change the picture");
   const at10 = L.cuts.find((c) => c.t === 10);
   assert.ok(at10.hiddenBefore >= 0.45 && at10.hiddenAfter >= 0.45);
-  assert.deepStrictEqual(at10.by, ["V2 broll"]);
+  assert.deepStrictEqual(at10.by, ["V2 broll 50%"]);
 });

@@ -1076,10 +1076,10 @@ async function visibleAtTool({ at_seconds, base_track = 1 } = {}) {
   let text;
   if (Number.isFinite(Number(at_seconds))) {
     const v = visibleAt({ ...L, base }, Number(at_seconds));
-    text = base + " at " + Number(at_seconds).toFixed(2) + "s: " + Math.round(v.baseVisible * 100) + "% visible, " + Math.round(v.hidden * 100) + "% hidden" + (v.over.length ? " under " + v.over.join(", ") : "") + ". (masked = a mask on that clip, real cover unknown; graphic = drawn over the picture, not cover)";
+    text = base + " at " + Number(at_seconds).toFixed(2) + "s: hidden for certain " + Math.round(v.hidden * 100) + "% (footage over it); possibly up to " + Math.round(v.maybe * 100) + "% counting alpha layers" + (v.over.length ? "; over it: " + v.over.join(", ") : "") + ". Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, a frame render can (layer_frames on the base track, or snapshot_moments). Masked = a mask on that clip, real cover unknown.";
   } else {
-    const lines = L.cuts.map((c) => c.t.toFixed(2) + "s  " + c.edges.join(" | ") + "  hidden before " + Math.round(c.hiddenBefore * 100) + "% after " + Math.round(c.hiddenAfter * 100) + "%" + (c.by.length ? "  by " + c.by.join(", ") : ""));
-    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + "):\n" + lines.join("\n") + "\nA cut hidden over 65% on either side is not a seam the viewer sees.";
+    const lines = L.cuts.map((c) => c.t.toFixed(2) + "s  " + c.edges.join(" | ") + "  hidden for certain: before " + Math.round(c.hiddenBefore * 100) + "% after " + Math.round(c.hiddenAfter * 100) + "%" + ((c.maybeBefore > c.hiddenBefore + 0.01 || c.maybeAfter > c.hiddenAfter + 0.01) ? "; possibly up to " + Math.round(Math.max(c.maybeBefore || 0, c.maybeAfter || 0) * 100) + "% with alpha layers" : "") + (c.by.length ? "  over it: " + c.by.join(", ") : ""));
+    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + "):\n" + lines.join("\n") + "\n'Hidden for certain' counts footage over the track. Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, so they are named and counted in 'possibly'; settle one with layer_frames or snapshot_moments. A cut hidden over 65% for certain on either side is not a seam the viewer sees.";
   }
   card.done(text, true);
   return { text };

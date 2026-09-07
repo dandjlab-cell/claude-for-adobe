@@ -33,22 +33,28 @@ function coverage(rects, n = 40) {
   return hit / (n * n);
 }
 
-// Does this clip hide what is under it? Footage yes; a still only without alpha; graphics never.
-function isOpaque(c, hasAlpha) {
-  if (c.opacity !== undefined && c.opacity < 50) return false;
-  if (!c.mediaPath) return false;                                   // adjustment layer, title, synthetic
-  if (/\.(mogrt|aep|ai|svg|psd)$/i.test(c.mediaPath)) return false; // drawn over the picture
-  if (/\.(png|gif|tiff?|webp)$/i.test(c.mediaPath)) return hasAlpha ? !hasAlpha(c.mediaPath) : false;
-  return true;
+// What a clip does to the picture under it. "opaque": footage, or a still without alpha, hides its rectangle.
+// "alpha": AE comps, MOGRTs, PSD/AI/SVG, alpha stills: they carry transparency, so their rectangle MAY hide the
+// picture (a full-frame comp) or may not (a lower third); geometry cannot tell, only a render can. "none": an
+// adjustment layer, a title, a synthetic item, or opacity under 50%.
+function coverKind(c, hasAlpha) {
+  if (c.opacity !== undefined && c.opacity < 50) return "none";
+  if (!c.mediaPath) return "none";
+  if (/\.(mogrt|aep|ai|svg|psd)$/i.test(c.mediaPath)) return "alpha";
+  if (/\.(png|gif|tiff?|webp)$/i.test(c.mediaPath)) return hasAlpha ? (hasAlpha(c.mediaPath) ? "alpha" : "opaque") : "alpha";
+  return hasAlpha && hasAlpha(c.mediaPath) ? "alpha" : "opaque";
 }
+function isOpaque(c, hasAlpha) { return coverKind(c, hasAlpha) === "opaque"; }
 
-// Cover of `track` at time t: { covered: 0..1, by: [{ track, name, share }] } from the clips on higher tracks.
-// `transforms` is readTransforms().rows; hasAlpha(path) -> boolean is optional and cached by the caller.
+// Cover of `track` at time t from the clips on higher tracks: { covered, possiblyCovered, by }.
+// covered: fraction hidden by opaque clips for certain. possiblyCovered: with the alpha clips counted too,
+// the ceiling. `by` lists every clip with its share and kind so the caller can name what to render to settle it.
 function coverAt(transforms, frameW, frameH, track, t, hasAlpha) {
-  const above = transforms.filter((c) => trackNo(c.track) > trackNo(track) && c.start <= t && t < c.end && isOpaque(c, hasAlpha));
-  const rects = above.map((c) => ({ c, r: clipRect(c, frameW, frameH) || { x0: 0, y0: 0, x1: 1, y1: 1 } })); // unknown geometry: assume full frame (footage fills by default)
-  const covered = coverage(rects.map((x) => x.r));
-  return { covered, by: rects.map((x) => ({ track: x.c.track, name: x.c.name, share: coverage([x.r]), masked: !!x.c.masked })) };
+  const above = transforms.filter((c) => trackNo(c.track) > trackNo(track) && c.start <= t && t < c.end).map((c) => ({ c, kind: coverKind(c, hasAlpha) })).filter((x) => x.kind !== "none");
+  const rects = above.map((x) => ({ ...x, r: clipRect(x.c, frameW, frameH) || { x0: 0, y0: 0, x1: 1, y1: 1 } })); // unknown geometry: assume full frame
+  const covered = coverage(rects.filter((x) => x.kind === "opaque").map((x) => x.r));
+  const possiblyCovered = coverage(rects.map((x) => x.r));
+  return { covered, possiblyCovered, by: rects.map((x) => ({ track: x.c.track, name: x.c.name, share: coverage([x.r]), kind: x.kind, masked: !!x.c.masked })) };
 }
 
-module.exports = { clipRect, coverage, isOpaque, coverAt };
+module.exports = { clipRect, coverage, isOpaque, coverKind, coverAt };
