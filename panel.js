@@ -45,7 +45,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copyChat: $("copy-chat"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -94,8 +94,18 @@ async function loadHostScript() {
 
 // ---- ui helpers ---------------------------------------------------------------------------------
 
+// The full log lives in memory for the session and on disk (~/Library/Logs/claude-for-adobe/panel-<date>.log);
+// the pane shows only the tail. Copy log and the bug report read the full log, never the pane.
+const fullLog = [];
+const LOG_DIR = path.join(os.homedir(), "Library", "Logs", "claude-for-adobe");
+const LOG_FILE = path.join(LOG_DIR, "panel-" + new Date().toISOString().slice(0, 10) + ".log");
+let logFileOk = null;
 function log(text) {
-  ui.log.textContent = (ui.log.textContent + "\n" + new Date().toLocaleTimeString() + " " + text).slice(-8000);
+  const line = new Date().toLocaleTimeString() + " " + text;
+  fullLog.push(line);
+  if (fullLog.length > 20000) fullLog.splice(0, fullLog.length - 20000);
+  if (logFileOk !== false) { try { if (logFileOk === null) { fs.mkdirSync(LOG_DIR, { recursive: true }); logFileOk = true; } fs.appendFileSync(LOG_FILE, line + "\n"); } catch (_) { logFileOk = false; } }
+  ui.log.textContent = (ui.log.textContent + "\n" + line).slice(-8000);
   ui.log.scrollTop = ui.log.scrollHeight;
 }
 
@@ -2595,7 +2605,7 @@ async function buildBugReport() {
     let devRev = ""; try { devRev = devRepo ? gitDev("rev-parse", "--short", "HEAD") : ""; } catch (_) {}
     const settings = ["duplicate sequence=" + ui.dupSequence.checked, "ask before scripts=" + ui.askScripts.checked, "file checkpoints=" + ui.requireCheckpoint.checked, "cut method=" + ui.cutMethod.value, "min silence=" + ui.minSilence.value, "pad=" + ui.pad.value, "whisper=" + currentModel(), "media analysis=" + mediaAnalysisState].join(", ");
     let trace = ""; try { const t = fs.readFileSync(seqFile(".extract-trace.txt"), "utf8"); trace = t.split("\n").slice(-40).join("\n"); } catch (_) {}
-    const logTail = String(ui.log.textContent || "").split("\n").slice(-300).join("\n");
+    const logTail = fullLog.slice(-600).join("\n");
     const body = [
       "# Claude for Adobe bug report", "",
       "Panel " + (devRepo ? "dev " + devRev : "v" + currentVersion(extensionRoot)) + " | Premiere " + premiere + " | macOS " + os.release() + " " + process.arch + " | agent " + agentName() + " model " + (ui.model.value || ""),
@@ -2721,7 +2731,7 @@ function showView(which) {
 tabSettings.onclick = () => showView("settings");
 // Copy the log for support: system clipboard via pbcopy (reliable inside CEP), with the browser API as fallback.
 document.getElementById("copy-log").onclick = () => {
-  const text = ui.log.textContent || "";
+  const text = fullLog.join("\n") + (logFileOk ? "\n(full session log also at " + LOG_FILE + ")" : "");
   try { const p = require("node:child_process").spawn("pbcopy"); p.stdin.end(text); addMessage("assistant muted", "Log copied (" + text.split("\n").length + " lines)."); }
   catch (_) { try { navigator.clipboard.writeText(text); addMessage("assistant muted", "Log copied."); } catch (e) { addMessage("assistant error", "Could not copy: " + e.message); } }
 };
@@ -2729,6 +2739,30 @@ document.getElementById("clear-log").onclick = () => { ui.log.textContent = ""; 
 ui.send.onclick = sendMessage;
 ui.input.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 ui.stop.onclick = () => { if (buttonJob) { requestCancel(); return; } cancelRequested = true; restartSession(session && session.sessionId); };
+// The whole chat on screen as markdown: your messages, the agent's, and every tool card with its result. To the
+// clipboard and to a file next to the project, so it can be pasted anywhere or read by the developer session.
+function chatAsMarkdown() {
+  const out = [];
+  for (const el of ui.messages.children) {
+    if (el.classList.contains("tool")) {
+      const sum = (el.querySelector("summary") || {}).textContent || "";
+      const code = (el.querySelector(".code") || {}).textContent || "";
+      const res = (el.querySelector(".result") || {}).textContent || "";
+      out.push("**Tool** " + sum.replace(/^▸\s*/, "") + (code.trim() ? "\n```\n" + code.trim() + "\n```" : "") + (res.trim() ? "\n```\n" + res.trim() + "\n```" : ""));
+    } else if (el.classList.contains("message")) {
+      const who = el.classList.contains("user") ? "**You:**" : el.classList.contains("muted") ? "**Panel:**" : "**" + agentName() + ":**";
+      out.push(who + " " + (el.textContent || "").trim());
+    }
+  }
+  return "# Chat " + (activeChat ? activeChat.label : "") + " (" + new Date().toLocaleString() + ")\n\n" + out.join("\n\n") + "\n";
+}
+ui.copyChat.addEventListener("click", () => {
+  const text = chatAsMarkdown();
+  try { require("node:child_process").execSync("pbcopy", { input: text }); } catch (_) {}
+  let file = "";
+  try { fs.mkdirSync(analysisDir(), { recursive: true }); file = path.join(analysisDir(), "chat-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".md"); fs.writeFileSync(file, text); } catch (_) {}
+  addMessage("assistant muted", "Chat copied (" + text.split("\n").length + " lines)" + (file ? " and saved to " + file : "") + ".");
+});
 ui.model.onchange = () => restartSession(session && session.sessionId);
 // Chats are tabs. Each holds its own agent, model, messages and session; switching parks the one on screen
 // (its session stays alive) and shows another. New chats open next to it. Not while a turn is running.
