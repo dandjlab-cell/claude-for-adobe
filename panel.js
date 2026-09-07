@@ -45,7 +45,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -132,6 +132,11 @@ function addMessage(cls, text) {
 
 // While a button runs, everything the tools would normally post (cards, muted notes) goes into this one card instead.
 let quietCard = null;
+// The running job, pinned above the chat. One at a time (tools run in a queue); the last card to report owns it.
+let jobOwner = "";
+function showJob(name, label, fraction) { jobOwner = name; ui.jobName.textContent = name; ui.jobLabel.textContent = label; ui.jobFill.style.width = Math.round(100 * Math.max(0, Math.min(1, fraction || 0))) + "%"; ui.jobBar.hidden = false; }
+function hideJob(name) { if (name && jobOwner && name !== jobOwner) return; jobOwner = ""; ui.jobBar.hidden = true; }
+
 function addTool(summary, code) {
   if (quietCard) return quietCard;
   const el = document.createElement("details");
@@ -145,8 +150,8 @@ function addTool(summary, code) {
   return {
     el,
     open() { el.open = true; },
-    progress(done, total, label) { bar.hidden = false; bar.querySelector("i").style.width = Math.round(100 * done / total) + "%"; bar.querySelector("span").textContent = (label || "") + done + " / " + total; },
-    done(text, ok) { bar.hidden = true; const r = el.querySelector(".result"); r.textContent = text; r.className = "result " + (ok ? "ok" : "error"); },
+    progress(done, total, label) { bar.hidden = false; bar.querySelector("i").style.width = Math.round(100 * done / total) + "%"; bar.querySelector("span").textContent = (label || "") + done + " / " + total; showJob(summary, (label || "") + done + " / " + total, done / total); },
+    done(text, ok) { bar.hidden = true; const r = el.querySelector(".result"); r.textContent = text; r.className = "result " + (ok ? "ok" : "error"); hideJob(summary); },
   };
 }
 
@@ -299,10 +304,14 @@ async function discardCopy(copyId) {
 }
 
 // Called before any mutation. Returns a note for Claude, or "" when the active sequence is already a working copy.
+// Sequences the panel itself built this session: edits go straight on them, no working copy (a copy of a
+// copy protected nothing and doubled the sequences in the bin).
+const ownSequences = new Set();
 async function ensureWorkingCopy() {
   if (!ui.dupSequence.checked) return "";
   const p = await readProject();
   if (!p.sequenceId) throw new Error("no active sequence");
+  if (ownSequences.has(p.sequenceId)) return "";
   // A copy the editor renamed (no more "[Claude]") is theirs now: forget it, so the next edit gets a fresh copy.
   if (workingCopies.has(p.sequenceId) && !/ \[Claude\]$/.test(p.sequence)) { workingCopies.delete(p.sequenceId); renderCopies(); log("working copy renamed by the editor, released: " + p.sequence); }
   if (workingCopies.has(p.sequenceId) || / \[Claude\]$/.test(p.sequence)) return "";
@@ -1027,6 +1036,7 @@ async function createSequence({ name = "", bin = "", width, height, fps, preset,
   const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false");
   if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
   const [id, seqName, size, laid, brollSkipped] = raw.split("|");
+  if (id) ownSequences.add(id); // the panel made it: edits go straight on it, no working copy
   await refreshProject();
   timeline = await readSnapshot().catch(() => timeline);
   const text = "created sequence \"" + seqName + "\" (" + size + ")" + (insert_clips ? " with " + (laid || "the bin's") + " clip(s) laid in order on V1" : " empty") + (Number(brollSkipped) ? "; " + brollSkipped + " clip(s) from a b-roll bin were NOT laid: place them over the talking head with place_broll after the cut" : "") + "; it is now the active sequence. Undo: Cmd+Z.";

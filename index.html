@@ -89,6 +89,12 @@
     .scripts .knobs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; color: var(--ink-60); font-size: 12px; }
     .scripts .knobs label { display: flex; align-items: center; gap: 4px; }
 
+    /* The running job, pinned above the chat so it is never lost in the scroll: name, step label, and a bar. */
+    #job-bar { position: relative; padding: 6px 12px 8px; border-bottom: 1px solid var(--line); background: var(--sunken); font-size: 11px; color: var(--ink); display: flex; gap: 8px; align-items: baseline; }
+    #job-bar b { font-weight: 600; white-space: nowrap; }
+    #job-bar span { color: var(--ink-60); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #job-bar i { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--accent); transition: width 300ms; }
+    body.landing #job-bar { display: none; }
     #messages { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
     #messages:empty { display: none; }
     /* Landing page: only when no chat is open. Not a message; the chat UI is hidden under it. */
@@ -170,6 +176,7 @@
     </header>
     <section id="view-chat" class="view active">
       <div id="selection-bar" class="mono"></div>
+      <div id="job-bar" class="mono" hidden><b id="job-name"></b><span id="job-label"></span><i id="job-fill"></i></div>
       <div class="scripts">
         <button id="btn-cut" type="button" title="Removes the quiet stretches with the method and thresholds set in Settings. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
         <button id="btn-captions" type="button" title="Transcribes the timeline (Whisper, on this Mac) and adds a native caption track. Editable in the Captions panel.">Captions</button>
