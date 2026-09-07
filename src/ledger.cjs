@@ -9,7 +9,7 @@ const { coverAt, clipRect } = require("./cover.cjs");
 function buildLedger(snap, transforms, { base = "V1", step = 0.5, half = 0.25 } = {}) {
   const rows = transforms.rows, W = transforms.w, H = transforms.h;
   const hasAlpha = (p) => !!rows.find((c) => c.mediaPath === p && c.alpha);
-  const clips = rows.map((c) => { const r = clipRect(c, W, H); return { track: c.track, name: c.name, start: c.start, end: c.end, rect: r, share: r ? Number((((r.x1 - r.x0) * (r.y1 - r.y0))).toFixed(3)) : null, opacity: c.opacity, crop: c.crop, alpha: c.alpha, masked: c.masked, graphic: c.graphic }; });
+  const clips = rows.map((c) => { const r = clipRect(c, W, H); return { track: c.track, name: c.name, mediaPath: c.mediaPath || "", start: c.start, end: c.end, rect: r, share: r ? Number((((r.x1 - r.x0) * (r.y1 - r.y0))).toFixed(3)) : null, opacity: c.opacity, crop: c.crop, alpha: c.alpha, masked: c.masked, graphic: c.graphic }; });
   // Every footage edge on every track is a cut worth grading (seams() only lists the ones that change the
   // picture in the binary model; here the fraction is the point).
   const edges = new Map();

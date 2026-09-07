@@ -1090,18 +1090,45 @@ async function multicamSwitch({ at_seconds, camera, record = false } = {}) {
   return { text, isError: !changed };
 }
 
-// Settle a moment by Premiere's renderer: composite vs base track alone; the matching share is what the viewer sees of the base.
-async function settleMoment(t, baseIdx) {
+// Settle moments by Premiere's renderer: composite vs base track alone, batched into two host calls for any number
+// of moments; the matching share per moment is what the viewer sees of the base. Returns Map(t -> share).
+async function settleMoments(times, baseIdx, card, label) {
+  const out = new Map();
+  const ts = [...new Set(times.map((t) => Number(t.toFixed(3))))];
+  if (!ts.length) return out;
   const dir = path.join(os.tmpdir(), "claude-for-adobe-settle-" + Date.now().toString(36));
-  const tt = Number(t.toFixed(3));
-  const comp = await host("frames", JSON.stringify([tt]), dir + "-c", "");
-  const solo = await host("frames", JSON.stringify([tt]), dir + "-s", String(baseIdx));
-  const file = (raw) => { if (raw.indexOf("ERR:") === 0) return null; const rows = raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0); const [f] = (rows[0] || "").split(COL); return [f + ".png", f].find((p) => p && fs.existsSync(p)) || null; };
-  const a = file(comp), b = file(solo);
-  let share = null;
-  if (a && b) share = frameMatchShare(a, b);
-  [a, b].forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
-  return share;
+  const files = (raw) => { if (raw.indexOf("ERR:") === 0) return []; return raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0).map((row) => { const [f] = row.split(COL); return [f + ".png", f].find((p) => p && fs.existsSync(p)) || null; }); };
+  if (card) card.progress(0, 2, label || "rendering composite ");
+  const comp = files(await host("frames", JSON.stringify(ts), dir + "-c", ""));
+  if (card) card.progress(1, 2, label || "rendering base alone ");
+  const solo = files(await host("frames", JSON.stringify(ts), dir + "-s", String(baseIdx)));
+  ts.forEach((t, i) => { const a = comp[i], b = solo[i]; if (a && b) { const sh = frameMatchShare(a, b); if (sh !== null) out.set(t, sh); } });
+  comp.concat(solo).forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
+  return out;
+}
+
+// What an alpha layer (AE comp, MOGRT, alpha still) does to the picture under it is a property of the FILE, not of
+// the cut: settle it once with one to three samples across the clip, cache the verdict next to the project by
+// media path, and reuse it for every cut it sits over and every sequence it appears in.
+function alphaCoverCache() { try { return JSON.parse(fs.readFileSync(path.join(analysisDir(), "alpha-cover.json"), "utf8")); } catch (_) { return {}; } }
+async function settleAlphaLayers(L, baseIdx, card) {
+  const cache = alphaCoverCache();
+  const layers = L.clips.filter((c) => c.track !== L.base && (c.alpha || c.graphic) && c.share && c.mediaPath !== undefined);
+  const need = [];
+  for (const c of layers) if (!cache[c.mediaPath]) need.push(c);
+  if (need.length) {
+    const samples = [];
+    need.forEach((c) => { const d = c.end - c.start; const rel = d > 4 ? [0.25, 0.5, 0.75] : [0.5]; rel.forEach((r) => samples.push({ path: c.mediaPath, t: c.start + d * r })); });
+    const shares = await settleMoments(samples.map((x) => x.t), baseIdx, card, "settling " + need.length + " alpha layer(s) with " + samples.length + " frame pair(s) ");
+    need.forEach((c) => {
+      const mine = samples.filter((x) => x.path === c.mediaPath).map((x) => shares.get(Number(x.t.toFixed(3)))).filter((v) => v !== undefined);
+      if (!mine.length) return;
+      const baseVisible = Math.min(...mine);
+      cache[c.mediaPath] = { baseVisible: Number(baseVisible.toFixed(2)), verdict: baseVisible < 0.35 ? "hides" : baseVisible > 0.65 ? "overlay" : "partial", samples: mine.length, settledAt: new Date().toISOString() };
+    });
+    try { fs.mkdirSync(analysisDir(), { recursive: true }); fs.writeFileSync(path.join(analysisDir(), "alpha-cover.json"), JSON.stringify(cache, null, 1)); } catch (_) {}
+  }
+  return cache;
 }
 
 async function visibleAtTool({ at_seconds, base_track = 1, settle = false } = {}) {
@@ -1110,13 +1137,30 @@ async function visibleAtTool({ at_seconds, base_track = 1, settle = false } = {}
   if (!L) return err(card, "no active sequence");
   const { visibleAt } = require(path.join(extensionRoot, "src", "ledger.cjs"));
   const base = "V" + base_track;
-  const settled = new Map(); // t -> base-visible share from the renderer
+  // Settling: alpha layers are judged once per FILE (cached in alpha-cover.json next to the project), so a run
+  // costs one to three frame pairs per distinct comp the first time and nothing after. A single moment asked for
+  // explicitly is rendered directly.
+  let cache = alphaCoverCache();
+  const settled = new Map(); // t -> base-visible share, only for an explicit moment
   if (settle) {
     card.open();
-    const moments = Number.isFinite(Number(at_seconds)) ? [Number(at_seconds)] : L.cuts.filter((c) => (c.maybeBefore || 0) > c.hiddenBefore + 0.01 || (c.maybeAfter || 0) > c.hiddenAfter + 0.01).flatMap((c) => [c.t - 0.25, c.t + 0.25]).filter((t) => t >= 0 && t < L.cover.length * L.coverEvery);
-    for (let i = 0; i < moments.length; i++) { card.progress(i, moments.length, "rendering composite vs " + base + " alone "); const sh = await settleMoment(moments[i], base_track - 1); if (sh !== null) settled.set(Number(moments[i].toFixed(3)), sh); }
+    if (Number.isFinite(Number(at_seconds))) { const m = await settleMoments([Number(at_seconds)], base_track - 1, card, "rendering composite vs " + base + " alone "); m.forEach((v, k) => settled.set(k, v)); }
+    else cache = await settleAlphaLayers({ ...L, base }, base_track - 1, card);
   }
+  const layerVerdict = (mediaPath) => cache[mediaPath];
   const settledText = (t) => { const k = [...settled.keys()].find((x) => Math.abs(x - t) < 0.01); return k === undefined ? "" : " RENDERED: " + base + " is " + Math.round(settled.get(k) * 100) + "% of what the viewer sees"; };
+  // Per cut: the alpha layers over it, with their cached verdicts when known.
+  const layersOver = (t) => L.clips.filter((c) => c.track !== base && (c.alpha || c.graphic) && c.share && c.start <= t && t < c.end);
+  const cutVerdict = (c) => {
+    const over = [...new Set(layersOver(c.t - 0.25).concat(layersOver(c.t + 0.25)))];
+    if (!over.length) return "";
+    const known = over.map((l) => ({ l, v: layerVerdict(l.mediaPath) }));
+    if (known.some((k) => !k.v)) return " (alpha layers not settled yet: call with settle: true)";
+    const hides = known.filter((k) => k.v.verdict === "hides"), partial = known.filter((k) => k.v.verdict === "partial");
+    if (hides.length) return " -> NOT SEEN: " + hides.map((k) => "\"" + k.l.name + "\" hides it (" + Math.round(k.v.baseVisible * 100) + "% of " + base + " shows through, rendered)").join(", ");
+    if (partial.length) return " -> PARTLY SEEN: " + partial.map((k) => "\"" + k.l.name + "\" leaves " + Math.round(k.v.baseVisible * 100) + "% of " + base + " showing (rendered)").join(", ");
+    return " -> SEAM SEEN: " + known.map((k) => "\"" + k.l.name + "\" is an overlay (" + Math.round(k.v.baseVisible * 100) + "% of " + base + " shows through, rendered)").join(", ");
+  };
   let text;
   if (Number.isFinite(Number(at_seconds))) {
     const v = visibleAt({ ...L, base }, Number(at_seconds));
@@ -1124,11 +1168,10 @@ async function visibleAtTool({ at_seconds, base_track = 1, settle = false } = {}
   } else {
     const lines = L.cuts.map((c) => {
       const open = (c.maybeBefore || 0) > c.hiddenBefore + 0.01 || (c.maybeAfter || 0) > c.hiddenAfter + 0.01;
-      const r = [settledText(c.t - 0.25), settledText(c.t + 0.25)].filter(Boolean);
-      const verdict = r.length ? " -> " + (r.every((x) => /is (\d+)%/.test(x) && Number(/is (\d+)%/.exec(x)[1]) >= 35) ? "SEAM SEEN" : "NOT SEEN") + " (" + r.map((x) => x.replace(/.*is /, "").replace(/ of what.*/, "")).join(" before / ") + " after, rendered)" : "";
+      const verdict = cutVerdict(c);
       return c.t.toFixed(2) + "s  " + c.edges.join(" | ") + "  hidden for certain: before " + Math.round(c.hiddenBefore * 100) + "% after " + Math.round(c.hiddenAfter * 100) + "%" + (open ? "; possibly up to " + Math.round(Math.max(c.maybeBefore || 0, c.maybeAfter || 0) * 100) + "% with alpha layers" : "") + (c.by.length ? "  over it: " + c.by.join(", ") : "") + verdict;
     });
-    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + (settle ? ", alpha layers settled by Premiere's renderer" : "") + "):\n" + lines.join("\n") + "\n'Hidden for certain' counts footage over the track. Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, so they are named and counted in 'possibly'" + (settle ? "; where the renderer was asked, the verdict is on the line." : "; call again with settle: true to have Premiere's renderer decide each open one (composite vs " + L.base + " alone).") + " A cut hidden over 65% for certain on either side is not a seam the viewer sees.";
+    text = L.sequence + " " + L.frame.join("x") + ", " + L.cuts.length + " footage edge(s), cover of " + L.base + " at each (ledger built " + L.builtAt.slice(11, 19) + (settle ? ", alpha layers settled by Premiere's renderer" : "") + "):\n" + lines.join("\n") + "\n'Hidden for certain' counts footage over the track. Alpha layers (AE comps, MOGRTs, alpha stills) may be full-frame or a lower third: geometry cannot tell, so they are named and counted in 'possibly'" + (settle ? "; the renderer's verdict per layer is cached in alpha-cover.json next to the project and reused." : "; call again with settle: true to have Premiere's renderer decide each layer once (composite vs " + L.base + " alone, cached per file).") + " A cut hidden over 65% for certain on either side is not a seam the viewer sees.";
   }
   card.done(text, true);
   return { text };
