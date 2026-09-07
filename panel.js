@@ -1152,8 +1152,11 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const dur = async () => { const sn = await readSnapshot().catch(() => null); return sn && !sn.error ? sn.duration : NaN; };
   const first = (t) => String(t || "").replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "").split("\n").find((l) => l.trim()) || "";
   const stop = (why) => { const text = steps.concat(["STOPPED: " + why]).join("\n"); card.done(text, false); return { text, isError: true }; };
-  // 1. the sequence at the shape, no tracking
+  // 1. the sequence at the shape, no tracking. The name is the macro's job: "<folder> <shape>".
   card.progress(0, 5, "sequence ");
+  if (!bin) bin = await selectedBin();
+  if (!bin) return stop("no bin: select the talking-head bin (or the folder holding it) in the Project panel, or pass bin");
+  if (!name) name = (bin.split("/").pop() || "cut") + " " + (aspect || preset || (width && height ? width + "x" + height : "9x16")).replace(/:/g, "x");
   const r1 = await createSequence({ bin, name, aspect, preset, width, height, insert_clips: true });
   if (r1.isError) return stop("sequence: " + first(r1.text));
   // Fill the frame (a 16:9 or 4K shot in a 9:16 sequence must cover it), then centre each clip on the face.
