@@ -1075,13 +1075,18 @@ async function multicamSwitch({ at_seconds, camera, record = false } = {}) {
   try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
   const t = Number(Number(at_seconds).toFixed(3));
   const dir = path.join(os.tmpdir(), "claude-for-adobe-mc-" + Date.now().toString(36));
-  const file = (raw) => { if (raw.indexOf("ERR:") === 0) return null; const rows = raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0); const [f] = (rows[0] || "").split(COL); return [f + ".png", f].find((p) => p && fs.existsSync(p)) || null; };
-  const before = file(await host("frames", JSON.stringify([t]), dir + "-a", ""));
+  // Frames clearly inside each side of the cut (never on the cut itself: a frame on the boundary can fall on the
+  // unchanged side after frame snapping, which read as "no change" on 2026-09-07 with two different angles).
+  const probeTimes = [Number((t - 0.5).toFixed(3)), Number((t + 0.5).toFixed(3))].filter((x) => x >= 0);
+  const files = (raw) => { if (raw.indexOf("ERR:") === 0) return []; return raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0).map((row) => { const [f] = row.split(COL); return [f + ".png", f].find((p) => p && fs.existsSync(p)) || null; }); };
+  const beforeFrames = files(await host("frames", JSON.stringify(probeTimes), dir + "-a", ""));
   const raw = await host("multicamSwitch", JSON.stringify({ at: t, camera: Number(camera), record: !!record }));
   if (raw.indexOf("ERR:") === 0) return err(card, copyNote + raw.slice(4));
-  const after = file(await host("frames", JSON.stringify([t]), dir + "-b", ""));
-  let share = null; if (before && after) share = frameMatchShare(before, after);
-  [before, after].forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
+  const afterFrames = files(await host("frames", JSON.stringify(probeTimes), dir + "-b", ""));
+  const sides = probeTimes.map((pt, i) => ({ t: pt, share: beforeFrames[i] && afterFrames[i] ? frameMatchShare(beforeFrames[i], afterFrames[i]) : null }));
+  beforeFrames.concat(afterFrames).forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
+  const after = sides.find((x) => x.t > t) || sides[sides.length - 1], beforeSide = sides.find((x) => x.t < t);
+  const share = after ? after.share : null;
   timeline = await readSnapshot().catch(() => timeline);
   const steps = raw.split(ROW).map((r) => r.split(COL).join(": "));
   const switched = /^switched: yes/m.test(steps.join("\n"));
@@ -1091,7 +1096,9 @@ async function multicamSwitch({ at_seconds, camera, record = false } = {}) {
   // the number key does. The frame comparison is supporting evidence only: two angles from the same file look
   // identical, and that says nothing about the switch.
   const ok = switched || (accepted && pictureChanged);
-  const text = copyNote + steps.join("\n") + "\nFrame at " + t.toFixed(2) + "s before vs after: " + (share === null ? "could not render" : Math.round(share * 100) + "% identical" + (pictureChanged ? " (the picture changed)" : " (same picture: the angles may share a source, or the switch needs playback)")) + " | CHECK " + (ok ? "PASS: Premiere accepted the camera change and cut a new piece at the playhead" : accepted ? "FAIL: the call was accepted but no new piece appeared and the picture is unchanged" : "FAIL: changeCamera was not accepted in any argument shape");
+  const sideText = (x, label) => x ? label + " (" + x.t.toFixed(2) + "s): " + (x.share === null ? "could not render" : Math.round(x.share * 100) + "% identical before vs after" + (x.share < 0.9 ? ", picture changed" : ", same picture")) : "";
+  const semantics = beforeSide && after && beforeSide.share !== null && after.share !== null ? (after.share < 0.9 && beforeSide.share >= 0.9 ? " -> the switch applies forward from the cut" : after.share < 0.9 && beforeSide.share < 0.9 ? " -> the whole clip switched, both sides" : after.share >= 0.9 && beforeSide.share < 0.9 ? " -> the switch applied to the piece BEFORE the cut" : " -> no picture change on either side (angles may share a source)") : "";
+  const text = copyNote + steps.join("\n") + "\n" + [sideText(beforeSide, "before the cut"), sideText(after, "after the cut")].filter(Boolean).join("; ") + semantics + " | CHECK " + (ok ? "PASS: Premiere accepted the camera change and cut a new piece at the playhead" : accepted ? "FAIL: the call was accepted but no new piece appeared and the picture is unchanged" : "FAIL: changeCamera was not accepted in any argument shape");
   card.done(text, ok);
   return { text, isError: !ok };
 }
