@@ -62,6 +62,14 @@ const workingCopies = new Map(); // copyId -> { copyName, originalId, originalNa
 
 // Keep the message list pinned to the newest message only while the reader is already at the bottom; once they
 // scroll up to read, progress ticks and new cards must not drag the view back down.
+// The document must never be the thing that scrolls (a focus() or scrollTop on a non-scrolling element can drift it
+// and leave the whole panel offset). Any such drift is undone at once, and on every resize.
+const resetPageScroll = () => { try { if (window.scrollX || window.scrollY || document.documentElement.scrollTop || document.body.scrollTop) { window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; } } catch (_) {} };
+window.addEventListener("scroll", resetPageScroll, { passive: true });
+window.addEventListener("resize", resetPageScroll);
+document.addEventListener("DOMContentLoaded", resetPageScroll);
+setTimeout(resetPageScroll, 0);
+
 function followBottom(el) { if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight; }
 
 function evalScript(code) {

@@ -16,8 +16,10 @@
       font: 13px/1.45 var(--sans);
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; overflow: hidden; } /* only the message list, settings and landing scroll; the page never does */
-    body { margin: 0; background: var(--bg); color: var(--ink); }
+    html { height: 100%; overflow: hidden; }
+    /* The body is the viewport: fixed to its four edges, so the grid always fills the panel at whatever size it has and
+       the document itself can never be scrolled or left offset. Only the message list, settings and landing scroll. */
+    body { position: fixed; inset: 0; margin: 0; overflow: hidden; background: var(--bg); color: var(--ink); }
     main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
     footer { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); font-size: 11px; }
     .view { display: none; min-height: 0; }
