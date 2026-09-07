@@ -61,7 +61,7 @@ Two facts that decide the shape of everything below:
 | Default transition on every cut | `cmd.sequence.applydefaulttransitions` — Shift+D | key | | |
 | Transitions by name | `qeClip.addTransition(qe.project.getVideoTransitionByName(name, true), atStart, "HH:MM:SS:FF")` (the shape shipped panels use); 144 video, 3 audio in `surface-26.3.2.md`. **Morph Cut** is Premiere's own fix for the jump cut every filler removal leaves | verified 2026-09-07 (`morph_cut`: ten Morph Cuts on a ten-cut talking head in 0.7 s); display name then match name (`matchnames.md`); only on seams the viewer sees (cover from the ledger) | | `qeTrack.numTransitions` before/after |
 | Remix (retime music) | `cmd.clip.remix.*`, tool `cmd.tools.16Remix` | key | | |
-| Multicam | `qeClip.setMulticam`, `canDoMulticam`; angle switching is not exposed | listed / none | | |
+| Multicam angle switch | **QE `sequence.multicam.changeCamera(n)`** with `enable`, `record`, `play`, `stop` on the same object (found by reflection 2026-09-07; the April note saying no surface exposes multicam was wrong) | tool built (`multicam_switch`), first run pending on a real multicam clip | playhead to t, `enable()`, `changeCamera(n)` (argument shape to be found) | frame before vs after rendered and compared; V1 clip count |
 
 ## Sound
 

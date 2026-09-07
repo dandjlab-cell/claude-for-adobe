@@ -1067,6 +1067,29 @@ async function placeBroll({ media_path = "", at_seconds, duration_seconds = 4, i
 }
 
 // What the viewer sees at a time, or at every cut, from the ledger.
+// Multicam angle switch through QE, verified by rendering the frame before and after.
+async function multicamSwitch({ at_seconds, camera, record = false } = {}) {
+  const card = addTool("multicam_switch @" + Number(at_seconds).toFixed(2) + "s -> camera " + camera, "");
+  if (!Number.isFinite(Number(at_seconds)) || !Number.isFinite(Number(camera))) return err(card, "at_seconds and camera are required");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
+  const t = Number(Number(at_seconds).toFixed(3));
+  const dir = path.join(os.tmpdir(), "claude-for-adobe-mc-" + Date.now().toString(36));
+  const file = (raw) => { if (raw.indexOf("ERR:") === 0) return null; const rows = raw.split(ROW).filter((r) => r.indexOf("SOLO") !== 0); const [f] = (rows[0] || "").split(COL); return [f + ".png", f].find((p) => p && fs.existsSync(p)) || null; };
+  const before = file(await host("frames", JSON.stringify([t]), dir + "-a", ""));
+  const raw = await host("multicamSwitch", JSON.stringify({ at: t, camera: Number(camera), record: !!record }));
+  if (raw.indexOf("ERR:") === 0) return err(card, copyNote + raw.slice(4));
+  const after = file(await host("frames", JSON.stringify([t]), dir + "-b", ""));
+  let share = null; if (before && after) share = frameMatchShare(before, after);
+  [before, after].forEach((f) => { try { if (f) fs.unlinkSync(f); } catch (_) {} });
+  timeline = await readSnapshot().catch(() => timeline);
+  const steps = raw.split(ROW).map((r) => r.split(COL).join(": "));
+  const changed = share !== null && share < 0.9;
+  const text = copyNote + steps.join("\n") + "\nFrame at " + t.toFixed(2) + "s before vs after: " + (share === null ? "could not render" : Math.round(share * 100) + "% identical") + " | CHECK " + (changed ? "PASS: the picture changed, the camera switched" : "FAIL: the picture did not change (wrong argument shape, not a multicam clip, or the switch needs record mode: try record: true)");
+  card.done(text, changed);
+  return { text, isError: !changed };
+}
+
 // Settle a moment by Premiere's renderer: composite vs base track alone; the matching share is what the viewer sees of the base.
 async function settleMoment(t, baseIdx) {
   const dir = path.join(os.tmpdir(), "claude-for-adobe-settle-" + Date.now().toString(36));
@@ -1776,7 +1799,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -1825,6 +1848,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "multicam_switch", description: "EXPERIMENTAL, first run pending: switch the camera of a multicam clip at a time through Premiere's own multicam editor (QE sequence.multicam.changeCamera, the number-key switch). Runs on the working copy; renders the frame before and after and reports whether the picture changed and whether the clip count changed (a switch mid-clip cuts it like the number key does). Needs a multicam source sequence clip on the timeline.",
+    inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, camera: { type: "number", description: "1-based camera number" }, record: { type: "boolean", description: "also toggle multicam record around the switch (as the 0 key does), default false" } }, required: ["at_seconds", "camera"] } },
   { name: "visible_at", description: "What the viewer sees at a time, by lookup from the visibility ledger (computed from Premiere's own clip data whenever the timeline changes: Motion position/scale, Crop, Opacity, source size vs sequence frame, Alpha on stills, masks). Reports 'hidden for certain' (footage over the track) and 'possibly' (alpha layers: AE comps, MOGRTs, alpha stills, which geometry cannot classify). With settle: true, every moment where those differ is settled by Premiere's own renderer: the composite is compared with the base track alone, and the share of the frame where they match is how much of the base track the viewer actually sees. Use it before deciding to hold on a face, cover a line, or put a transition on a cut.",
     inputSchema: { type: "object", properties: { at_seconds: { type: "number", description: "omit for the per-cut table" }, base_track: { type: "number", description: "1-based track whose picture is asked about, default 1" }, settle: { type: "boolean", description: "render composite vs base-alone wherever alpha layers leave the answer open (two frames per moment)" } }, required: [] } },
   { name: "sound_events", description: "Laughter, applause, cheering, sighs and gasps, music and keyboard noise on the timeline, with times, from Apple's built-in sound classifier over Premiere's own render of the mix. Free, on this Mac. Use it before removing pauses (a pause next to a laugh is a beat, not dead air), to find reactions worth cutting to, and to see where music runs. Results are saved next to the project for reuse.",

@@ -1188,8 +1188,37 @@ var PCX = (function () {
     return rows.join(ROW);
   }
 
+  // Multicam angle switch through QE's sequence.multicam object (changeCamera / enable / record / play / stop,
+  // found by reflection 2026-09-07; the April note claiming no surface exposes multicam was wrong at least in
+  // name). Puts the playhead at atSec, enables multicam, calls changeCamera with several argument shapes until one
+  // does not throw, and reports what each did. The panel renders before/after frames to see whether the picture
+  // changed. json: {at, camera, record}. Rows: step|result.
+  function multicamSwitch(json) {
+    var a = parse(json);
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var q = null; try { app.enableQE(); q = qe.project.getActiveSequence(); } catch (e0) {}
+    if (!q) return "ERR:QE unavailable";
+    var mc = null; try { mc = q.multicam; } catch (e1) {}
+    if (!mc) return "ERR:no multicam object on the QE sequence";
+    var rows = [], ticks = String(Math.round(num(a.at) * T));
+    var before = s.videoTracks[0] ? s.videoTracks[0].clips.numItems : -1;
+    try { s.setPlayerPosition(ticks); rows.push("playhead" + COL + "set to " + num(a.at).toFixed(3) + "s"); } catch (e2) { rows.push("playhead" + COL + "ERR " + e2); }
+    try { var r0 = mc.enable(); rows.push("enable()" + COL + String(r0)); } catch (e3) { rows.push("enable()" + COL + "ERR " + e3); }
+    if (a.record) { try { var r1 = mc.record(); rows.push("record()" + COL + String(r1)); } catch (e4) { rows.push("record()" + COL + "ERR " + e4); } }
+    var cam = num(a.camera), done = false;
+    var shapes = [["changeCamera(" + cam + ")", function () { return mc.changeCamera(cam); }], ["changeCamera(\"" + cam + "\")", function () { return mc.changeCamera(String(cam)); }], ["changeCamera(" + (cam - 1) + ") zero-based", function () { return mc.changeCamera(cam - 1); }]];
+    for (var i = 0; i < shapes.length && !done; i++) {
+      try { var r = shapes[i][1](); rows.push(shapes[i][0] + COL + "returned " + String(r)); done = true; } catch (e5) { rows.push(shapes[i][0] + COL + "ERR " + e5); }
+    }
+    if (a.record) { try { var r2 = mc.stop(); rows.push("stop()" + COL + String(r2)); } catch (e6) { rows.push("stop()" + COL + "ERR " + e6); } }
+    var after = s.videoTracks[0] ? s.videoTracks[0].clips.numItems : -1;
+    rows.push("V1 clips" + COL + before + " -> " + after);
+    return rows.join(ROW);
+  }
+
   return {
-    probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
