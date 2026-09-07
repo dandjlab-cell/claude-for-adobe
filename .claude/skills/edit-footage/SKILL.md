@@ -11,12 +11,22 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 expensive steps; cutting is cheap. They come last, once, on what survives. Never run Auto Reframe,
 snapshot_moments or seam_frames on six minutes of raw footage that will become one.
 1. `rough_cut` with the talking-head bin and the shape. ONE call: sequence at the shape without tracking, render, Whisper transcript, and the transcript back as indexed words.
-2. **Author the thoughts** (your recall pass, the one model step): every word in exactly one thought, in order; label what was said; kind answer or production; retake_of for a repeat of an earlier thought. Do not pick winners.
+2. **Author the thoughts** (your recall pass, the one model step): every word in exactly one thought, in source order; label = what was said, a concrete action or idea, never a sentiment; kind = answer, or production for between-take chatter, greetings, crew talk, false starts you can see; retake_of = the id of the earlier thought that makes the same point, in the same words or in other words ("a lot of room to go" and "more room to grow" are one point twice: link them). Do not pick winners; the code measures fluency and delivery and chooses.
 3. `audio_cut` with those thoughts, report first: the code validates the indices, measures delivery per word, chooses each take by fluency (fewer restarts, less pause, faster), cuts failed restarts inside a thought, trims crumbs only when the audio agrees, and cuts only between thoughts under the editors' rules (cut-in after a 0.3 s pause; never a cut that removes only a second of silence; 1-2 s pauses kept and flagged). Read it, then `audio_cut` with the same thoughts and apply: true. This is the whole audio cut; there is no silences, fillers or takes pass after it.
 4. The story: which lines carry it, in what order, to what length (`speaker_check` on the line that matters).
 5. `keep_only` to the target length. `sound_events` before cutting any pause on a conversation.
 6. B-roll from its bin over the lines that call for it (`place_broll`), to the rhythm rules.
 7. Only now `reframe` (tracking) on the cut, then `subject_path`, one `snapshot_moments`, `seam_frames` at the real seams (`visible_at`), captions last.
+
+For an audio cut on an existing timeline: `transcribe_timeline`, `transcript_index`, author, `audio_cut`. Never `remove_silences` + `remove_fillers` + `find_takes` one after another: that leaves words hanging. If `rough_cut` fails, say what it reported and stop; never rebuild its steps by hand.
+
+**B-roll lives in its bin.** A bin named like b-roll (B-roll, Broll, cutaways) IS b-roll: `create_sequence` and `rough_cut` never lay its clips on V1 (they wait for `place_broll` over the talking head) and `classify_clips` need not prove it. With such a bin selected, the talking head is its sibling bin or the parent bin's other clips. Tell the editor once that keeping b-roll in its own bin or track makes every later step more accurate.
+
+**Transcripts belong to source clips, not timelines.** A new or re-cut sequence from the same footage already has its transcript: `read_transcript` maps each clip's words into the new timeline. Never re-transcribe source clips because the timeline changed. For an exact transcript of a CUT timeline (captions, precise timing, clips without transcripts) use `transcribe_timeline`; the other transcript tools then use it for that cut. A transcript file `list_analysis` marks STALE describes an older cut: call `read_transcript` again instead of reading it. If `read_transcript` reports no transcript or a stale save, tell the editor exactly: transcribe in the Text panel, then Cmd+S, then ask again.
+
+**Premiere first.** If Premiere has a feature for the job, use it: the scriptable ones are tools (`reframe` = Auto Reframe, `extract_ranges` = Extract, `frames` = Export Frame, `place_broll` = overwrite edit); the ones a panel cannot trigger (Transcribe, Delete all pauses, filler-word delete, Create captions, caption style, Enhance Speech) are the editor's click: say the menu path and their key (`premiere_shortcut`) in one line and continue when it is done. `premiere-scripting/mechanisms.md` is the catalog.
+
+**Read-heavy steps go to a subagent** (a long transcript, many clips, a long overview): it has the same tools on a cheaper model and returns a short answer. Keep the main conversation to decisions and edits.
 
 The full workflow when the request is open-ended:
 

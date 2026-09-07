@@ -62,8 +62,11 @@ test("prepareWorkspace writes the shared rulebook as AGENTS.md and links the sam
   const prompt = buildSystemPrompt("", "Codex") + "\n" + CODEX_NOTES;
   const dir = prepareWorkspace({ systemPrompt: prompt, skillsDir: skills, root });
   const agents = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
-  assert.match(agents, /^You are Codex running inside Adobe Premiere Pro/m);
-  assert.match(agents, /Reframe order of operations/);
+  assert.match(agents, /^You are Codex, an editor's colleague working inside Adobe Premiere Pro/m);
+  assert.match(agents, /Procedure lives in the skills/);
+  // The prompt is the rules that bind on turn one; procedure lives in skills, tool descriptions and results. It was
+  // 3,200 words of prose on 2026-09-07 and the model broke the rules buried in it. Keep it short.
+  assert.ok(buildSystemPrompt("", "Claude").split(/\s+/).length <= 700, "system prompt grew past 700 words: move procedure to a skill or a tool");
   assert.equal(fs.readFileSync(path.join(dir, ".agents", "skills", "reframe", "SKILL.md"), "utf8"), "# r");
   // Claude's prompt is the same text with the other name: one rulebook.
   assert.equal(buildSystemPrompt("", "Claude").replace("You are Claude", "You are Codex"), buildSystemPrompt("", "Codex"));

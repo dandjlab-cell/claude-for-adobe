@@ -37,7 +37,7 @@ function rhythmIssues(snap, { portrait } = {}) {
 // One block for a tool result, or "" when the cut is clean.
 function rhythmReport(snap, opts) {
   const issues = rhythmIssues(snap, opts);
-  return issues.length ? "\nRHYTHM (checked automatically, " + issues.length + " issue" + (issues.length === 1 ? "" : "s") + "):\n" + issues.map((i) => "- " + i.text).join("\n") : "";
+  return issues.length ? "\nRHYTHM (checked automatically, " + issues.length + " issue" + (issues.length === 1 ? "" : "s") + "; fix in this turn, then say what changed):\n" + issues.map((i) => "- " + i.text).join("\n") : "";
 }
 
 module.exports = { rhythmIssues, rhythmReport, FLASH, MIN_SHOT, SCROLL_STOP, HOLE };

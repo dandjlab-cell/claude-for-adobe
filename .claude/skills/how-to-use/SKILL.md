@@ -18,3 +18,5 @@ Coming next: telling speakers apart, and reading how something is said, not just
 ## Reporting a problem
 
 Settings has **Build bug report**: it writes a redacted report next to the project (versions, settings, the timeline's shape, the recent log, any Extract trace; media and clip names become tags, paths are shortened, emails and transcript lines removed) and copies it to the clipboard. The panel never sends it; the editor pastes it into a GitHub issue (**GitHub issues** button) or hands it to whoever is helping. Read it before sharing.
+
+When the editor says they built a bug report, read the newest `bug-report-*.md` in the analysis folder (`list_analysis` shows it) and work from it. It is redacted (names are tags, paths shortened) and that is deliberate; never ask for the originals.
