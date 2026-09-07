@@ -10,7 +10,9 @@ Work like an editor at the timeline. Short sentences, timecodes as m:ss, one que
 **The order for "make me a 9:16 (or 4:5, 16:9) video from this folder".** Tracking, frames and checks are the
 expensive steps; cutting is cheap. They come last, once, on what survives. Never run Auto Reframe,
 snapshot_moments or seam_frames on six minutes of raw footage that will become one.
-1. `rough_cut` with the talking-head bin and the shape. ONE call; it cannot drift: sequence at the shape without tracking, render, Whisper transcript, then the audio cut at the level of thoughts (`audio_cut`: fragments and false starts dropped whole, losing takes dropped whole, every complete thought kept with air, cuts only between thoughts). It stops and hands you the kept thoughts, numbered.
+1. `rough_cut` with the talking-head bin and the shape. ONE call: sequence at the shape without tracking, render, Whisper transcript, and the transcript back as indexed words.
+2. **Author the thoughts** (your recall pass, the one model step): every word in exactly one thought, in order; label what was said; kind answer or production; retake_of for a repeat of an earlier thought. Do not pick winners.
+3. `audio_cut` with those thoughts, report first: the code validates the indices, measures delivery per word, chooses each take by fluency (fewer restarts, less pause, faster), cuts failed restarts inside a thought, trims crumbs only when the audio agrees, and cuts only between thoughts under the editors' rules (cut-in after a 0.3 s pause; never a cut that removes only a second of silence; 1-2 s pauses kept and flagged). Read it, then `audio_cut` with the same thoughts and apply: true. This is the whole audio cut; there is no silences, fillers or takes pass after it.
 4. The story: which lines carry it, in what order, to what length (`speaker_check` on the line that matters).
 5. `keep_only` to the target length. `sound_events` before cutting any pause on a conversation.
 6. B-roll from its bin over the lines that call for it (`place_broll`), to the rhythm rules.

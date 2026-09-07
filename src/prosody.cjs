@@ -77,6 +77,20 @@ function prosodyForRanges(wavFile, ranges) {
   return ranges.map((r) => summarise(fr, r.start, r.end, r.words));
 }
 
+// Per-word prosody for a whole WAV, frames computed once: [{energyDb, f0Median, pauseBefore}] aligned with words.
+function prosodyPerWord(wavFile, words) {
+  const { samples, rate } = readWav(wavFile);
+  const fr = frames(samples, rate);
+  let k = 0;
+  return words.map((w, i) => {
+    while (k < fr.length && fr[k].t < w.start) k++;
+    let j = k; const rms = [], f0 = [];
+    while (j < fr.length && fr[j].t < w.end) { if (fr[j].rms >= RMS_SILENCE) rms.push(fr[j].rms); if (!Number.isNaN(fr[j].f0)) f0.push(fr[j].f0); j++; }
+    const r = rms.length ? Math.sqrt(rms.reduce((s, x) => s + x * x, 0) / rms.length) : 0;
+    return { energyDb: r > 0 ? 20 * Math.log10(r) : null, f0Median: f0.length ? median(f0) : null, pauseBefore: i ? Math.max(0, w.start - words[i - 1].end) : 0 };
+  });
+}
+
 // Delivery score of a take within its group: louder, more pitch movement, not rushed or dragging, relative to
 // the group's medians. Zero means average; each unit is roughly one "noticeably better" step.
 function deliveryScores(summaries) {
@@ -91,4 +105,4 @@ function deliveryScores(summaries) {
   });
 }
 
-module.exports = { readWav, frames, summarise, prosodyForRanges, deliveryScores, FRAME, HOP };
+module.exports = { readWav, frames, summarise, prosodyForRanges, prosodyPerWord, deliveryScores, FRAME, HOP };

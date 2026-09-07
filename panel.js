@@ -1225,31 +1225,56 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   let r3; try { r3 = await transcribeRenderedTimeline(wav, snapAfter1, language); } catch (error) { return stop("transcription failed: " + error.message); }
   setStatus("Ready");
   steps.push("2. Transcript: Whisper on the timeline render, " + r3.words.length + " words");
-  // 4. the audio cut, at the level of thoughts, one keep_only
-  if (cancelRequested) return stop("stopped by the editor");
-  card.progress(3, 4, "thoughts ");
-  const r4 = await audioCut({ apply: true });
+  // 4. hand over: the indexed transcript for the one model pass that must be recall-minded (author the thoughts)
+  card.progress(3, 4, "index ");
+  const idx = await transcriptIndex({});
   const d5 = await dur();
-  steps.push("3. Audio cut (thoughts): " + first(r4.text) + " -> " + d5.toFixed(1) + "s\n" + String(r4.text || "").split("\n").filter((l) => /^(Kept thoughts|\d+\. |Dropped|  - )/.test(l)).join("\n"));
-  if (r4.isError) return stop("the audio cut failed: " + first(r4.text));
-  // the material for the story: the timeline transcript as it stands after the cuts (carried through each one)
-  const finalSnap = await readSnapshot().catch(() => null);
-  const tlw = finalSnap && !finalSnap.error ? freshTimelineWords(finalSnap) : null;
-  let lines;
-  if (tlw) lines = linesFromWords(tlw.words, 0).slice(0, 120).map((l) => "[" + tc(l.start) + "] " + l.text).join("\n") + "\n(exact timeline transcript, " + tlw.words.length + " words, carried through the cuts)";
-  else { const rt = await readTranscript({}); lines = String(rt.text || "").split("\n").slice(0, 120).join("\n"); }
   const broll = /(\d+) clip\(s\) from a b-roll bin were NOT laid/.exec(r1.text || "");
-  const text = steps.join("\n") + "\n\nThe cut is " + d5.toFixed(1) + "s (from " + d1.toFixed(1) + "s raw): complete thoughts only, cuts only between them. Original clips untouched; every step is Cmd+Z on the new sequence." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW THE JUDGEMENT, yours: the kept thoughts are numbered above with their text; decide which carry the story, in what order, to what length; then keep_only with whole thoughts (their times are above), place_broll, and reframe (no bin) once for tracking and checks.\n\n" + lines;
-  card.done(steps.join("\n") + "\n-> " + d5.toFixed(1) + "s; the story is next", true);
+  const text = steps.join("\n") + "\n\nThe sequence is " + d5.toFixed(1) + "s, filled and centred, untouched by any cut. Original clips untouched." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW: author the thoughts from the indexed transcript below (every word in exactly one thought, in order; label what was said; kind answer or production; retake_of when a thought repeats an earlier one; do not pick winners), then audio_cut with thoughts (report), read it, then audio_cut with the same thoughts and apply: true. The code chooses takes by fluency and delivery, cuts failed restarts, trims crumbs, and cuts only between thoughts. After that: the story (which thoughts, what order, what length) with keep_only on whole thoughts, place_broll, reframe (no bin) once.\n\n" + String(idx.text || "");
+  card.done(steps.join("\n") + "\n-> transcript indexed; author the thoughts next", true);
   return { text };
 }
 
-// The thought-level audio cut: plan from the exact timeline transcript (with delivery from the render), report, apply as one keep_only.
-async function audioCut({ apply = false, gap_seconds, pad_seconds } = {}) {
-  const card = addTool((apply ? "cut" : "plan") + "_thoughts", "");
+// The exact timeline transcript as indexed words, for authoring thoughts.
+async function transcriptIndex({ start_seconds = 0, end_seconds } = {}) {
+  const card = addTool("transcript_index", "");
   let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
   const tlw = freshTimelineWords(snap);
   if (!tlw) return err(card, "no transcript for this exact timeline: run transcribe_timeline (or rough_cut) first");
+  const a = Math.max(0, Number(start_seconds) || 0), b = Number(end_seconds) > 0 ? Number(end_seconds) : Infinity;
+  const lines = [];
+  let cur = [], curStart = null;
+  tlw.words.forEach((w, i) => {
+    if (w.end <= a || w.start >= b) return;
+    if (curStart === null) curStart = w.start;
+    const gap = i && cur.length ? w.start - tlw.words[i - 1].end : 0;
+    if (cur.length && (gap >= 0.6 || cur.length >= 14)) { lines.push(curStart.toFixed(2) + "s  " + cur.join(" ")); cur = []; curStart = w.start; }
+    cur.push(i + ":" + w.text);
+  });
+  if (cur.length) lines.push(curStart.toFixed(2) + "s  " + cur.join(" "));
+  const text = "Indexed words of the exact timeline transcript (" + tlw.words.length + " words; each line starts at the time shown; a new line marks a pause of 0.6 s or more):\n" + lines.join("\n") + "\n\nAuthor thoughts: every word in exactly one thought, in order; label = what was said (a concrete action or idea, not a sentiment); kind = answer, or production for between-take chatter, greetings, crew talk; retake_of = the id of the earlier thought that says the same thing. Do not choose which take wins: audio_cut measures that. Then audio_cut with thoughts (report), read it, then apply: true.";
+  card.done(lines.length + " line(s), " + tlw.words.length + " words", true);
+  return { text };
+}
+
+// The thought-level audio cut: authored thoughts (validated, measured, ruled) or, without them, a split by pauses.
+async function audioCut({ thoughts, apply = false, gap_seconds, pad_seconds } = {}) {
+  const card = addTool((apply ? "cut" : "plan") + "_thoughts" + (Array.isArray(thoughts) && thoughts.length ? " (" + thoughts.length + " authored)" : " (by pauses)"), "");
+  let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
+  const tlw = freshTimelineWords(snap);
+  if (!tlw) return err(card, "no transcript for this exact timeline: run transcribe_timeline (or rough_cut) first");
+  if (Array.isArray(thoughts) && thoughts.length) {
+    const A = require(path.join(extensionRoot, "src", "thoughts_authored.cjs"));
+    const v = A.validateDraft(tlw.words, { thoughts });
+    if (v.problems.length) return err(card, "the thoughts do not fit the transcript:\n" + v.problems.slice(0, 12).join("\n") + "\nFix the indices (transcript_index) and call again; nothing was cut.");
+    let perWord = null, deliveryNote = "no delivery data";
+    try { const wav = seqFile(".mix.wav"); const meta = JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8")); if (fs.existsSync(wav) && meta.timeline === timelineFingerprint(snap)) { perWord = require(path.join(extensionRoot, "src", "prosody.cjs")).prosodyPerWord(wav, tlw.words); deliveryNote = "delivery measured per word from the timeline render"; } } catch (_) {}
+    const plan = A.planFromThoughts(tlw.words, v.thoughts, { perWord });
+    const text = A.report(plan) + (v.uncovered.length ? "\nUnassigned words (" + v.uncovered.length + "): " + v.uncovered.slice(0, 20).join(",") + (v.uncovered.length > 20 ? "…" : "") + " (not kept; assign them if they belong to a thought)" : "") + "\n(" + v.thoughts.length + " authored thoughts; " + deliveryNote + ")";
+    if (!apply || !plan.ranges.length) { card.done(text, true); return { text: text + (plan.ranges.length ? "\naudio_cut with the same thoughts and apply: true makes this cut as one keep_only." : "") }; }
+    const res = await keepOnly({ ranges: plan.ranges.map((r) => [r.start, r.end]), dry_run: false });
+    return { ...res, text: res.text + "\n" + text };
+  }
   const { planThoughts, report, PAD } = require(path.join(extensionRoot, "src", "thoughts.cjs"));
   // Delivery per take group from the timeline render, when it matches this exact timeline.
   let scoreGroup;
@@ -2111,7 +2136,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -2160,9 +2185,11 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
+  { name: "transcript_index", description: "The exact timeline transcript as indexed words (index:word, with a time at the start of each line), the input for authoring thoughts: group every word into thoughts by word_start_i / word_end_i, label what was said, kind answer or production, retake_of when a thought says the same thing as an earlier one. Then audio_cut with those thoughts.",
+    inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" } }, required: [] } },
   { name: "audio_cut", description: "The audio cut at the level of thoughts, one pass: the transcript is split into thoughts, fragments and false starts are dropped whole, the losing take of a repeated line is dropped whole (completeness plus delivery from the timeline render), every complete thought is kept in order with a little air on each side, and the cut lands only between thoughts. Nothing is ever cut inside a sentence. Report first (kept thoughts numbered with times and text, dropped ones with reasons); apply: true does it as one keep_only. Needs a transcript for this exact timeline (rough_cut and transcribe_timeline make it).",
-    inputSchema: { type: "object", properties: { apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "air on each side of a thought, default 0.18" } }, required: [] } },
-  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Fixed order, cannot be reordered: (1) a new sequence at the shape from the talking-head bin, footage filled and centred on the face, NO tracking; (2) the timeline rendered and transcribed (Whisper), one exact transcript every step shares; (3) the audio cut at the level of thoughts, one keep_only: fragments and false starts dropped whole, the losing take of a repeated line dropped whole (completeness plus delivery), every complete thought kept in order with air on each side, cuts only between thoughts, never inside a sentence. Then it STOPS with the kept thoughts numbered for the one step that is judgement: which carry the story, in what order, to what length. After keep_only (whole thoughts) and place_broll, call reframe (no bin) once for tracking and checks.",
+    inputSchema: { type: "object", properties: { thoughts: { type: "array", description: "authored thoughts from transcript_index: [{id, word_start_i, word_end_i, label, kind: 'answer'|'production', retake_of}] covering every word; without it the split is by pauses alone, which is cruder", items: { type: "object" } }, apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "fallback split: pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "fallback split: air on each side of a thought, default 0.18" } }, required: [] } },
+  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Fixed order: (1) a new sequence at the shape from the talking-head bin, footage filled and centred on the face, NO tracking; (2) the timeline rendered and transcribed (Whisper), one exact transcript every step shares; (3) the transcript handed back as indexed words. Then YOU author the thoughts (every word in exactly one thought, in order, labelled, kind answer/production, retake_of for repeats; no winners) and call audio_cut with them: the code validates, measures delivery, picks takes by fluency, cuts failed restarts, trims crumbs, and cuts only between thoughts under the editors' rules. Then the story with keep_only on whole thoughts, place_broll, reframe (no bin) once.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path of the talking-head footage; default the selected bin" }, aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9" }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, name: { type: "string" }, language: { type: "string", description: "for Whisper, default en" } }, required: [] } },
   { name: "find_takes", description: "Repeated takes from the transcript: a line said, stumbled, said again. Groups near-duplicate utterances within a window and picks the most complete take (most content words, fewest fillers, finished ending; later on a tie). Returns the groups with times and the ranges to drop; with apply: true it removes the dropped takes (working copy, one Cmd+Z step per range). Run after remove_silences and before story decisions; the transcript must exist (Premiere's or transcribe_timeline).",
     inputSchema: { type: "object", properties: { window_seconds: { type: "number", description: "how far apart two takes of the same line can be, default 90" }, min_similarity: { type: "number", description: "0-1, default 0.6" }, apply: { type: "boolean", description: "remove the dropped takes now, default false (report only)" }, source: { type: "string", description: "auto | premiere | whisper, default auto" } }, required: [] } },
