@@ -1242,8 +1242,17 @@ var PCX = (function () {
     return rows.join(ROW);
   }
 
+  // Preferences, the way Adobe's own Learn panel reads and writes them. getPref returns the value or
+  // "(does not exist)"; setPref writes (persist=1) and returns the value read back.
+  function getPref(name) {
+    try { return app.properties.doesPropertyExist(name) ? String(app.properties.getProperty(name)) : "(does not exist)"; } catch (e) { return "ERR:" + e; }
+  }
+  function setPref(name, value) {
+    try { app.properties.setProperty(name, value, 1, 1); return String(app.properties.getProperty(name)); } catch (e) { return "ERR:" + e; }
+  }
+
   return {
-    multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
+    getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
     extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents

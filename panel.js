@@ -180,6 +180,25 @@ async function readProject() {
   return { path: projectPath, name, sequence, sequenceId };
 }
 
+// Premiere's media analysis (Media Intelligence): with it on, Premiere embeds every clip it imports (visual and
+// audio vectors in its analyzer cache) and the panel can read those instead of looking at frames. Ask once per
+// session when it is off; the editor's answer is remembered for this panel. Declined = fall back to frames.
+const MI_PREF = "BE.Prefs.MediaIntelligence.AnalyzeImportedMediaForMISO";
+let mediaAnalysisState = "unknown"; // "on" | "off" | "declined"
+async function checkMediaAnalysis() {
+  try {
+    const v = await host("getPref", MI_PREF);
+    if (v === "true") { mediaAnalysisState = "on"; return; }
+    if (mediaAnalysisState === "declined") return;
+    let declined = false; try { declined = localStorage.getItem("mediaAnalysis.declined") === "1"; } catch (_) {}
+    if (declined) { mediaAnalysisState = "declined"; return; }
+    mediaAnalysisState = "off";
+    const yes = await askInline("Premiere's media analysis is off. Turn it on? Premiere then analyses every clip it imports (visual and audio, on this Mac) and the panel can read that instead of rendering frames: similar shots, scene grouping, matching b-roll. It is the same switch as Preferences > Media & Transcription.", "Turn on", "Not now");
+    if (yes) { const r = await host("setPref", MI_PREF, "true"); mediaAnalysisState = r === "true" ? "on" : "off"; addMessage("assistant muted", r === "true" ? "Media analysis is on. New imports are analysed automatically; existing clips can be analysed from the Project panel." : "Could not turn it on (" + r + "). Preferences > Media & Transcription has the switch."); }
+    else { mediaAnalysisState = "declined"; try { localStorage.setItem("mediaAnalysis.declined", "1"); } catch (_) {} }
+  } catch (_) {}
+}
+
 async function refreshProject() {
   const next = await readProject();
   const previousPath = project.path;
@@ -2085,6 +2104,7 @@ async function boot() {
     }, onLog: log });
     log("mcp server at " + mcp.url);
     await refreshProject();
+    setTimeout(() => { checkMediaAnalysis().catch(() => {}); }, 2500);
     setInterval(() => { refreshProject().catch(() => {}); }, PROJECT_POLL_MS);
     await bindHostEvents();
     await snapshotTimeline();
