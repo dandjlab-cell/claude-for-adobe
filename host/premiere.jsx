@@ -1211,8 +1211,19 @@ var PCX = (function () {
     var isMc = false, isSeq = false;
     try { isMc = !!(under.projectItem && under.projectItem.isMultiCamClip && under.projectItem.isMultiCamClip()); } catch (e9) {}
     try { isSeq = !!(under.projectItem && under.projectItem.isSequence && under.projectItem.isSequence()); } catch (e10) {}
-    rows.push("clip under playhead" + COL + under.name + (isMc ? " [multicam source]" : isSeq ? " [nested sequence, not multicam]" : " [footage, not multicam]"));
-    if (!isMc) return "ERR:" + under.name + " is " + (isSeq ? "a nested sequence" : "plain footage") + ", not a multicam source sequence: nothing to switch. Make one: select the angle clips in the Project panel, right-click, Create Multi-Camera Source Sequence, then put that source sequence on V1.";
+    rows.push("clip under playhead" + COL + under.name + (isMc ? " [multicam source]" : isSeq ? " [nested sequence: can be enabled as multicam]" : " [single-file footage]"));
+    if (!isMc && !isSeq) return "ERR:" + under.name + " is single-file footage; only a multicam source or a nested sequence with the angles on its tracks can switch cameras.";
+    // The QE item for that clip (QE items in order, skipping Empty, align by index with the ExtendScript clips).
+    var qi = null;
+    try { var qt = q.getVideoTrackAt(0), qc = 0; for (var qk = 0; qk < qt.numItems; qk++) { var it = qt.getItemAt(qk); if (!it || String(it.type) === "Empty") continue; if (s.videoTracks[0].clips[qc] === under || String(s.videoTracks[0].clips[qc].nodeId) === String(under.nodeId)) { qi = it; break; } qc++; } } catch (eq) {}
+    // Clip > Multi-Camera > Enable, as QE exposes it on the item: a nested sequence becomes switchable.
+    if (qi) {
+      var wasOn = false; try { wasOn = !!qi.multicamEnabled; } catch (eA) {}
+      if (!wasOn) { try { qi.setMulticam(true); } catch (eB) { try { qi.setMulticam(1); } catch (eC) { rows.push("setMulticam" + COL + "ERR " + eC); } } }
+      var nowOn = false; try { nowOn = !!qi.multicamEnabled; } catch (eD) {}
+      rows.push("multicam on the clip" + COL + (wasOn ? "already enabled" : nowOn ? "enabled now (setMulticam)" : "could not enable"));
+    } else rows.push("multicam on the clip" + COL + "QE item not found; trying the switch anyway");
+    try { for (var st = 0; st < s.videoTracks.numTracks; st++) for (var sc = 0; sc < s.videoTracks[st].clips.numItems; sc++) s.videoTracks[st].clips[sc].setSelected(0, 1); under.setSelected(1, 1); rows.push("selection" + COL + "the clip alone"); } catch (eS) {}
     var before = s.videoTracks[0] ? s.videoTracks[0].clips.numItems : -1;
     try { s.setPlayerPosition(ticks); rows.push("playhead" + COL + "set to " + num(a.at).toFixed(3) + "s"); } catch (e2) { rows.push("playhead" + COL + "ERR " + e2); }
     try { var r0 = mc.enable(); rows.push("enable()" + COL + String(r0)); } catch (e3) { rows.push("enable()" + COL + "ERR " + e3); }
