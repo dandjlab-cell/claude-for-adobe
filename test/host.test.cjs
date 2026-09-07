@@ -35,3 +35,12 @@ test("overlayClip's sync check compares clips, not whole-timeline strings", () =
   assert.ok(/lost\.length \?/.test(body), "warning must be driven by clips that went missing");
   assert.ok(/return out;\n    \}/.test(body), "fingerprint must return a list of clips");
 });
+
+// CEP resolves a relative require against the panel's URL, which carries %20 for the space in
+// "Application Support", so require("./src/x.cjs") fails inside Premiere while passing in Node. Eight lazy
+// requires did exactly that on 2026-09-07 and every feature behind them failed silently. Only the absolute form.
+test("panel.js never requires by relative path", () => {
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const bad = [...panel.matchAll(/require\((["'])\.\.?\//g)].length;
+  assert.strictEqual(bad, 0, "use require(path.join(extensionRoot, \"src\", ...))");
+});

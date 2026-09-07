@@ -324,7 +324,7 @@ async function getLedger(snap) {
   const key = timelineFingerprint(snap) + "|" + snap.id;
   if (ledgerCache.key === key && ledgerCache.ledger) return ledgerCache;
   const transforms = await readTransforms();
-  const ledger = require("./src/ledger.cjs").buildLedger(snap, transforms);
+  const ledger = require(path.join(extensionRoot, "src", "ledger.cjs")).buildLedger(snap, transforms);
   ledgerCache = { key, ledger, transforms };
   try { fs.mkdirSync(analysisDir(), { recursive: true }); fs.writeFileSync(seqFile(".visibility.json"), JSON.stringify({ timeline: key, ...ledger })); } catch (_) {}
   return ledgerCache;
@@ -596,7 +596,7 @@ async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 
   // A clip with no speech or level anywhere in it is unreadable audio far more often than silence. It is never
   // cut whole from a silence pass (2026-09-07: two camera clips were removed entirely this way); it is dropped
   // from coverage and named, and the editor decides.
-  const { unheardClips } = require("./src/silence.cjs");
+  const { unheardClips } = require(path.join(extensionRoot, "src", "silence.cjs"));
   const unheard = unheardClips(covered, loud);
   if (unheard.length) {
     const names = unheard.map((i) => covered[i]);
@@ -1051,7 +1051,7 @@ async function visibleAtTool({ at_seconds, base_track = 1 } = {}) {
   const card = addTool("visible_at" + (Number.isFinite(Number(at_seconds)) ? " @" + Number(at_seconds).toFixed(2) + "s" : " (all cuts)"), "");
   let L; try { L = (await getLedger()).ledger; } catch (error) { return err(card, error.message); }
   if (!L) return err(card, "no active sequence");
-  const { visibleAt } = require("./src/ledger.cjs");
+  const { visibleAt } = require(path.join(extensionRoot, "src", "ledger.cjs"));
   const base = "V" + base_track;
   let text;
   if (Number.isFinite(Number(at_seconds))) {
@@ -1070,7 +1070,7 @@ async function soundEvents({ start_seconds = 0, end_seconds, min_confidence } = 
   const card = addTool("sound_events", "");
   if (!fs.existsSync(OCR_BIN)) return err(card, "sound helper missing (bin/ocr)");
   let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
-  const { parseWindows, segments, report, MIN_CONF } = require("./src/sounds.cjs");
+  const { parseWindows, segments, report, MIN_CONF } = require(path.join(extensionRoot, "src", "sounds.cjs"));
   const wav = seqFile(".mix.wav");
   fs.mkdirSync(analysisDir(), { recursive: true });
   const fp = timelineFingerprint(snap);
@@ -1115,7 +1115,7 @@ async function speakerCheck({ start_seconds, end_seconds, step_seconds = 0.5, tr
   const times = []; for (let t = a; t < b && times.length < FACE_MAX_FRAMES; t += step) times.push(Number(t.toFixed(3)));
   if (!times.length) return err(card, "empty range");
   card.open();
-  const { readFrame, summarise } = require("./src/face.cjs");
+  const { readFrame, summarise } = require(path.join(extensionRoot, "src", "face.cjs"));
   const rows = [];
   for (let i = 0; i < times.length; i += 6) {
     const batch = times.slice(i, i + 6);
@@ -1152,7 +1152,7 @@ async function morphCut({ seams, all_seams = false, track = 1, transition = "Mor
   // Only seams the viewer sees. Cover is a fraction from Premiere's own data for every clip above the track:
   // Motion position and scale, Opacity, source size, and the Alpha flag of stills. A side-by-side covers half,
   // a picture-in-picture a corner, a full-frame still with no alpha all of it; titles, MOGRTs and AE comps none.
-  const { coverAt } = require("./src/cover.cjs");
+  const { coverAt } = require(path.join(extensionRoot, "src", "cover.cjs"));
   let tf = null; try { tf = (await getLedger()).transforms; } catch (_) {}
   const hasAlpha = (p) => !!(tf && tf.rows.find((c) => c.mediaPath === p && c.alpha));
   const half = Math.max(0.1, Number(frames) / 25 / 2); // half the transition in seconds; 25 fps is close enough at any common rate for a visibility window
@@ -1235,7 +1235,7 @@ async function sceneCuts({ at_seconds, track = 1, sensitivity = "medium" } = {})
 async function premiereShortcut({ query = "" } = {}) {
   const card = addTool("premiere_shortcut " + query, "");
   if (!query.trim()) return err(card, "query is required");
-  const { userKysFiles, findShortcuts } = require("./src/kys.cjs");
+  const { userKysFiles, findShortcuts } = require(path.join(extensionRoot, "src", "kys.cjs"));
   const major = (await evalScript("app.version").catch(() => "")).split(".")[0] || "26";
   const files = userKysFiles(major);
   const hits = findShortcuts(query, files).slice(0, 40);
@@ -1951,7 +1951,7 @@ async function boot() {
       // cut is checked (holes on V1, flash gaps and blinks on the b-roll tracks, scroll stop on vertical) and any
       // finding is appended to that tool's own result, where the model cannot miss it.
       const run = async () => { const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline); const out = await TOOLS[name](args);
-        if (timelineFingerprint(timeline) !== fpBefore) { refreshLedgerSoon(); const note = require("./src/rhythm.cjs").rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
+        if (timelineFingerprint(timeline) !== fpBefore) { refreshLedgerSoon(); const note = require(path.join(extensionRoot, "src", "rhythm.cjs")).rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
       const next = toolQueue.then(run, run);
       toolQueue = next.catch(() => {});
       return next;
@@ -2000,7 +2000,8 @@ async function runCutButton(tool, params, label) {
       ? result.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "")
       : m[1] + " silences removed, " + m[2] + "s cut, " + m[3] + "s -> " + m[4] + "s" + where + ". Cmd+Z undoes one range at a time.", !result.isError);
     setStatus("Ready");
-  } finally { endButtonJob(); }
+  } catch (error) { card.done("Failed: " + error.message, false); log("button job " + label + " failed: " + (error.stack || error.message)); }
+  finally { endButtonJob(); }
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
 // Captions button toggles the options strip under the toolbar; Make captions runs the job.
