@@ -126,3 +126,18 @@ Scope: everything added after 0.1.47 (snapshot_moments, frames_across, nudge_cli
 | 15 | LOW | Updater: `zipinfo` regex could miss `..` in names with spaces; double failure deleted the only backup | Names from `zipinfo -1`; on double failure the backup is kept next to the install and named in the error |
 
 Not fixed (follow-ups): a new caption track is stacked on every `create_captions` run (no lifecycle); the prompt cannot move the caption band.
+
+## 0.1.77 pre-release review (2026-09-07)
+
+Two independent readers (verifier subagents, no shared context with the authoring session), one over the host
+script diff v0.1.76..HEAD (579 lines), one over panel.js + src/ (1,327 lines), each asked for release-blocking
+defects only: timeline-destroying paths, load/action crashes, hangs, private data.
+
+- Host: **PASS**. Extract in/out retry + undo, trimTail, closeGaps' length guard (returns -1 on any length change),
+  addTransitions, multicamSwitch (all QE calls try/catch), overlayClip's per-clip fingerprint all have read-back
+  and abort/undo paths; no ES3 violations; all loops bounded. One vestige removed on their note: the dead
+  range-split counter from the disproved clip-edge hypothesis.
+- Panel: **PASS**. TRACE block stripping cannot touch the extracted=/ERRORS markers; the unheard-clip guard removes
+  the clip's span from coverage before planning; every new tool is in both TOOLS and TOOL_DEFS; every host action
+  the panel calls is exported; no relative requires (test enforces); media-analysis preference write only after
+  the editor's click; no private data in the diff. 124 tests, 123 pass, 1 skipped (network-only).

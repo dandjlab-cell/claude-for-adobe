@@ -143,7 +143,6 @@ var PCX = (function () {
     prep(s.videoTracks, "v");
     prep(s.audioTracks, "a");
     var before = num(s.end) / T;
-    var split = 0;
     var done = 0, errs = [], trace = [];
     for (var i = 0; i < R.length; i++) {
       var a = Math.ceil(R[i][0] / F - 0.000001) * F;
@@ -218,7 +217,7 @@ var PCX = (function () {
     var mismatches = 0;
     var vt = s.videoTracks[0], at = s.audioTracks[0];
     for (var j = 0; j < Math.min(vt.clips.numItems, at.clips.numItems); j++) if (vt.clips[j].start.ticks !== at.clips[j].start.ticks) mismatches++;
-    return "extracted=" + done + "/" + R.length + (split > 0 ? " (" + split + " range(s) split at clip edges)" : "") + " TRACE{" + trace.join(" ;; ") + "}" + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
+    return "extracted=" + done + "/" + R.length + " TRACE{" + trace.join(" ;; ") + "}" + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
   }
 
   // Clip starts and ends on every track within a second of a range, as "V1 s3.20 e23.87". A failing Extract
