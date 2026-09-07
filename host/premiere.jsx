@@ -165,7 +165,7 @@ var PCX = (function () {
     pieces.sort(function (x, y) { return y[0] - x[0]; });
     var split = pieces.length - R.length;
     R = pieces;
-    var done = 0, errs = [];
+    var done = 0, errs = [], trace = [];
     for (var i = 0; i < R.length; i++) {
       var a = Math.ceil(R[i][0] / F - 0.000001) * F;
       var b = Math.floor(R[i][1] / F + 0.000001) * F;
@@ -177,6 +177,7 @@ var PCX = (function () {
         var d0t = num(s.end);
         trimTail(s, a);
         var removedT = (d0t - num(s.end)) / T, wantT = endNow - a;
+        trace.push("tail a=" + a.toFixed(3) + " end_before=" + (d0t / T).toFixed(3) + " end_after=" + (num(s.end) / T).toFixed(3) + " removed=" + removedT.toFixed(3) + " want=" + wantT.toFixed(3));
         if (Math.abs(removedT - wantT) > 2 * F + 0.01) { errs.push(a.toFixed(2) + "-end: tail trim removed " + removedT.toFixed(2) + "s instead of " + wantT.toFixed(2) + "s; stopped"); break; }
         done++;
         continue;
@@ -211,6 +212,7 @@ var PCX = (function () {
         var d0 = num(s.end);
         q.extract();
         var removed = (d0 - num(s.end)) / T, want = b - a;
+        trace.push("extract a=" + a.toFixed(3) + " b=" + b.toFixed(3) + " in_read=" + ri.toFixed(3) + " out_read=" + ro.toFixed(3) + " end_before=" + (d0 / T).toFixed(3) + " end_after=" + (num(s.end) / T).toFixed(3) + " removed=" + removed.toFixed(3) + " want=" + want.toFixed(3) + " edges=" + edgesNear(s, a, b));
         if (num(s.end) === d0) errs.push(a.toFixed(2) + ": no change");
         else if (Math.abs(removed - want) > 2 * F + 0.01) {
           // Premiere took out something other than the range asked for. Undo it through QE (one History step),
@@ -222,7 +224,9 @@ var PCX = (function () {
         } else done++;
       } catch (e) { errs.push(a.toFixed(2) + ": " + e); break; }
     }
+    var endBeforeGaps = num(s.end);
     var closed = closeGaps(q, s);
+    trace.push("closeGaps closed=" + closed + " end_before=" + (endBeforeGaps / T).toFixed(3) + " end_after=" + (num(s.end) / T).toFixed(3));
     for (var k = 0; k < saved.tracks.length; k++) {
       var w = saved.tracks[k];
       try { if (w.qt) w.qt.setSyncLock(w.sync); } catch (e) {}
@@ -234,7 +238,7 @@ var PCX = (function () {
     var mismatches = 0;
     var vt = s.videoTracks[0], at = s.audioTracks[0];
     for (var j = 0; j < Math.min(vt.clips.numItems, at.clips.numItems); j++) if (vt.clips[j].start.ticks !== at.clips[j].start.ticks) mismatches++;
-    return "extracted=" + done + "/" + R.length + (split > 0 ? " (" + split + " range(s) split at clip edges)" : "") + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
+    return "extracted=" + done + "/" + R.length + (split > 0 ? " (" + split + " range(s) split at clip edges)" : "") + " TRACE{" + trace.join(" ;; ") + "}" + " before=" + before.toFixed(2) + "s after=" + after.toFixed(2) + "s frame-gaps closed=" + closed + " V1/A1 start mismatches=" + mismatches + (errs.length ? " ERRORS: " + errs.join("; ") : "");
   }
 
   // Clip starts and ends on every track within a second of a range, as "V1 s3.20 e23.87". A failing Extract

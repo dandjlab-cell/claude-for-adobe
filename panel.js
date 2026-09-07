@@ -526,6 +526,9 @@ async function applyCuts(card, cuts, dryRun, summary) {
     setStatus("Cutting " + Math.min(i + batch.length, ordered.length) + " / " + ordered.length + " ranges…");
     card.progress(i, ordered.length, "cutting ");
     raw = await host("extractRanges", JSON.stringify(batch.map((c) => [c.start, c.end])));
+    // Every Extract the host performed, with what it asked for and what Premiere did, kept next to the project
+    // and in the log: the evidence for any wipe is then already on disk.
+    try { const tm = /TRACE\{([\s\S]*?)\}/.exec(raw); if (tm) { const lines = tm[1].split(" ;; "); fs.mkdirSync(analysisDir(), { recursive: true }); fs.appendFileSync(seqFile(".extract-trace.txt"), new Date().toISOString() + "\n" + lines.join("\n") + "\n"); lines.forEach((l) => log("extract " + l)); raw = raw.replace(tm[0], ""); } } catch (_) {}
     // The host reports "extracted=X/Y ... [ERRORS: ...]": count what it actually did, and stop on any error.
     const m = /extracted=(\d+)\/(\d+)/.exec(raw);
     ok = raw.indexOf("ERR:") !== 0 && raw !== "EvalScript error." && !!m && m[1] === m[2] && raw.indexOf(" ERRORS:") < 0;
