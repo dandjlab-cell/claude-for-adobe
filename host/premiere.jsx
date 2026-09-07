@@ -763,8 +763,11 @@ var PCX = (function () {
   function isGraphicItem(pi, videoInfo) {
     if (!pi) return true;
     try { if (typeof pi.isSequence === "function" && pi.isSequence()) return false; } catch (e0) {}
-    if (/alpha/i.test(String(videoInfo || ""))) return true;
     var mp = ""; try { mp = String(pi.getMediaPath() || ""); } catch (e1) {}
+    // A camera or video file is footage whatever its Video Info says: BRAW and other raw formats can report an
+    // alpha channel, and treating them as a graphic left 6K clips at 100% in a 9:16 sequence (2026-09-07).
+    if (/\.(braw|r3d|crm|arw|mxf|mov|mp4|m4v|mts|m2ts|avi|mkv|webm|dng|ari)$/i.test(mp)) return false;
+    if (/alpha/i.test(String(videoInfo || ""))) return true;
     return !mp || /\.(png|jpe?g|gif|tiff?|psd|ai|svg|mogrt|aep)$/i.test(mp);
   }
   // Motion position is 0-1 fractions in some Premiere builds and pixels in others. A fraction pushed off frame

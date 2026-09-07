@@ -42,6 +42,7 @@ function coverKind(c, hasAlpha) {
   if (!c.mediaPath) return "none";
   if (/\.(mogrt|aep|ai|svg|psd)$/i.test(c.mediaPath)) return "alpha";
   if (/\.(png|gif|tiff?|webp)$/i.test(c.mediaPath)) return hasAlpha ? (hasAlpha(c.mediaPath) ? "alpha" : "opaque") : "alpha";
+  if (/\.(braw|r3d|crm|arw|mxf|mts|m2ts|avi|mkv|dng|ari)$/i.test(c.mediaPath)) return "opaque"; // camera formats: the alpha flag is a decoder artefact
   return hasAlpha && hasAlpha(c.mediaPath) ? "alpha" : "opaque";
 }
 function isOpaque(c, hasAlpha) { return coverKind(c, hasAlpha) === "opaque"; }
