@@ -168,19 +168,10 @@
     <section id="view-chat" class="view active">
       <div id="selection-bar" class="mono"></div>
       <div class="scripts">
-        <button id="btn-cut" type="button" title="Removes the quiet stretches. Voice: a bundled voice model finds speech (Apple Silicon). Level: Premiere's waveform. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
+        <button id="btn-cut" type="button" title="Removes the quiet stretches with the method and thresholds set in Settings. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
         <button id="btn-captions" type="button" title="Transcribes the timeline (Whisper, on this Mac) and adds a native caption track. Editable in the Captions panel.">Captions</button>
       </div>
-      <div id="cut-options" class="scripts" hidden>
-        <select id="cut-method" title="Voice: a bundled voice model finds speech; the accurate method (Apple Silicon). Level: uses Premiere's waveform and cuts below the clip's noise floor; works on any Mac.">
-          <option value="vad">by voice</option>
-          <option value="db">by level (dB)</option>
-        </select>
-        <label>min <input id="min-silence" type="number" value="0.3" step="0.05" min="0.1"> s</label>
-        <label>pad <input id="pad" type="number" value="0.05" step="0.01" min="0"> s</label>
-        <button id="btn-run-cut" type="button" class="accent">Cut silences</button>
-        <button id="btn-cancel-cut" type="button" class="utility">Cancel</button>
-      </div>
+      <div id="cut-options" class="scripts" hidden><button id="btn-run-cut" type="button" hidden></button><button id="btn-cancel-cut" type="button" hidden></button></div>
       <div id="caption-options" class="scripts" hidden>
         <label>words per caption <input id="cap-words" type="number" value="4" min="1" max="20" style="width:3.6em"></label>
         <label>lines <input id="cap-lines" type="number" value="1" min="1" max="3" style="width:3em"></label>
@@ -220,6 +211,19 @@
           <label title="Before the first edit on a sequence, duplicate it inside the project as '<name> [Claude]' and edit the copy. The original stays untouched."><input id="dup-sequence" type="checkbox" checked>Edit a duplicate sequence, never the original</label>
           <label title="On: scripts that edit the project wait for your click. Off: they run without asking. Actions Cmd+Z can't undo always ask."><input id="ask-scripts" type="checkbox" checked>Ask before running scripts that edit the project</label>
           <label title="Off: edits run directly inside Premiere; undo them with Cmd+Z. On: the project is saved and copied to _claude-for-adobe_checkpoints before every mutating script."><input id="require-checkpoint" type="checkbox">Save a file checkpoint before every edit</label>
+        </section>
+
+        <section>
+          <h2>Cut silences</h2>
+          <div class="row">
+            <select id="cut-method" title="Voice: a bundled voice model finds speech; the accurate method (Apple Silicon). Level: uses Premiere's waveform and cuts below the clip's noise floor; works on any Mac.">
+              <option value="vad">by voice</option>
+              <option value="db">by level (dB)</option>
+            </select>
+            <label>min <input id="min-silence" type="number" value="0.3" step="0.05" min="0.1" style="width:4em"> s</label>
+            <label>pad <input id="pad" type="number" value="0.05" step="0.01" min="0" style="width:4em"> s</label>
+          </div>
+          <p class="muted">The Cut silences button uses these. Camera-raw clips (BRAW, R3D) always use Premiere's waveform.</p>
         </section>
 
         <section>

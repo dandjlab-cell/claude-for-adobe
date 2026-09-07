@@ -2043,9 +2043,8 @@ async function runCaptionsButton() {
 ui.btnCaptions.onclick = () => toggleCaptionOptions();
 ui.btnMakeCaptions.onclick = runCaptionsButton;
 ui.btnCancelCaptions.onclick = () => toggleCaptionOptions(false);
-ui.btnCut.onclick = () => toggleCutOptions();
-ui.btnCancelCut.onclick = () => toggleCutOptions(false);
-ui.btnRunCut.onclick = () => { toggleCutOptions(false); runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level")); };
+// One click: the method and thresholds live in Settings (the options strip is gone; the hidden run/cancel buttons keep old references harmless).
+ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
 ["cutMethod", "minSilence", "pad"].forEach((k) => { try { const v = localStorage.getItem("cut." + k); if (v) ui[k].value = v; } catch (_) {} ui[k].onchange = () => { try { localStorage.setItem("cut." + k, ui[k].value); } catch (_) {} }; });
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }
