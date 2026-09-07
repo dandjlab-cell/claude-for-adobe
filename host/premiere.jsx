@@ -1090,8 +1090,22 @@ var PCX = (function () {
     if (!(t >= 0 && t < s.videoTracks.numTracks)) return "ERR:no V" + a.track;
     var tr = s.videoTracks[t], qt = null; try { qt = q.getVideoTrackAt(t); } catch (e1) {}
     if (!qt) return "ERR:no QE track V" + a.track;
-    var fx = null; try { fx = qe.project.getVideoTransitionByName(String(a.name), true); } catch (e2) {}
-    if (!fx || !fx.name) return "ERR:no video transition named " + a.name + " (names: surface-26.3.2.md)";
+    // getVideoTransitionByName(name) takes the display name; (name, true) takes the match name, and returns an
+    // empty QEVideoTransition rather than null when it misses (2026-09-07: "Morph Cut" with true came back
+    // nameless). Try both, accept only an object that has a name.
+    var MATCH = { "Morph Cut": "AE.ADBE MorphCut", "Cross Dissolve": "AE.ADBE Cross Dissolve New", "Dip to Black": "AE.ADBE Dip To Black", "Dip to White": "AE.ADBE Dip To White" };
+    var fx = null, cands = [String(a.name)];
+    if (MATCH[String(a.name)]) cands.push(MATCH[String(a.name)]);
+    for (var ci = 0; ci < cands.length && !fx; ci++) {
+      var f1 = null; try { f1 = qe.project.getVideoTransitionByName(cands[ci]); } catch (e2a) {}
+      if (f1 && f1.name) { fx = f1; break; }
+      var f2 = null; try { f2 = qe.project.getVideoTransitionByName(cands[ci], true); } catch (e2b) {}
+      if (f2 && f2.name) { fx = f2; break; }
+    }
+    if (!fx) {
+      var near = []; try { var all = qe.project.getVideoTransitionList(); var w = String(a.name).split(" ")[0].toLowerCase(); for (var ni = 0; ni < all.length; ni++) if (String(all[ni]).toLowerCase().indexOf(w) >= 0) near.push(all[ni]); } catch (e2c) {}
+      return "ERR:no video transition named " + a.name + (near.length ? " (similar: " + near.slice(0, 6).join(", ") + ")" : " (names: surface-26.3.2.md)");
+    }
     var fr = Math.max(1, Math.min(99, Math.round(num(a.frames) || 12)));
     var dur = "00:00:00:" + (fr < 10 ? "0" : "") + fr;
     // QE items in order, skipping Empty, align with ExtendScript clips by index (same walk as autoReframeClips).
