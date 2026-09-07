@@ -13,7 +13,7 @@ test("ledger answers visibility by lookup and grades every cut", () => {
   assert.strictEqual(L.cover.length, 40);
   assert.ok(Math.abs(visibleAt(L, 9).hidden - 0.5) < 0.03, "half hidden by the side-by-side");
   assert.strictEqual(visibleAt(L, 2).hidden, 0);
-  assert.strictEqual(L.cuts.length, 3, "V1 cut at 10 plus the b-roll edges at 8 and 12 change the picture");
+  assert.strictEqual(L.cuts.length, 3, "V1 cut at 10 plus the b-roll edges at 8 and 12; the sequence end at 20 is not a cut");
   const at10 = L.cuts.find((c) => c.t === 10);
   assert.ok(at10.hiddenBefore >= 0.45 && at10.hiddenAfter >= 0.45);
   assert.deepStrictEqual(at10.by, ["V2 broll 50%"]);

@@ -17,7 +17,9 @@ function buildLedger(snap, transforms, { base = "V1", step = 0.5, half = 0.25 } 
   // Every footage edge on every track is a cut worth grading (seams() only lists the ones that change the
   // picture in the binary model; here the fraction is the point).
   const edges = new Map();
-  rows.filter((c) => !c.graphic).forEach((c) => { [c.start, c.end].forEach((t) => { const k = Number(t.toFixed(2)); if (k > 0 && k < snap.duration) edges.set(k, (edges.get(k) || []).concat(c.track + " " + c.name)); }); });
+  // The head and the tail of the sequence are not cuts: anything within a frame of 0 or of the end is skipped.
+  const eps = 0.05;
+  rows.filter((c) => !c.graphic).forEach((c) => { [c.start, c.end].forEach((t) => { const k = Number(t.toFixed(2)); if (k > eps && k < snap.duration - eps) edges.set(k, (edges.get(k) || []).concat(c.track + " " + c.name)); }); });
   const cuts = [...edges.keys()].sort((a, b) => a - b).map((t) => {
     const before = coverAt(rows, W, H, base, t - half, hasAlpha), after = coverAt(rows, W, H, base, t + half, hasAlpha);
     return { t, edges: edges.get(t), hiddenBefore: Number(before.covered.toFixed(2)), hiddenAfter: Number(after.covered.toFixed(2)), maybeBefore: Number(before.possiblyCovered.toFixed(2)), maybeAfter: Number(after.possiblyCovered.toFixed(2)), by: [...new Set(before.by.concat(after.by).map((b) => b.track + " " + b.name + " " + Math.round(b.share * 100) + "%" + (b.kind === "alpha" ? " (alpha: may or may not hide)" : "") + (b.masked ? " (masked)" : "")))] };
