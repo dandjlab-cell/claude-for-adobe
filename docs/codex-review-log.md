@@ -174,3 +174,7 @@ Independent read-only Codex subagent review (`gpt-5.6-terra`), followed by re-re
 Findings resolved: document the existing macOS 15+/Apple Silicon binary floor; allow five minutes for the slow CPU smoke leg; stage the final one-thread changes before committing. Metal and bundled base library both use ggml 0.15.2; linkage is relocatable and strict code-sign verification passes. No remaining code blocker after staging.
 
 Validation: isolated GPU and CPU fallback produce identical 38-word text from 15 seconds of speech (1.390 s vs 122.452 s); VAD detects speech. Final production transcription of 387.9 seconds takes 35.226 s, returns 752 words without a transcript-cache hit, and logs `using MTL0 backend`. Full suite: 145 tests, 144 pass, 1 expected skip. The live `audio_cut` gate is still outstanding; this is not a release approval.
+
+## 2026-09-08: live cut fragment authoring follow-up
+
+Independent Terra read-only review approved the two `panel.js` prompt-string changes. The dynamic transcript handoff now requires complete answer thoughts, marks abandoned fragments as production, and checks kept meaning before apply. The tool description no longer claims code measures completeness. No planner/schema changes. Validation: `node --check panel.js`; full suite 145 total, 144 pass, one expected schema skip; `git diff --check` clean. Live report-only follow-up is recorded in the handoff; the release remains gated.
