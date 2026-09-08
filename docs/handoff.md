@@ -9,6 +9,19 @@
 
 ---
 
+## Current priority: foundations before orchestration (2026-09-08)
+
+**User direction:** transcription, silence cleanup and reliable 9:16 creation first. Story arc orchestration is separate; b-roll is parked. Do not resume the older b-roll next-step automatically.
+
+- Fixed a reproduced silence-planner deletion: `minKeep` merged adjacent silent ranges across a short detected response. A 200 ms response surrounded by silence became a cut covering the entire 5 s test. Removed absorption; detected sound now remains between independent padded cuts. Regression first failed, then passed. No host changes.
+- Actual 387.8875 s rendered PCM through peak-window detection and the planner: 165 loud intervals; padding .05 -> 85 cuts / 137.35 s; padding .18 -> 82 cuts / 115.56 s. Zero detected-sound overlap in either result. This is PCM verification, distinct from Premiere's `.pek` route.
+- Reloaded dev panel. Live BRAW waveform test on first 40 s: dry-run then apply on the normal safety duplicate, min silence 1 s / pad .18 s. **CHECK PASS**, six cuts, 387.89 -> 370.54 s (17.35 s removed, 17.58 planned); 1080x1920 retained, original assembly untouched. Report `chat-2026-09-08-18-24-24.md` beside the project. No ear check completed.
+- Vertical creation is numerically verified (1080x1920, two source clips, filled at 55.3% with face offsets). Panel frame inspection at 35/160/340 s reported no blank edges and tight headroom at 160 s. These are sampled checks, not full-clip tracking verification.
+- **Transcription timing blocker reproduced:** private `foundation-speech-gap.wav` = the same 15 s speech sample twice, separated by exactly 5 s of digital silence. Production Metal run 1.17 s / 74 words: no starts in 16-19 s, but word “pipeline.” spans **14.93-20.51 s**, across the silent gap. Native no-VAD experiment put multiple words inside the known silence; do not disable VAD as a fix. Native `-dtw large.v3.turbo -ojf` experiment also left that segment span unchanged and returned `t_dtw:-1` for inspected tokens. Neither experiment changed production settings.
+- Next foundation work: investigate native word alignment/VAD timeline remapping using that fixture and raw native JSON; keep the five-second known-silence invariant. Current output is monotonic but that is not proof of alignment: real transcript has 752 words, zero overlaps/negative durations, yet 57 words longer than one second. Do not use a fluent transcript or CHECK duration as proof of accurate word cuts. `src/whisper.cjs` comment now states the timing limitation.
+- Silence detection still has a deliberate 150 ms transient filter; it can miss a very short or interrupted soft utterance. The new fix preserves **detected** sound, not sound the detector missed. Listening to seams and actual words/numbers remains required before calling this foundation strong.
+- Dual audit (fresh Codex and Opus) both approved the silence-planner change. Full suite **146 total / 145 pass / 1 expected schema skip**. Release remains 0.1.77; no release authorization requested.
+
 ## Evening follow-up: Mac acceleration (2026-09-08)
 
 - The first live 9:16 attempt below timed out before `audio_cut`; the later accelerated retry and quality results are recorded in the next section. The abandoned CPU transcription was terminated after the editor switched projects. No release.
@@ -167,7 +180,7 @@ Private, per-machine notes in `~/.claude/projects/-Users-<you>-DevApps-claude-fo
 - Caption position is a Premiere track setting; the panel can create the track but not move the band.
 - Whisper cache key changed to `v4-whispercpp-fillers` (fillers kept); older caches recompute.
 - The user's Mac has a Homebrew ggml; the byte-patched `bin/libggml.0.dylib` is what keeps the bundled backends in use. Re-apply the patch when upgrading whisper.cpp.
-- One test skips offline: `test/whisper.test.cjs` fetches `https://schemas.adobe.com/transcript/v1.0.0`. A healthy full run is always **145 tests, 144 pass, 1 skip** (online or off; the skip is counted, not a failure). Any other number means something actually broke.
+- One test skips offline: `test/whisper.test.cjs` fetches `https://schemas.adobe.com/transcript/v1.0.0`. A healthy full run is now **146 tests, 145 pass, 1 skip** (online or off; the skip is counted, not a failure). Any other number means something actually broke.
 - `AGENTS.md` was rewritten on 2026-09-05 to point here; the old prototype-era version (SPEC.md, Codex app-server) is gone. `docs/handoff.md` is canonical.
 
 ## Quick Start for Next Session

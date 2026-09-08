@@ -178,3 +178,9 @@ Validation: isolated GPU and CPU fallback produce identical 38-word text from 15
 ## 2026-09-08: live cut fragment authoring follow-up
 
 Independent Terra read-only review approved the two `panel.js` prompt-string changes. The dynamic transcript handoff now requires complete answer thoughts, marks abandoned fragments as production, and checks kept meaning before apply. The tool description no longer claims code measures completeness. No planner/schema changes. Validation: `node --check panel.js`; full suite 145 total, 144 pass, one expected schema skip; `git diff --check` clean. Live report-only follow-up is recorded in the handoff; the release remains gated.
+
+## 2026-09-08: silence planner dual audit
+
+Fresh Codex and Opus cold-read the current silence-planner diff and source snapshot with the same real PCM execution packet. Both APPROVED, zero HIGH/CRITICAL findings. Codex additionally ran 10,000 deterministic interval checks. Opus confirmed both callers supply disjoint silences and no removed constant is imported. Its pre-existing 150 ms transient-filter limitation is recorded in the handoff; the fix claims preservation of detected sound only. Low findings: redundant sort and implicit disjoint-input precondition, neither affects current callers.
+
+Evidence: regression failed before removal of kept-island absorption (200 ms detected response swallowed by a five-second cut), then 7/7 silence tests passed. Full suite146/145pass/1skip. Real387.9sPCM: zero detected-sound overlaps at both tested paddings. Subsequent live Premiere first40s waveform apply on safety duplicate: CHECK PASS, six cuts,17.35sremoved,1080x1920 retained. Acoustic listening and precise Whisper word alignment are not verified; see handoff.

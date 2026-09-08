@@ -2,7 +2,8 @@
 // The model (~570 MB) is downloaded on first use into the user's cache, with progress, and reused after that.
 // Recipe mirrors VO Studio's: 16 kHz mono, VAD in front (bundled Silero) so silence never becomes words,
 // temperature 0 with no fallback, no context carried between segments. Word timing comes from whisper.cpp's
-// per-token timestamps (one word per segment), roughly tens of milliseconds.
+// word-sized segment timestamps. These are approximate: VAD remapping can stretch a word across silence;
+// they are not verified acoustic word boundaries.
 const { spawn } = require("node:child_process");
 // Async spawn so a minutes-long transcription never blocks the panel's event loop (the MCP reply, the UI).
 function run(bin, args, onStderr) {
