@@ -99,7 +99,7 @@ Restart Premiere, then **Window > Extensions > Claude for Premiere**. Chrome Dev
 `http://localhost:9295`.
 
 Requires Claude Code, logged in: the Claude desktop app is enough (the panel finds its bundled CLI under `~/Library/Application Support/Claude/claude-code/`), or the CLI at `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, or `$CLAUDE_PATH`.
-Apple Silicon only for the voice silence cutter and Whisper: `bin/` ships whisper.cpp (VAD + transcription) with its ggml libraries; the Whisper large-v3-turbo model (~570 MB) downloads once on first use into `~/Library/Caches/claude-for-adobe/models`; audio is extracted with macOS `afconvert` (ffmpeg only as a fallback for formats CoreAudio can't open).
+The bundled voice silence cutter and Whisper require Apple Silicon and macOS 15 or later. `bin/` ships whisper.cpp with Metal GPU acceleration and CPU fallback. The first GPU run compiles its shaders and can take longer; the Whisper large-v3-turbo model (~570 MB) downloads once on first use into `~/Library/Caches/claude-for-adobe/models`. Audio is extracted with macOS `afconvert` (ffmpeg only as a fallback for formats CoreAudio can't open). This distribution does not include Windows binaries or an installer. Premiere has no supported Linux version.
 Default model is Opus 5; the dropdown lists Fable 5.1, Opus 5, Sonnet 5, Haiku 4.5. If the chosen model isn't available on the account, the panel falls back to Sonnet 5 and says so.
 
 ## Use

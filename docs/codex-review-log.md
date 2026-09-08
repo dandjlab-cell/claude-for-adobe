@@ -166,3 +166,11 @@ Verdict: NOT APPROVED. 3 HIGH, 4 MEDIUM, 1 LOW.
 Verdict: **APPROVED.** H2, H3, M1, M2, M4 resolved. H1 partial (now MEDIUM): the `name`/`motion` parameter descriptions and `mechanisms.md` still advertised reframe from a bin; fixed after the verdict (parameters and the dead bin branch removed from `reframeTool`, `motion` description rewritten, mechanisms row points at rough_cut). M3 partial: cut-silences description said "confirm" and premiere-scripting said "before deciding how to do a job at all"; both fixed. L1 (Media Intelligence never-ask-twice) deferred on purpose. Codex's note on the budget: the 700-word test measures the shared base; Codex receives ~795 words with CODEX_NOTES, still short of any concern.
 
 **Final status:** prompt restructure ready for the dev panel; no release.
+
+## 2026-09-08 — Mac Metal acceleration
+
+Independent read-only Codex subagent review (`gpt-5.6-terra`), followed by re-review. Scope: Metal plugin, backend logging, one CPU thread for VAD/Whisper, smoke check and platform documentation. No installer, updater or host-script changes.
+
+Findings resolved: document the existing macOS 15+/Apple Silicon binary floor; allow five minutes for the slow CPU smoke leg; stage the final one-thread changes before committing. Metal and bundled base library both use ggml 0.15.2; linkage is relocatable and strict code-sign verification passes. No remaining code blocker after staging.
+
+Validation: isolated GPU and CPU fallback produce identical 38-word text from 15 seconds of speech (1.390 s vs 122.452 s); VAD detects speech. Final production transcription of 387.9 seconds takes 35.226 s, returns 752 words without a transcript-cache hit, and logs `using MTL0 backend`. Full suite: 145 tests, 144 pass, 1 expected skip. The live `audio_cut` gate is still outstanding; this is not a release approval.

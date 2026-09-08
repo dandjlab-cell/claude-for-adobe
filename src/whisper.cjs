@@ -120,11 +120,13 @@ async function transcribe(mediaPath, { language = "en", onLog = () => {}, onProg
   try {
     require("./vad.cjs").extractWav16k(mediaPath, wav);
     onLog("whisper: transcribing " + path.basename(mediaPath));
-    const args = ["-m", modelPath(), "-f", wav, "-l", language || "auto", "-t", String(Math.max(2, Math.min(8, os.cpus().length - 2))),
-      "--vad", "-vm", VAD_MODEL, "-vt", "0.5", "-ml", "1", "-sow", "-oj", "-of", outBase, "-np", "-pp", ...KNOBS];
+    // ponytail: one CPU thread avoids VAD's OpenMP barrier cost; Metal handles Whisper inference.
+    const args = ["-m", modelPath(), "-f", wav, "-l", language || "auto", "-t", "1",
+      "--vad", "-vm", VAD_MODEL, "-vt", "0.5", "-ml", "1", "-sow", "-oj", "-of", outBase, "-pp", ...KNOBS];
     // -pp prints "progress = NN%" on stderr as it goes: the only sign of life during a minutes-long transcription.
     let lastPct = -1;
     const r = await run(BIN, args, (chunk) => { const m = /progress\s*=\s*(\d+)%/g; let x, pct = null; while ((x = m.exec(chunk))) pct = Number(x[1]); if (pct !== null && pct !== lastPct) { lastPct = pct; try { onProgress({ transcribing: pct }); } catch (_) {} } });
+    for (const line of r.stderr.split("\n")) if (/^whisper_backend_init(?:_gpu)?: using /.test(line)) onLog(line);
     if (r.status !== 0) throw new Error("whisper failed: " + (r.stderr || r.stdout || "").trim().slice(-400));
     const json = JSON.parse(fs.readFileSync(outBase + ".json", "utf8"));
     const result = { words: wordsFromWhisperCpp(json), language: (json.result && json.result.language) || language || "en", model: current, knobs: KNOBS.join(" "), vad: true, createdAt: new Date().toISOString() };
