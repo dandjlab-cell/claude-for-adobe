@@ -73,3 +73,13 @@ test("seamVisible: b-roll over a cut hides it, graphics do not", () => {
   assert.strictEqual(seamVisible(open, "V1", 10).visible, true);
   assert.strictEqual(seamVisible(open, "V1", 20).visible, true);
 });
+
+test("analysis fingerprint notices source and trims beyond the first twelve clips", () => {
+  const { fingerprint } = require("../src/timeline.cjs");
+  const s = snap(Array.from({ length: 14 }, (_, i) => ({ id: String(i), track: "A1", name: "clip", start: i, end: i + 1, inPoint: 0, mediaPath: "/m/a.mov" })));
+  for (const [key, value] of [["inPoint", 5], ["end", 15], ["mediaPath", "/m/b.mov"]]) {
+    const changed = JSON.parse(JSON.stringify(s)); changed.clips[13][key] = value;
+    assert.notEqual(fingerprint(s), fingerprint(changed));
+  }
+  assert.equal(fingerprint(s), fingerprint(JSON.parse(JSON.stringify(s))));
+});

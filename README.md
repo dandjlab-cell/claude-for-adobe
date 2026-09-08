@@ -205,3 +205,7 @@ CSXS/manifest.xml       CEP manifest (PPRO 25+, --enable-nodejs --mixed-context)
 scripts/install.sh      symlink + debug mode
 scripts/probe-claude.cjs
 ```
+
+### Measured pauses for authored audio cuts
+
+The authored `audio_cut` pass measures pauses from a fresh timeline audio render, keeping the transcript words unchanged. It saves a separate `.silence.json` analysis file, uses measured pauses for delivery and cut-in checks, and moves edit boundaries to silence edges by at most four seconds. Cases beyond that limit are flagged for listening. The `silence_threshold_db` tool parameter adjusts the recording's silence floor (default -35 dB); it does not apply to the legacy no-thoughts mode.

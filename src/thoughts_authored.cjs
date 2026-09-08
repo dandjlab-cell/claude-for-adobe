@@ -5,6 +5,8 @@
 // of 0.3 s or more, no cut that removes only a second of silence, no span that keeps both attempts of a line.
 "use strict";
 
+const { snapSpan, pauseBefore } = require("./silence_map.cjs");
+
 const CRUMBS = new Set(["yeah", "yes", "yep", "okay", "ok", "cool", "great", "perfect", "right", "sure", "thanks", "thankyou"]);
 const CUT_IN_PAUSE = 0.3;   // 82% of editors' cut-ins follow a pause of at least this
 const CHEAP_CUT = 1.0;      // a cut removing only this much silence saves nothing and risks a pop: never made
@@ -31,7 +33,7 @@ function same(a, b) {
   if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
   return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
 }
-function findRestarts(rows) {
+function findRestarts(rows, silences) {
   const toks = rows.map((r) => norm(r.text));
   const out = [];
   let usedUntil = -1;
@@ -48,7 +50,7 @@ function findRestarts(rows) {
       if (between.length && between.length <= 3 && ["and", "or", "nor", "but", "so"].includes(toks[i])) continue;
       let startI = i, secondI = j;
       if (between.length) {
-        const phraseStart = (k) => { while (k > 0 && rows[k].start - rows[k - 1].end < 0.35 && rows[j].start - rows[k - 1].start <= 6) k--; return k; };
+        const phraseStart = (k) => { while (k > 0 && (silences !== undefined ? pauseBefore(rows[k].start, rows[k].start, silences) : rows[k].start - rows[k - 1].end) < 0.35 && rows[j].start - rows[k - 1].start <= 6) k--; return k; };
         const fs = phraseStart(i), ss = phraseStart(j);
         if (ss > fs && ss > i + length) { startI = fs; secondI = ss; }
         else if (between.length <= 3) { const changed = between.length; startI = Math.max(0, i - changed); secondI = Math.max(i + length, j - changed); }
@@ -91,25 +93,26 @@ const isOutlier = (pw, base) => Math.abs(z(pw.energyDb, base.energyDb)) >= 2.5 |
 
 // Qualify one thought: trim edge crumbs (only when acoustically outside the performance register), cut failed
 // restarts inside it, measure delivery. Returns { pieces: [{start,end,text}], restartCount, delivery, trimmed }.
-function qualify(words, thought, perWord, baseline) {
+function qualify(words, thought, perWord, baseline, silences) {
   let idx = thought.indices.slice();
   let trimmed = 0;
   const crumb = (i) => CRUMBS.has(norm(words[i].text)) && (!perWord || !baseline || isOutlier(perWord[i], baseline));
   for (let k = 0; k < 3 && idx.length > 1 && crumb(idx[0]); k++) { idx.shift(); trimmed++; }
   for (let k = 0; k < 3 && idx.length > 1 && crumb(idx[idx.length - 1]); k++) { idx.pop(); trimmed++; }
   const rows = idx.map((i) => words[i]);
-  const restarts = findRestarts(rows);
+  const restarts = findRestarts(rows, silences);
   const pieces = [];
   let cursor = 0;
   for (const r of restarts) {
     const first = rows.findIndex((w, i) => i >= cursor && w.start >= r.cutStart - 0.01);
     const second = rows.findIndex((w, i) => i >= Math.max(first, 0) && w.start >= r.cutEnd - 0.01);
-    if (first > cursor) pieces.push({ start: rows[cursor].start, end: rows[first - 1].end, text: rows.slice(cursor, first).map((w) => w.text).join(" ") });
+    if (first > cursor) pieces.push({ startIndex: idx[cursor], endIndex: idx[first - 1], rawStart: rows[cursor].start, start: rows[cursor].start, end: rows[first - 1].end, text: rows.slice(cursor, first).map((w) => w.text).join(" ") });
     cursor = second < 0 ? rows.length : second;
   }
-  if (cursor < rows.length) pieces.push({ start: rows[cursor].start, end: rows[rows.length - 1].end, text: rows.slice(cursor).map((w) => w.text).join(" ") });
-  const dur = Math.max(1e-9, rows[rows.length - 1].end - rows[0].start);
-  const pauses = rows.slice(1).map((w, i) => Math.max(0, w.start - rows[i].end));
+  if (cursor < rows.length) pieces.push({ startIndex: idx[cursor], endIndex: idx[idx.length - 1], rawStart: rows[cursor].start, start: rows[cursor].start, end: rows[rows.length - 1].end, text: rows.slice(cursor).map((w) => w.text).join(" ") });
+  const span = silences !== undefined ? snapSpan(rows[0].start, rows[rows.length - 1].end, silences) : { start: rows[0].start, end: rows[rows.length - 1].end };
+  const dur = Math.max(1e-9, span.end - span.start);
+  const pauses = silences !== undefined ? silences.map(s => Math.max(0, Math.min(s.end, span.end) - Math.max(s.start, span.start))).filter(n => n > 0) : rows.slice(1).map((w, i) => Math.max(0, w.start - rows[i].end));
   const delivery = { rateWps: rows.length / dur, pauseTotal: pauses.reduce((a, b) => a + b, 0), pauseCount: pauses.filter((p) => p >= 0.25).length, energyDb: perWord ? stats(idx.map((i) => perWord[i].energyDb)).median : null, f0: perWord ? stats(idx.map((i) => perWord[i].f0Median)).median : null };
   return { pieces, restartCount: restarts.length, restarts, delivery, trimmed };
 }
@@ -119,11 +122,11 @@ function fluency(q) { return [q.restartCount, q.delivery.pauseTotal, -q.delivery
 function moreFluent(a, b) { const fa = fluency(a), fb = fluency(b); for (let i = 0; i < 3; i++) { if (fa[i] !== fb[i]) return fa[i] < fb[i]; } return false; }
 
 // The plan: from validated thoughts, the ranges to keep and everything dropped with a reason, under the rules.
-function planFromThoughts(words, thoughts, { perWord } = {}) {
+function planFromThoughts(words, thoughts, { perWord, silences } = {}) {
   const answers = thoughts.filter((t) => t.kind === "answer");
   const baseline = perWord ? { energyDb: stats(answers.flatMap((t) => t.indices.map((i) => perWord[i].energyDb))), f0: stats(answers.flatMap((t) => t.indices.map((i) => perWord[i].f0Median))) } : null;
-  const qual = new Map(thoughts.map((t) => [t.id, qualify(words, t, perWord, baseline)]));
-  const drop = [], keep = [];
+  const qual = new Map(thoughts.map((t) => [t.id, qualify(words, t, perWord, baseline, silences)]));
+  const drop = [], keep = [], snapNotes = [];
   // take groups: a thought and everything that points at it (or at the same target)
   const groupOf = new Map();
   thoughts.forEach((t) => { const key = t.retake_of && thoughts.some((x) => x.id === t.retake_of) ? t.retake_of : t.id; if (!groupOf.has(key)) groupOf.set(key, []); groupOf.get(key).push(t); });
@@ -142,11 +145,15 @@ function planFromThoughts(words, thoughts, { perWord } = {}) {
     if (t.kind === "production") { drop.push({ id: t.id, start: t.start, end: t.end, text: t.text, reason: "production: between-take chatter" }); return; }
     if (t.dropReason) { drop.push({ id: t.id, start: t.start, end: t.end, text: t.text, reason: t.dropReason }); return; }
     q.restarts.forEach((r) => drop.push({ id: t.id, start: r.cutStart, end: r.cutEnd, text: r.phrase, reason: "failed restart inside the thought (first attempt cut, retake kept)" }));
-    q.pieces.forEach((p) => keep.push({ id: t.id, label: t.label, start: p.start, end: p.end, text: p.text, delivery: q.delivery }));
+    q.pieces.forEach((p) => {
+      const resolved = silences !== undefined ? snapSpan(p.start, p.end, silences) : { start: p.start, end: p.end, notes: [] };
+      snapNotes.push(...resolved.notes.map(n => t.id + ": " + n));
+      keep.push({ ...p, id: t.id, label: t.label, start: resolved.start, end: resolved.end, delivery: q.delivery });
+    });
   });
   keep.sort((a, b) => a.start - b.start);
   // ranges under the editors' rules
-  const ranges = [], notes = [];
+  const ranges = [], notes = snapNotes;
   keep.forEach((k) => {
     const r = { start: Math.max(0, k.start - PAD), end: k.end + PAD };
     const last = ranges[ranges.length - 1];
@@ -155,9 +162,10 @@ function planFromThoughts(words, thoughts, { perWord } = {}) {
       if (gap <= CHEAP_CUT) { last.end = Math.max(last.end, r.end); return; } // never a cut that removes only a second of silence
       if (gap <= PACING_REVIEW) { notes.push("pause of " + gap.toFixed(1) + "s kept before " + k.start.toFixed(2) + "s (1-2 s silences are a finishing decision, not a rough-cut cut)"); last.end = Math.max(last.end, r.end); return; }
     }
-    // cut-in after a pause: the previous word must end at least CUT_IN_PAUSE before this thought starts
-    const wi = words.findIndex((w) => w.start >= k.start - 1e-6);
-    if (wi > 0 && k.start - words[wi - 1].end < CUT_IN_PAUSE) notes.push("cut-in at " + k.start.toFixed(2) + "s follows only " + (k.start - words[wi - 1].end).toFixed(2) + "s of pause; editors cut in after 0.3 s or more: listen to this seam");
+    // Keep word provenance: a snapped boundary can move beyond that word's timestamp.
+    const wi = k.startIndex;
+    const pause = silences !== undefined ? pauseBefore(k.start, k.rawStart, silences) : (wi > 0 ? Math.max(0, k.start - words[wi - 1].end) : k.start);
+    if ((silences !== undefined || wi > 0) && pause < CUT_IN_PAUSE) notes.push("cut-in at " + k.start.toFixed(2) + "s follows only " + pause.toFixed(2) + "s of pause; editors cut in after 0.3 s or more: listen to this seam");
     ranges.push(r);
   });
   return { keep, drop, ranges, notes, problems: [] };

@@ -730,8 +730,7 @@ async function removePauses({ start_seconds = 0, end_seconds, min_pause_s = DEFA
 // Whisper large-v3-turbo on every audio clip's source in the active sequence. Cached per media file.
 // Also writes Premiere-format transcript JSON files for Text panel > Import transcript.
 // Premiere's transcript for the clips in range, as timestamped lines in sequence seconds. Read from the saved .prproj.
-// "duration|clipCount|firstStarts": enough to tell whether an analysis file still describes this timeline.
-function timelineFingerprint(snap) { return snap && !snap.error ? snap.duration.toFixed(2) + "|" + snap.clips.length + "|" + snap.clips.slice(0, 12).map((c) => c.start.toFixed(2)).join(",") : "?"; }
+const timelineFingerprint = require(path.join(extensionRoot, "src", "timeline.cjs")).fingerprint;
 
 // Exact transcript of the CURRENT cut: render the sequence audio (Premiere's 16 kHz mono preset), transcribe it.
 // Words are already in timeline time. Cached by timeline fingerprint next to the project.
@@ -1273,7 +1272,7 @@ async function transcriptIndex({ start_seconds = 0, end_seconds } = {}) {
 }
 
 // The thought-level audio cut: authored thoughts (validated, measured, ruled) or, without them, a split by pauses.
-async function audioCut({ thoughts, apply = false, gap_seconds, pad_seconds } = {}) {
+async function audioCut({ thoughts, apply = false, gap_seconds, pad_seconds, silence_threshold_db = -35 } = {}) {
   const card = addTool((apply ? "cut" : "plan") + "_thoughts" + (Array.isArray(thoughts) && thoughts.length ? " (" + thoughts.length + " authored)" : " (by pauses)"), "");
   let snap; try { snap = await readSnapshot(); if (snap.error) throw new Error(snap.error); } catch (error) { return err(card, error.message); }
   const tlw = freshTimelineWords(snap);
@@ -1282,9 +1281,28 @@ async function audioCut({ thoughts, apply = false, gap_seconds, pad_seconds } = 
     const A = require(path.join(extensionRoot, "src", "thoughts_authored.cjs"));
     const v = A.validateDraft(tlw.words, { thoughts });
     if (v.problems.length) return err(card, "the thoughts do not fit the transcript:\n" + v.problems.slice(0, 12).join("\n") + "\nFix the indices (transcript_index) and call again; nothing was cut.");
-    let perWord = null, deliveryNote = "no delivery data";
-    try { const wav = seqFile(".mix.wav"); const meta = JSON.parse(fs.readFileSync(seqFile(".mix.json"), "utf8")); if (fs.existsSync(wav) && meta.timeline === timelineFingerprint(snap)) { perWord = require(path.join(extensionRoot, "src", "prosody.cjs")).prosodyPerWord(wav, tlw.words); deliveryNote = "delivery measured per word from the timeline render"; } } catch (_) {}
-    const plan = A.planFromThoughts(tlw.words, v.thoughts, { perWord });
+    let perWord, silenceMap;
+    // ponytail: export each pass; the host snapshot cannot fingerprint audio gain/mute/effects.
+    const wav = seqFile(".silence.mix.wav");
+    try {
+      if (!Number.isFinite(silence_threshold_db) || silence_threshold_db < -100 || silence_threshold_db > 0) throw new Error("silence_threshold_db must be between -100 and 0");
+      const preset = wavPreset();
+      if (!preset) throw new Error("Premiere's mono 16 kHz WAV preset was not found");
+      if (fs.existsSync(wav)) fs.unlinkSync(wav);
+      setStatus("Measuring pauses from timeline audio…");
+      const exported = await host("exportSequenceAudio", wav, preset);
+      if (exported.indexOf("ERR:") === 0 || !fs.existsSync(wav)) throw new Error("audio render failed: " + exported);
+      const after = await readSnapshot();
+      if (timelineFingerprint(after) !== timelineFingerprint(snap)) throw new Error("timeline changed during audio render; retry the report");
+      silenceMap = require(path.join(extensionRoot, "src", "silence_map.cjs")).measureWav(wav, { noiseDb: silence_threshold_db });
+      if (Math.abs(silenceMap.duration - snap.duration) > .1) throw new Error("audio render duration does not match the sequence");
+      silenceMap.timeline = timelineFingerprint(snap);
+      silenceMap.audioSha256 = require("node:crypto").createHash("sha256").update(fs.readFileSync(wav)).digest("hex");
+      fs.writeFileSync(seqFile(".silence.json"), JSON.stringify(silenceMap));
+      perWord = require(path.join(extensionRoot, "src", "prosody.cjs")).prosodyPerWord(wav, tlw.words);
+    } catch (error) { return err(card, "Cannot measure pauses: " + error.message + "; nothing was cut."); }
+    const deliveryNote = "delivery from the timeline render; pauses measured from audio at " + silence_threshold_db + " dB (" + silenceMap.silences.length + " silences); edit boundaries snapped up to 4 s; raw words unchanged";
+    const plan = A.planFromThoughts(tlw.words, v.thoughts, { perWord, silences: silenceMap.silences });
     const text = A.report(plan) + (v.uncovered.length ? "\nUnassigned words (" + v.uncovered.length + "): " + v.uncovered.slice(0, 20).join(",") + (v.uncovered.length > 20 ? "…" : "") + " (not kept; assign them if they belong to a thought)" : "") + "\n(" + v.thoughts.length + " authored thoughts; " + deliveryNote + ")";
     if (!apply || !plan.ranges.length) { card.done(text, true); return { text: text + (plan.ranges.length ? "\naudio_cut with the same thoughts and apply: true makes this cut as one keep_only." : "") }; }
     const res = await keepOnly({ ranges: plan.ranges.map((r) => [r.start, r.end]), dry_run: false });
@@ -2187,7 +2205,7 @@ const TOOL_DEFS = [
   { name: "transcript_index", description: "The exact timeline transcript as indexed words (index:word, with a time at the start of each line), the input for authoring thoughts: group every word into thoughts by word_start_i / word_end_i, label what was said, kind answer or production, retake_of when a thought says the same thing as an earlier one. Then audio_cut with those thoughts.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" } }, required: [] } },
   { name: "audio_cut", description: "The audio cut at the level of thoughts, one pass: the transcript is split into thoughts, fragments and false starts are dropped whole, the losing take of a repeated line is dropped whole (delivery measured from the timeline render, among complete answers you author), every complete thought is kept in order with a little air on each side, and the cut lands only between thoughts; the one cut inside a thought is a failed restart (first attempt out, retake kept). Report first (kept thoughts numbered with times and text, dropped ones with reasons); apply: true does it as one keep_only. Needs a transcript for this exact timeline (rough_cut and transcribe_timeline make it).",
-    inputSchema: { type: "object", properties: { thoughts: { type: "array", description: "authored thoughts from transcript_index: [{id, word_start_i, word_end_i, label, kind: 'answer'|'production', retake_of}] covering every word; without it the split is by pauses alone, which is cruder", items: { type: "object" } }, apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "fallback split: pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "fallback split: air on each side of a thought, default 0.18" } }, required: [] } },
+    inputSchema: { type: "object", properties: { silence_threshold_db: { type: "number", minimum: -100, maximum: 0, description: "For authored thoughts: audio silence floor in dBFS, default -35. Adjust for the recording; pauses come from a fresh timeline render. The legacy no-thoughts mode does not use this setting." }, thoughts: { type: "array", description: "authored thoughts from transcript_index: [{id, word_start_i, word_end_i, label, kind: 'answer'|'production', retake_of}] covering every word; without it the split is by pauses alone, which is cruder", items: { type: "object" } }, apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "fallback split: pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "fallback split: air on each side of a thought, default 0.18" } }, required: [] } },
   { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Fixed order: (1) a new sequence at the shape from the talking-head bin, footage filled and centred on the face, NO tracking; (2) the timeline rendered and transcribed (Whisper), one exact transcript every step shares; (3) the transcript handed back as indexed words. Then YOU author the thoughts (every word in exactly one thought, in order, labelled, kind answer/production, retake_of for repeats; no winners) and call audio_cut with them: the code validates, measures delivery, picks takes by fluency, cuts failed restarts inside a thought, trims crumbs, and otherwise cuts only between thoughts under the editors' rules. Then the story with keep_only on whole thoughts, place_broll, reframe (no bin) once.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path of the talking-head footage; default the selected bin" }, aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9" }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, name: { type: "string" }, language: { type: "string", description: "for Whisper, default en" } }, required: [] } },
   { name: "find_takes", description: "Repeated takes from the transcript: a line said, stumbled, said again. Groups near-duplicate utterances within a window and picks the most complete take (most content words, fewest fillers, finished ending; later on a tie). Returns the groups with times and the ranges to drop; with apply: true it removes the dropped takes (working copy, one Cmd+Z step per range). Run after remove_silences and before story decisions; the transcript must exist (Premiere's or transcribe_timeline).",

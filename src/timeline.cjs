@@ -119,3 +119,11 @@ function seams(snap, eps = 0.04) {
 }
 
 module.exports = { summarizeChanges, COL, ROW, TICKS, diffSnapshots, formatSnapshot, parseSnapshot, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams, seamVisible };
+
+// v2 invalidates legacy duration/first-12-start keys. Audio effects are not in the snapshot;
+// silence maps are always measured from a fresh export, never reused by this key alone.
+function fingerprint(s) {
+  if (!s || s.error) return "?";
+  return "v2:" + require("node:crypto").createHash("sha256").update(JSON.stringify({ version: 2, id: s.id, width: s.width, height: s.height, duration: s.duration, clips: s.clips.map(c => [c.id, c.track, c.start, c.end, c.inPoint, c.mediaPath, c.kind]) })).digest("hex");
+}
+module.exports.fingerprint = fingerprint;
