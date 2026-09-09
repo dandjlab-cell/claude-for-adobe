@@ -469,6 +469,35 @@ var PCX = (function () {
     return rows.join(ROW);
   }
 
+  // Placement follows the source items for both selected clips and selected bins.
+  function sequenceHome(items) {
+    var root = app.project.rootItem;
+    function ancestors(item) {
+      var out = [], p = parentBinOf(item.nodeId);
+      while (p) { out.unshift(p); if (p.nodeId === root.nodeId) break; p = parentBinOf(p.nodeId); }
+      return out;
+    }
+    var common = ancestors(items[0]);
+    for (var i = 1; i < items.length && common.length; i++) {
+      var other = ancestors(items[i]), n = 0;
+      while (n < common.length && n < other.length && common[n].nodeId === other[n].nodeId) n++;
+      common.length = n;
+    }
+    var scope = common.length ? common[common.length - 1] : root, home = scope;
+    if (/^(?:[0-9]+[ ._-]*)?(?:talking[ _-]*head|b[ _-]*roll|footage|media|rushes)$/i.test(String(home.name))) home = parentBinOf(home.nodeId) || root;
+    while (scope) {
+      var matches = [];
+      for (var k = 0; k < scope.children.numItems; k++) {
+        var c = scope.children[k];
+        if (c.type === 2 && /^(?:[0-9]+[ ._-]*)?(?:sequences?|timelines?|cuts?|edits?)$/i.test(String(c.name))) matches.push(c);
+      }
+      if (matches.length) return matches.length === 1 ? matches[0] : home;
+      if (scope.nodeId === root.nodeId) break;
+      scope = parentBinOf(scope.nodeId);
+    }
+    return home;
+  }
+
   // New sequence from a bin's clips (Premiere matches the first clip's settings), optional size/rate override.
   // Returns id|name|WxH@fps. Undo: Cmd+Z (a project action).
   function createSequenceFromBin(binPath, name, width, height, fps, insertClips, selectedOnly) {
@@ -488,10 +517,7 @@ var PCX = (function () {
     })(bin, /b[\s_-]?roll|cutaway/i.test(String(bin.name || "")));
     if (!items.length) return "ERR:no media in " + (selectedOnly === "true" ? "the Project panel selection" : (binPath || "root")) + (brollSkipped ? " apart from " + brollSkipped + " b-roll clip(s), which are placed with place_broll, not laid on V1" : "");
     var s = null;
-    // The new sequence lives in the PARENT of the footage bin (next to "TALKING HEAD" and "BROLL"), never inside
-    // one of them; a bin at the root puts it at the root.
-    var home = app.project.rootItem;
-    if (binPath && binPath.indexOf("/") >= 0) { try { var ph = binByPath(binPath.substring(0, binPath.lastIndexOf("/")), false); if (ph) home = ph; } catch (eH) {} }
+    var home = sequenceHome(items);
     try { s = app.project.createNewSequenceFromClips(uniqueSequenceName(name), items, home); } catch (e) { return "ERR:" + e; }
     if (!s) return "ERR:could not create the sequence";
     if (insertClips === "false") {

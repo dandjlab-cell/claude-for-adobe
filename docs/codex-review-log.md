@@ -214,3 +214,9 @@ Independent Terra exploration confirmed selectedBinPaths ignores individual clip
 Live dev-panel check: nine individually selected Project clips, no active sequence, classify_clips succeeded in 9 seconds and listed exactly nine. A 9:16 two-stage run then created distinct Cleanup/Editorial sequences and transcribed Editorial. Initial cleanup protected all sources because Premiere had not generated peaks yet; no silence-removal success claimed for that pass. Waveform-ready rerun is being verified separately.
 
 Live waveform-ready follow-up: 131 extracts passed duration checks, Cleanup 1223.18 -> 884.84 seconds with all nine sources retained; native Editorial clone matched geometry. One authorized Editorial-only keep_only removed a wholly quiet 12.43-second source clip, leaving 872.41 seconds and no extra working copy. Afterward Cleanup's freshly computed SHA-256 timeline fingerprint exactly matched its pre-edit stage fingerprint. All checks used the dev panel; no direct external host mutation. Source listening and old source-specific audio_cut criteria remain unevaluated by this test; no release.
+
+## 2026-09-09: source-local sequence placement
+
+Independent read-only Terra host review APPROVED the actual-source common-ancestor placement helper, source-bin lifting, nearest unambiguous dedicated sequence bin selection, both creation routes, and existing clone placement. Reviewer ran all 8 host tests. No concrete regression found.
+
+Regression failed before implementation; final suite 172 tests / 171 pass / 1 online Adobe schema skip. Live dev-panel creation from one directly selected clip placed an empty 9:16 sequence in its footage folder, confirmed by native projectItem.treePath. Empty test removed; existing user Cleanup/Editorial pair moved to the same folder and confirmed by full Project tree. Editorial duration remained 4:15:03. Dedicated-bin and ambiguity cases are unit-tested, not separately exercised live. No release.

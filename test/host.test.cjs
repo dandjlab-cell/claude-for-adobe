@@ -95,3 +95,27 @@ test("selected project clips can be inspected and assembled without an active se
   app.getCurrentProjectViewSelection=()=>[];laid=null;
   assert.match(context.PCX.createSequenceFromBin("","Empty","","","","true","true"),/^ERR:/);assert.equal(laid,null);
 });
+
+test("sequence placement follows footage and reuses a nearby sequences bin",()=>{
+  const vm=require("node:vm");
+  const bin=(name,children=[])=>{children.numItems=children.length;return {type:2,nodeId:name,name,children};};
+  const a={type:1,nodeId:"a",name:"a",getMediaPath:()=>"/a.mov"},b={type:1,nodeId:"b",name:"b",getMediaPath:()=>"/b.mov"};
+  function run(root,selected,binPath="",selectedOnly="true"){
+    const sequences=[];sequences.numSequences=0;let home;
+    const project={rootItem:root,sequences,openSequence(){},createNewSequenceFromClips(name,items,dest){home=dest;return {sequenceID:"new",name,getSettings:()=>({videoFrameWidth:1080,videoFrameHeight:1920})};}};
+    const ctx=vm.createContext({app:{project,getCurrentProjectViewSelection:()=>selected}});vm.runInContext(fs.readFileSync(path.join(__dirname,"..","host","premiere.jsx"),"utf8"),ctx);
+    assert.ok(!ctx.PCX.createSequenceFromBin(binPath,"Placement","","","","true",selectedOnly).startsWith("ERR:"));return home;
+  }
+  let shoot=bin("Shoot",[a,b]),root=bin("root",[shoot]);
+  assert.equal(run(root,[a,b]),shoot);
+  const sequences=bin("01_SEQUENCES");shoot=bin("Shoot",[a,b,sequences]);root=bin("root",[shoot]);
+  assert.equal(run(root,[a,b]),sequences);
+  const heads=bin("TALKING HEAD",[a]),other=bin("Other camera",[b]),cuts=bin("1_CUTS");
+  shoot=bin("Shoot",[heads,other,cuts]);root=bin("root",[shoot,bin("Other shoot",[bin("Sequences")])]);
+  assert.equal(run(root,[a,b]),cuts);
+  assert.equal(run(root,[],"Shoot/TALKING HEAD","false"),cuts);
+  shoot=bin("Shoot",[heads]);root=bin("root",[shoot]);
+  assert.equal(run(root,[a]),shoot);
+  shoot=bin("Shoot",[a,bin("Sequences"),bin("Cuts")]);root=bin("root",[shoot]);
+  assert.equal(run(root,[a]),shoot); // Ambiguous destinations never pick an arbitrary bin.
+});

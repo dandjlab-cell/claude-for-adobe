@@ -9,6 +9,14 @@
 
 ---
 
+## Sequence folder placement (2026-09-09 late)
+
+- Direct selected clips previously created sequences at project root; the old explicit-bin route only used a path parent. Both now derive the destination from the actual source items: common containing folder, beside source-only bins, preferring the nearest unambiguous Sequences/Timelines/Cuts/Edits bin (including numbered names). Unrelated shoot bins are not searched; ambiguous destinations fall back to the source home. Native Editorial cloning already preserves its parent.
+- Regression failed before the fix, then all 8 host tests passed. Independent Terra host review APPROVED. Full suite: 172 tests / 171 pass / 1 Adobe online schema skip.
+- Live reloaded dev-panel check: one directly selected source, no explicit bin, created an empty 1080x1920 sequence. Native projectItem.treePath confirmed it was inside the source footage folder, not project root. Removed only this empty test afterward. Moved the current user-created Cleanup/Editorial pair into that verified folder using move_to_bin; full Project tree confirmed both. Editorial remained active at 4:15:03; no timeline contents were edited. Project saved; chat evidence stays beside the project.
+- User workflow feedback: an under-45-second request produced a 4:15 intermediate Editorial cut. The current edit-footage skill still orders broad take cleanup before story selection. For a duration-bound request, choose the coherent short story earlier and verify dialogue boundaries before applying broad editorial cleanup; final tracking/frame/continuity checks belong on surviving footage. This orchestration correction is not implemented by the folder-placement fix. The full Cleanup baseline remains useful and separate.
+- No merge or release; the existing audio_cut MUST/SHOULD gate remains outstanding.
+
 ## Selected clips startup fix (2026-09-09 evening)
 
 - Screenshot reproduced: classify_clips returned `ERR:no active sequence` with nine selected Project clips. Cause: only selected bins were routed; direct clips fell through to timeline inspection. Added exact selected-media collection to existing host binMedia/createSequenceFromBin via optional selectedOnly flag. Direct clips take precedence over selected bins; explicit bin still wins; empty selection cannot widen creation to project root.

@@ -10,7 +10,7 @@ Claude Code and Codex, inside Premiere Pro. Talk to it about your timeline, let 
 
 Click the folder you want to work on, then ask Claude to edit it. Tip: keep b-roll in a separate folder from the talking head; it helps Claude a lot. Edits go to a duplicate sequence, so your original is never touched. Like any Claude Code session, what Claude reads goes to Anthropic under your account.
 
-For a new video from a folder, the panel creates two sequences: **Cleanup** removes measured silences and sets the initial framing while retaining takes; **Editorial** starts as a native copy for take selection and story edits. Cleanup remains available for comparison.
+For a new video from a folder, the panel creates two sequences: **Cleanup** removes measured silences and sets the initial framing while retaining takes; **Editorial** starts as a native copy for take selection and story edits. Cleanup remains available for comparison. New sequences use the footage’s folder (beside source-only bins such as TALKING HEAD), preferring a nearby existing Sequences, Timelines, Cuts or Edits bin when there is one clear match.
 
 **Codex instead of Claude:** pick it in the dropdown at the top. It needs the Codex CLI signed in (`npm i -g @openai/codex`, then `codex login`). Same tools, same rules, same skills; what Codex reads goes to OpenAI under your account.
 
