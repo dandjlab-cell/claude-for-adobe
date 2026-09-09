@@ -79,11 +79,20 @@ var PCX = (function () {
     return walk(app.project.rootItem);
   }
 
+  function uniqueSequenceName(name) {
+    var used = {}, ss = app.project.sequences;
+    for (var i = 0; i < ss.numSequences; i++) used[String(ss[i].name)] = true;
+    var candidate = name, n = 2;
+    while (used[candidate]) { candidate = name + " v" + n; n++; }
+    return candidate;
+  }
+
   // Duplicate the active sequence next to the original, rename it, make it active. Returns id|name.
   function cloneActive(newName) {
     var p = app.project;
     var s = seq();
     if (!s) return "ERR:no active sequence";
+    newName = uniqueSequenceName(newName);
     var ids = {};
     for (var i = 0; i < p.sequences.numSequences; i++) ids[p.sequences[i].sequenceID] = 1;
     if (!s.clone()) return "ERR:clone failed";
@@ -115,7 +124,8 @@ var PCX = (function () {
 
   // Premiere's own Extract per range (ranges: [[startSec, endSec], ...] in descending order), all
   // tracks targeted and sync-locked so linked video+audio go together. One History step per range.
-  function extractRanges(json) {
+  function extractRanges(json, expectedSnapshot) {
+    if (expectedSnapshot && snapshot() !== expectedSnapshot) return "ERR:timeline changed before extraction; nothing cut";
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var q = null;
@@ -415,9 +425,26 @@ var PCX = (function () {
     return out.join("\n");
   }
 
+  // A temporary collection containing only directly selected media, never their siblings.
+  function selectedMediaCollection() {
+    var items = [], selected = null;
+    try { selected = app.getCurrentProjectViewSelection(); } catch (e) {}
+    if (!selected || !selected.length) {
+      try { var ids = app.getProjectViewIDs(); for (var v = 0; ids && v < ids.length; v++) { var pick = app.getProjectViewSelection(ids[v]); if (pick && pick.length) { selected = pick; break; } } } catch (e2) {}
+    }
+    for (var i = 0; selected && i < selected.length; i++) {
+      var c = selected[i], mp = "";
+      if (c.type === 2) continue;
+      try { mp = c.getMediaPath(); } catch (e3) {}
+      if (mp) items.push(c);
+    }
+    items.numItems = items.length;
+    return { name: "", children: items };
+  }
+
   // Media inside a bin (nested bins included): name, path, video info, timebase, per item.
-  function binMedia(binPath, withMeta) {
-    var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
+  function binMedia(binPath, withMeta, selectedOnly) {
+    var bin = selectedOnly === "true" ? selectedMediaCollection() : (binPath ? binByPath(binPath, false) : app.project.rootItem);
     if (!bin) return "ERR:no bin " + binPath;
     var rows = [];
     var meta0 = withMeta === "false" ? function () { return ""; } : null;
@@ -444,8 +471,8 @@ var PCX = (function () {
 
   // New sequence from a bin's clips (Premiere matches the first clip's settings), optional size/rate override.
   // Returns id|name|WxH@fps. Undo: Cmd+Z (a project action).
-  function createSequenceFromBin(binPath, name, width, height, fps, insertClips) {
-    var bin = binPath ? binByPath(binPath, false) : app.project.rootItem;
+  function createSequenceFromBin(binPath, name, width, height, fps, insertClips, selectedOnly) {
+    var bin = selectedOnly === "true" ? selectedMediaCollection() : (binPath ? binByPath(binPath, false) : app.project.rootItem);
     if (!bin) return "ERR:no bin " + binPath;
     // Clips in a bin named like b-roll are never laid on V1 with the talking head: they wait for place_broll.
     var items = [], brollSkipped = 0;
@@ -459,13 +486,13 @@ var PCX = (function () {
         items.push(c);
       }
     })(bin, /b[\s_-]?roll|cutaway/i.test(String(bin.name || "")));
-    if (!items.length) return "ERR:no media in " + (binPath || "root") + (brollSkipped ? " apart from " + brollSkipped + " b-roll clip(s), which are placed with place_broll, not laid on V1" : "");
+    if (!items.length) return "ERR:no media in " + (selectedOnly === "true" ? "the Project panel selection" : (binPath || "root")) + (brollSkipped ? " apart from " + brollSkipped + " b-roll clip(s), which are placed with place_broll, not laid on V1" : "");
     var s = null;
     // The new sequence lives in the PARENT of the footage bin (next to "TALKING HEAD" and "BROLL"), never inside
     // one of them; a bin at the root puts it at the root.
     var home = app.project.rootItem;
     if (binPath && binPath.indexOf("/") >= 0) { try { var ph = binByPath(binPath.substring(0, binPath.lastIndexOf("/")), false); if (ph) home = ph; } catch (eH) {} }
-    try { s = app.project.createNewSequenceFromClips(name, items, home); } catch (e) { return "ERR:" + e; }
+    try { s = app.project.createNewSequenceFromClips(uniqueSequenceName(name), items, home); } catch (e) { return "ERR:" + e; }
     if (!s) return "ERR:could not create the sequence";
     if (insertClips === "false") {
       try { for (var t = 0; t < s.videoTracks.numTracks; t++) { var tr = s.videoTracks[t]; for (var k = tr.clips.numItems - 1; k >= 0; k--) tr.clips[k].remove(false, false); }

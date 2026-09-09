@@ -323,8 +323,8 @@ async function ensureWorkingCopy() {
   if (!p.sequenceId) throw new Error("no active sequence");
   if (ownSequences.has(p.sequenceId)) return "";
   // A copy the editor renamed (no more "[Claude]") is theirs now: forget it, so the next edit gets a fresh copy.
-  if (workingCopies.has(p.sequenceId) && !/ \[Claude\]$/.test(p.sequence)) { workingCopies.delete(p.sequenceId); renderCopies(); log("working copy renamed by the editor, released: " + p.sequence); }
-  if (workingCopies.has(p.sequenceId) || / \[Claude\]$/.test(p.sequence)) return "";
+  if (workingCopies.has(p.sequenceId) && !/ \[Claude\](?: v\d+)?$/.test(p.sequence)) { workingCopies.delete(p.sequenceId); renderCopies(); log("working copy renamed by the editor, released: " + p.sequence); }
+  if (workingCopies.has(p.sequenceId) || / \[Claude\](?: v\d+)?$/.test(p.sequence)) return "";
   const existing = [...workingCopies.entries()].find(([, c]) => c.originalId === p.sequenceId);
   if (existing) {
     await host("openSequence", existing[0]);
@@ -565,7 +565,8 @@ async function analyzeAudio({ start_seconds = 0, end_seconds, window_ms = 100 })
 }
 
 // Shared apply step for both silence tools: duplicate first, then Premiere's Extract per range.
-async function applyCuts(card, cuts, dryRun, summary) {
+async function applyCuts(card, cuts, dryRun, summary, expectedSnapshot = null) {
+  if (expectedSnapshot && timelineFingerprint(await readSnapshot()) !== timelineFingerprint(expectedSnapshot)) return err(card, "timeline changed before cleanup; nothing cut");
   const plan = cuts.length ? cuts.slice().reverse().map((c) => c.start.toFixed(2) + "-" + c.end.toFixed(2) + "s").join(", ") : "none";
   if (dryRun || !cuts.length) {
     card.done("PLAN: " + summary + "\n" + plan, true);
@@ -579,6 +580,8 @@ async function applyCuts(card, cuts, dryRun, summary) {
   const BATCH = 1;
   let doneRanges = 0, ok = true, raw = "";
   const snapBefore = await readSnapshot().catch(() => ({ duration: NaN, error: "no snapshot" }));
+  if (expectedSnapshot && timelineFingerprint(snapBefore) !== timelineFingerprint(expectedSnapshot)) return err(card, "timeline changed before cleanup; nothing cut");
+  let expectedCut = expectedSnapshot;
   const durBefore = snapBefore.duration;
   const fpBefore = snapBefore.error ? "" : timelineFingerprint(snapBefore); // taken BEFORE any extract; the module timeline is refreshed by Premiere's events mid-cut and cannot be trusted for this
   const planned = cuts.reduce((s, c) => s + Math.max(0, Math.min(c.end, durBefore || c.end) - c.start), 0);
@@ -589,7 +592,12 @@ async function applyCuts(card, cuts, dryRun, summary) {
     const batch = ordered.slice(i, i + BATCH);
     setStatus("Cutting " + Math.min(i + batch.length, ordered.length) + " / " + ordered.length + " ranges…");
     card.progress(i, ordered.length, "cutting ");
-    raw = await host("extractRanges", JSON.stringify(batch.map((c) => [c.start, c.end])));
+    let boundRaw = "";
+    if (expectedCut) {
+      boundRaw = await host("snapshot");
+      if (timelineFingerprint(parseSnapshot(boundRaw)) !== timelineFingerprint(expectedCut)) { ok = false; raw = "timeline changed during cleanup; remaining cuts stopped"; break; }
+    }
+    raw = await host("extractRanges", JSON.stringify(batch.map((c) => [c.start, c.end])), boundRaw);
     // Every Extract the host performed, with what it asked for and what Premiere did, kept next to the project
     // and in the log: the evidence for any wipe is then already on disk.
     try { const tm = /TRACE\{([\s\S]*?)\}/.exec(raw); if (tm) { const lines = tm[1].split(" ;; "); fs.mkdirSync(analysisDir(), { recursive: true }); fs.appendFileSync(seqFile(".extract-trace.txt"), new Date().toISOString() + "\n" + lines.join("\n") + "\n"); lines.forEach((l) => log("extract " + l)); raw = raw.replace(tm[0], ""); } } catch (_) {}
@@ -600,7 +608,10 @@ async function applyCuts(card, cuts, dryRun, summary) {
     if (ok && Number.isFinite(durBefore)) {
       // Independent check from the panel side after every range: the timeline shortened by the ranges so far
       // and nothing else. The first mismatch stops the loop before it can compound.
-      const now = (await readSnapshot().catch(() => ({ duration: NaN }))).duration;
+      const current = await readSnapshot().catch(() => ({ duration: NaN }));
+      if (expectedCut && (current.error || current.id !== expectedSnapshot.id || !Number.isFinite(current.duration))) { ok = false; raw = "active sequence changed during cleanup; remaining cuts stopped"; break; }
+      expectedCut = expectedCut ? current : null;
+      const now = current.duration;
       const plannedSoFar = ordered.slice(0, i + 1).reduce((s, c) => s + (c.end - c.start), 0);
       if (Number.isFinite(now) && Math.abs((durBefore - now) - plannedSoFar) > (i + 1) * 0.05 + 0.1) {
         ok = false;
@@ -975,13 +986,15 @@ async function selectedBins() { try { const r = await host("selectedBinPaths"); 
 async function selectedBin() { return commonParent(await selectedBins()); }
 
 async function classifyClips({ bin = "" } = {}) {
-  if (!bin) bin = await selectedBin(); // the selected bin is the default; no need for Claude to name it
-  const card = addTool("classify_clips" + (bin ? " (bin: " + bin + ")" : ""), "");
+  const selected = bin ? "" : await host("binMedia", "", "true", "true");
+  if (!bin && !selected) bin = await selectedBin();
+  const sourceName = bin ? "bin " + bin : selected ? "selected Project clips" : "sequence " + (project.sequence || "");
+  const card = addTool("classify_clips (" + sourceName + ")", "");
   card.open();
   const byMedia = new Map();
   let footage = "";
-  if (bin) {
-    const raw = await host("binMedia", bin);
+  if (bin || selected) {
+    const raw = bin ? await host("binMedia", bin) : selected;
     if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
     const rows = raw ? raw.split("\u0003").map((r) => r.split("\u0002")) : [];
     rows.forEach(([name, mediaPath, , videoInfo, timebase, dur]) => { byMedia.set(mediaPath, { name, clipSeconds: parseDuration(dur), videoInfo, timebase }); });
@@ -1016,7 +1029,7 @@ async function classifyClips({ bin = "" } = {}) {
   rows.sort((a, b) => b.ratio - a.ratio);
   const seqNote = timeline && timeline.width ? " (active sequence " + timeline.width + "x" + timeline.height + ")" : "";
   const text = (footage ? "footage: " + footage + seqNote + "\n" : "") + formatClassification(rows) + "\n(speech % = seconds of detected speech / file length; 'look at a frame' = use preview_frames on that clip before deciding)";
-  writeAnalysis((bin ? bin.replace(/\//g, "_") : (project.sequence || "sequence")) + ".classification.md", "# Classification of " + (bin ? "bin " + bin : "sequence " + (project.sequence || "")) + "\n\n" + text + "\n");
+  writeAnalysis((bin ? bin.replace(/\//g, "_") : selected ? "selected-clips" : (project.sequence || "sequence")) + ".classification.md", "# Classification of " + sourceName + "\n\n" + text + "\n");
   card.done(text, true);
   setStatus("Thinking…");
   return { text };
@@ -1047,12 +1060,12 @@ function sizeFromAspect(aspect) {
   return a < b ? { width: 1080, height: even(1080 * b / a) } : a === b ? { width: 1080, height: 1080 } : { width: 1920, height: even(1920 * b / a) };
 }
 async function createSequence({ name = "", bin = "", width, height, fps, preset, aspect, insert_clips = true } = {}) {
-  if (!bin) bin = await selectedBin();
+  if (!bin && !await host("binMedia", "", "false", "true")) bin = await selectedBin();
   if (preset && SEQUENCE_PRESETS[preset]) ({ width = width, height = height } = SEQUENCE_PRESETS[preset]);
   if (!(width && height) && aspect) { const sz = sizeFromAspect(aspect); if (sz) ({ width, height } = sz); }
   const card = addTool("create_sequence " + (name || "(unnamed)"), "");
   if (!name) return err(card, "name is required");
-  const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false");
+  const raw = await host("createSequenceFromBin", bin, name, width ? String(width) : "", height ? String(height) : "", fps ? String(fps) : "", insert_clips ? "true" : "false", bin ? "false" : "true");
   if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
   const [id, seqName, size, laid, brollSkipped] = raw.split("|");
   if (id) ownSequences.add(id); // the panel made it: edits go straight on it, no working copy
@@ -1182,19 +1195,20 @@ async function focusFaces(track = 1) {
 
 // The rough cut as a script: fixed order, each step a tool that already exists, a stop only where judgement is
 // needed. A prompt can drift; this cannot.
-async function roughCut({ bin = "", aspect, preset, width, height, name = "", language = "en" } = {}) {
-  const card = addTool("rough_cut " + (bin || "(selected bin)") + " " + (aspect || preset || (width && height ? width + "x" + height : "")), "");
+async function roughCut({ bin = "", aspect, preset, width, height, name = "", language = "en", silence_threshold_db = -35, min_silence_s = 1, pad_s = .18 } = {}) {
+  const card = addTool("rough_cut " + (bin || "(selected footage)") + " " + (aspect || preset || (width && height ? width + "x" + height : "")), "");
   card.open();
   const steps = []; let snapAfter1 = null;
   const dur = async () => { const sn = await readSnapshot().catch(() => null); return sn && !sn.error ? sn.duration : NaN; };
   const first = (t) => String(t || "").replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "").split("\n").find((l) => l.trim()) || "";
   const stop = (why) => { const text = steps.concat(["STOPPED: " + why]).join("\n"); card.done(text, false); return { text, isError: true }; };
+  if (!Number.isFinite(silence_threshold_db) || silence_threshold_db < -100 || silence_threshold_db > 0 || !Number.isFinite(min_silence_s) || min_silence_s <= 0 || !Number.isFinite(pad_s) || pad_s < 0) return stop("invalid cleanup threshold, minimum silence or padding");
   // 1. the sequence at the shape, no tracking. The name is the macro's job: "<folder> <shape>".
   card.progress(0, 4, "sequence ");
-  if (!bin) bin = await selectedBin();
-  if (!bin) return stop("no bin: select the talking-head bin (or the folder holding it) in the Project panel, or pass bin");
-  if (!name) name = (bin.split("/").pop() || "cut") + " " + (aspect || preset || (width && height ? width + "x" + height : "9x16")).replace(/:/g, "x");
-  const r1 = await createSequence({ bin, name, aspect, preset, width, height, insert_clips: true });
+  if (!bin && !await host("binMedia", "", "false", "true")) bin = await selectedBin();
+  if (!bin) { const selected = await host("binMedia", "", "false", "true"); if (!selected || selected.indexOf("ERR:") === 0) return stop("select source clips or a talking-head bin in the Project panel, or pass bin"); }
+  if (!name) name = (bin.split("/").pop() || "Selected clips") + " " + (aspect || preset || (width && height ? width + "x" + height : "9x16")).replace(/:/g, "x");
+  const r1 = await createSequence({ bin, name: name + " Cleanup", aspect, preset, width, height, insert_clips: true });
   if (r1.isError) return stop("sequence: " + first(r1.text));
   // Fill the frame (a 16:9 or 4K shot in a 9:16 sequence must cover it), then centre each clip on the face.
   const fillRes = await fillFrame(1);
@@ -1202,7 +1216,62 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   const d1 = await dur();
   steps.push("1. Sequence: " + first(r1.text) + " (" + d1.toFixed(1) + "s). Fill: " + first(fillRes).slice(0, 120) + ". Face focus: " + faces.join("; ") + ". Tracking deferred to the end.");
   if (cancelRequested) return stop("stopped by the editor");
-  // 2. the timeline render (for Whisper and for delivery scoring), on the untouched sequence
+  // Technical cleanup uses audio evidence only. No words, take selection or story decisions here.
+  const C = require(path.join(extensionRoot, "src", "cleanup.cjs"));
+  let cleanup, editorial;
+  try {
+    const before = await readSnapshot();
+    const cleanupWav = seqFile(".cleanup.mix.wav"), presetPath = wavPreset();
+    if (!presetPath) throw new Error("could not find Premiere's WAV export preset");
+    fs.mkdirSync(analysisDir(), { recursive: true });
+    if (fs.existsSync(cleanupWav)) fs.unlinkSync(cleanupWav);
+    const rendered = await host("exportSequenceAudio", cleanupWav, presetPath);
+    if (cancelRequested) return stop("stopped by the editor");
+    if (rendered.indexOf("ERR:") === 0 || !fs.existsSync(cleanupWav)) throw new Error("cleanup audio render failed: " + rendered);
+    const evidence = await audioClipsIn(0, before.duration);
+    if (timelineFingerprint(evidence.snap) !== timelineFingerprint(before)) throw new Error("timeline changed during cleanup render");
+    const measured = require(path.join(extensionRoot, "src", "silence_map.cjs")).measureWav(cleanupWav, { noiseDb: silence_threshold_db });
+    if (Math.abs(measured.duration - before.duration) > .1) throw new Error("cleanup render duration does not match the sequence");
+    // Source peaks veto downmix cancellation; missing/quiet source evidence protects the whole clip.
+    const sourceEvidence = evidence.clips.map(c => {
+      let sound = [];
+      try {
+        if (c.pek && fs.existsSync(c.mediaPath)) sound = loudIntervals(peakWindows(parsePeakFile(c.pek), c.rate, c.inPoint, c.end - c.start, .1, c.start), .1, silence_threshold_db, 0)
+          .map(r => ({ start: Math.max(c.start, r.start), end: Math.min(c.end, r.end) })).filter(r => r.end > r.start);
+      } catch (_) {}
+      return { id: c.id, sound };
+    });
+    const plan = C.planCleanup(measured.silences.map(s => ({ start: s.start, end: Math.min(s.end, before.duration) })).filter(s => s.end > s.start), before, { minSilence: min_silence_s, pad: pad_s, sourceEvidence });
+    if (cancelRequested) return stop("stopped by the editor");
+    fs.writeFileSync(seqFile(".cleanup.json"), JSON.stringify({ ...measured, timeline: timelineFingerprint(before), audioSha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(cleanupWav)).digest("hex"), min_silence_s, pad_s, sourceEvidence, ...plan }));
+    const applied = await applyCuts(card, plan.cuts, false, "technical cleanup: measured silence only; preserve detected sound and every take", before);
+    if (applied.isError) return stop("technical cleanup: " + applied.text);
+    if (cancelRequested) return stop("stopped by the editor");
+    cleanup = await readSnapshot();
+    if (cleanup.error || cleanup.id !== before.id) throw new Error("active sequence changed during cleanup");
+    steps.push("2. Cleanup: \"" + cleanup.name + "\" [" + cleanup.id + "], " + cleanup.duration.toFixed(2) + "s; " + applied.text + (plan.protectedClips.length ? "\nProtected (missing or quiet source waveform): " + plan.protectedClips.join(", ") : "") + "\nNo take, filler or story decisions were made.");
+    // Direct native clone, not a guarded script: register it once so editorial tools do not clone again.
+    ownSequences.delete(cleanup.id);
+    let cloneId = "";
+    try {
+      const cloned = await host("cloneActive", name + " Editorial");
+      if (cloned.indexOf("ERR:") === 0) throw new Error(cloned);
+      const parts = cloned.split("|"); cloneId = parts[0];
+      await refreshProject();
+      if (cancelRequested) throw new Error("stopped by the editor after clone");
+      editorial = await readSnapshot();
+      if (!cloneId || cloneId === cleanup.id || editorial.id !== cloneId || project.sequenceId !== cloneId || !C.sameContents(cleanup, editorial)) throw new Error("Editorial clone does not match Cleanup clip geometry");
+      ownSequences.add(cloneId);
+      workingCopies.set(cloneId, { copyName: editorial.name, originalId: cleanup.id, originalName: cleanup.name });
+      renderCopies();
+      fs.writeFileSync(seqFile(".stages.json"), JSON.stringify({ cleanup: { id: cleanup.id, name: cleanup.name, fingerprint: timelineFingerprint(cleanup) }, editorial: { id: editorial.id, name: editorial.name, fingerprint: timelineFingerprint(editorial) } }));
+    } catch (error) {
+      await host("openSequence", cleanup.id); await refreshProject();
+      throw new Error(error.message + (cloneId ? "; created copy " + cloneId + " left for review" : "") + "; Cleanup reopened, nothing deleted");
+    }
+    steps.push("3. Editorial: \"" + editorial.name + "\" [" + editorial.id + "]; native copy matches Cleanup clip geometry. All editorial edits go here; Cleanup is preserved.");
+  } catch (error) { return stop(error.message); }
+  // Render the exact Editorial timeline for transcription; never reuse raw or cross-sequence timestamps.
   if (cancelRequested) return stop("stopped by the editor");
   card.progress(1, 4, "render ");
   snapAfter1 = await readSnapshot().catch(() => null);
@@ -1214,7 +1283,9 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
   if (!wavPresetPath) return stop("could not find Premiere's WAV export preset");
   setStatus("Rendering timeline audio…");
   const rendered = await host("exportSequenceAudio", wav, wavPresetPath);
+  if (cancelRequested) return stop("stopped by the editor");
   if (rendered.indexOf("ERR:") === 0 || !fs.existsSync(wav)) return stop("audio render failed: " + rendered.replace(/^ERR:/, ""));
+  if (timelineFingerprint(await readSnapshot()) !== timelineFingerprint(snapAfter1)) return stop("Editorial timeline changed during audio render");
   try { fs.writeFileSync(seqFile(".mix.json"), JSON.stringify({ timeline: timelineFingerprint(snapAfter1) })); } catch (_) {}
   // 3. the transcript, one exact timeline transcript every step shares. Premiere's own first (instant, when the
   // clips were transcribed in the Text panel and the project saved), else Whisper on the render, with progress.
@@ -1238,13 +1309,13 @@ async function roughCut({ bin = "", aspect, preset, width, height, name = "", la
     setStatus("Ready");
     transcriptFrom = "Whisper on the timeline render, " + r3.words.length + " words (transcribe in Premiere's Text panel and save to skip this next time)";
   }
-  steps.push("2. Transcript: " + transcriptFrom);
+  steps.push("4. Editorial transcript: " + transcriptFrom);
   // 4. hand over: the indexed transcript for the one model pass that must be recall-minded (author the thoughts)
   card.progress(3, 4, "index ");
   const idx = await transcriptIndex({});
   const d5 = await dur();
   const broll = /(\d+) clip\(s\) from a b-roll bin were NOT laid/.exec(r1.text || "");
-  const text = steps.join("\n") + "\n\nThe sequence is " + d5.toFixed(1) + "s, filled and centred, untouched by any cut. Original clips untouched." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW: author the thoughts from the indexed transcript below (every word in exactly one thought, in order; label what was said; kind answer or production; retake_of when a thought makes the same point as an earlier one, in the same words or in other words; do not pick winners), then audio_cut with thoughts (report), read it, then audio_cut with the same thoughts and apply: true. The code chooses takes by fluency and delivery, cuts failed restarts, trims crumbs, and cuts only between thoughts. After that: the story (which thoughts, what order, what length) with keep_only on whole thoughts, place_broll, reframe (no bin) once.\n\n" + String(idx.text || "");
+  const text = steps.join("\n") + "\n\nTwo sequences: Cleanup keeps every detected spoken take after silence-only cleanup and initial framing. Editorial is active at " + d5.toFixed(1) + "s, ready for decisions. Original clips untouched." + (broll ? "\nB-roll: " + broll[1] + " clip(s) in a b-roll bin were kept out; place_broll after the story." : "") + "\n\nNOW: work only on Editorial. Author thoughts from the indexed transcript below (every word in exactly one thought, in order; label what was said; kind answer or production; retake_of for the same point, including paraphrases; do not pick winners), then audio_cut with thoughts (report), review meaning, then audio_cut with the same thoughts and apply: true. Take choices, failed restarts, fillers and story cuts belong only here. After that: story length/order with keep_only, place_broll, final reframe tracking once, captions last. Never run another silence pass or edit Cleanup for editorial choices.\n\n" + String(idx.text || "");
   card.done(steps.join("\n") + "\n-> transcript indexed; author the thoughts next", true);
   return { text };
 }
@@ -2206,8 +2277,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" } }, required: [] } },
   { name: "audio_cut", description: "The audio cut at the level of thoughts, one pass: the transcript is split into thoughts, fragments and false starts are dropped whole, the losing take of a repeated line is dropped whole (delivery measured from the timeline render, among complete answers you author), every complete thought is kept in order with a little air on each side, and the cut lands only between thoughts; the one cut inside a thought is a failed restart (first attempt out, retake kept). Report first (kept thoughts numbered with times and text, dropped ones with reasons); apply: true does it as one keep_only. Needs a transcript for this exact timeline (rough_cut and transcribe_timeline make it).",
     inputSchema: { type: "object", properties: { silence_threshold_db: { type: "number", minimum: -100, maximum: 0, description: "For authored thoughts: audio silence floor in dBFS, default -35. Adjust for the recording; pauses come from a fresh timeline render. The legacy no-thoughts mode does not use this setting." }, thoughts: { type: "array", description: "authored thoughts from transcript_index: [{id, word_start_i, word_end_i, label, kind: 'answer'|'production', retake_of}] covering every word; without it the split is by pauses alone, which is cruder", items: { type: "object" } }, apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "fallback split: pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "fallback split: air on each side of a thought, default 0.18" } }, required: [] } },
-  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Fixed order: (1) a new sequence at the shape from the talking-head bin, footage filled and centred on the face, NO tracking; (2) the timeline rendered and transcribed (Whisper), one exact transcript every step shares; (3) the transcript handed back as indexed words. Then YOU author the thoughts (every word in exactly one thought, in order, labelled, kind answer/production, retake_of for repeats; no winners) and call audio_cut with them: the code validates, measures delivery, picks takes by fluency, cuts failed restarts inside a thought, trims crumbs, and otherwise cuts only between thoughts under the editors' rules. Then the story with keep_only on whole thoughts, place_broll, reframe (no bin) once.",
-    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path of the talking-head footage; default the selected bin" }, aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9" }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, name: { type: "string" }, language: { type: "string", description: "for Whisper, default en" } }, required: [] } },
+  { name: "rough_cut", description: "ONE call for 'make me a 9:16 (4:5, 16:9, 1:1) video from this folder'. Fixed order: (1) a uniquely named Cleanup sequence at the shape, footage filled and centred on the face, NO tracking; measured silence removed with source waveform vetoes, preserving takes and detected sound; (2) a native Editorial duplicate, verified against Cleanup clip geometry; (3) only Editorial rendered and transcribed, returned as indexed words. Keep Cleanup intact. All take and story decisions go on Editorial. Then YOU author the thoughts (every word in exactly one thought, in order, labelled, kind answer/production, retake_of for repeats; no winners) and call audio_cut with them: the code validates, measures delivery, picks takes by fluency, cuts failed restarts inside a thought, trims crumbs, and otherwise cuts only between thoughts under the editors' rules. Then the story with keep_only on whole thoughts, place_broll, reframe (no bin) once.",
+    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path of the talking-head footage; omit to use the selected bin or exact selected Project clips" }, aspect: { type: "string", description: "9:16, 4:5, 1:1, 16:9" }, preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, width: { type: "number" }, height: { type: "number" }, name: { type: "string" }, language: { type: "string", description: "for Whisper, default en" }, silence_threshold_db: { type: "number", minimum: -100, maximum: 0, description: "Cleanup silence floor, default -35 dBFS" }, min_silence_s: { type: "number", exclusiveMinimum: 0, description: "Minimum measured silence to shorten, default 1 second" }, pad_s: { type: "number", minimum: 0, description: "Sound boundary padding, default 0.18 seconds" } }, required: [] } },
   { name: "find_takes", description: "Repeated takes from the transcript: a line said, stumbled, said again. Groups near-duplicate utterances within a window and picks the most complete take (most content words, fewest fillers, finished ending; later on a tie). Returns the groups with times and the ranges to drop; with apply: true it removes the dropped takes (working copy, one Cmd+Z step per range). Run after remove_silences and before story decisions; the transcript must exist (Premiere's or transcribe_timeline).",
     inputSchema: { type: "object", properties: { window_seconds: { type: "number", description: "how far apart two takes of the same line can be, default 90" }, min_similarity: { type: "number", description: "0-1, default 0.6" }, apply: { type: "boolean", description: "remove the dropped takes now, default false (report only)" }, source: { type: "string", description: "auto | premiere | whisper, default auto" } }, required: [] } },
   { name: "multicam_switch", description: "EXPERIMENTAL, first run pending: switch the camera of a multicam clip at a time through Premiere's own multicam editor (QE sequence.multicam.changeCamera, the number-key switch). Just run it: the tool checks whether the clip under the playhead is a multicam source sequence and says so if not (sequence_overview marks them [MULTICAM SOURCE]). Runs on the working copy; renders the frame before and after and reports whether the picture changed and whether the clip count changed (a switch mid-clip cuts it like the number key does). Needs a multicam source sequence clip on the timeline.",
@@ -2238,10 +2309,10 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, repeats: { type: "boolean", description: "also cut repeated words, default true" }, source: { type: "string", enum: ["auto", "premiere", "whisper"] }, dry_run: { type: "boolean" } } } },
   { name: "mute_clip_audio", description: "Disable (mute) the audio of every clip in the active sequence whose source file is listed. Use it on the files classify_clips called b-roll so their sound never fights the talking head. Undoable per clip.",
     inputSchema: { type: "object", properties: { media_paths: { type: "array", items: { type: "string" } } }, required: ["media_paths"] } },
-  { name: "create_sequence", description: "Create a new sequence from the media in a bin (nested bins included). Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
-    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; empty = project root" }, preset: { type: "string", enum: ["match", "vertical", "hd", "uhd", "square", "four_five"], description: "match = the footage; vertical = 1080x1920; hd = 1920x1080; uhd = 3840x2160; square = 1080x1080; four_five = 1080x1350" }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
-  { name: "classify_clips", description: "Cheap first pass over every source file in a bin (give bin) or in the active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
-    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path like 'Footage/Day 2'; omit for the active sequence" } } } },
+  { name: "create_sequence", description: "Create a new sequence from exact selected Project clips, or a selected/given bin (nested bins included). Directly selected clips take precedence over selected bins when bin is omitted. No open sequence is needed. Without width/height/fps Premiere matches the first clip's settings; give width, height, fps to force e.g. 1080x1920 @ 23.976 for a vertical social cut. insert_clips=true lays the bin's clips in order as a starting assembly; false creates it empty. Becomes the active sequence. Ask the user for settings and name first.",
+    inputSchema: { type: "object", properties: { name: { type: "string" }, bin: { type: "string", description: "bin path; omit for exact selected Project clips, otherwise the selected bin; no selection is refused" }, preset: { type: "string", enum: ["match", "vertical", "hd", "uhd", "square", "four_five"], description: "match = the footage; vertical = 1080x1920; hd = 1920x1080; uhd = 3840x2160; square = 1080x1080; four_five = 1080x1350" }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, insert_clips: { type: "boolean", description: "default true" } }, required: ["name"] } },
+  { name: "classify_clips", description: "Cheap first pass over an explicit bin, otherwise exact selected Project clips, otherwise selected bin, otherwise active sequence: speech coverage (voice detection), length, whether a transcript exists, camera-original naming, footage sizes and frame rates, and a guess (talking head / b-roll / mixed / silent) with confidence. Run this first when asked to edit, assemble, or find the talking head. Only clips marked 'look at a frame' need preview_frames.",
+    inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path like 'Footage/Day 2'; omit for selected Project clips or bin, otherwise the active sequence" } } } },
   { name: "project_bins", description: "With a bin selected in Premiere (or given), lists just that bin's media with sizes and frame rates. Otherwise the whole Project panel tree: bins (ending in /, with item counts) and items, including loose items at the root.",
     inputSchema: { type: "object", properties: { bin: { type: "string", description: "bin path; defaults to the bin selected in Premiere" } } } },
   { name: "move_to_bin", description: "Move project items into bins, creating bins as needed. Use this for organizing the Project panel instead of scripts. Each move is one Cmd+Z step. item = name or bin/name path; bin = bin path like '_ASSETS' or 'Footage/Day 2'.",
