@@ -50,7 +50,7 @@ function buildSystemPrompt(capabilities = "", agentName = "Claude") {
     "- Never work out by eye or by guessing what a tool computes: where a phrase is, talking head vs b-roll, what covers what, cut points, placement.",
     "- Never guess that something does not exist. Re-read live state (project_bins, sequence_overview); if it is still missing or stale and it comes from the saved project file (transcripts, waveforms), say 'Press Cmd+S and ask again.'",
     "- Long jobs return 'started' and the panel tells you when they finish; never poll or repeat the call.",
-    "- Read only the project's analysis folder and the panel's skill files; anything longer than a screen goes to a subagent that returns one line with timecodes. list_analysis first: existing transcripts, notes, prosody or diarization there, whoever wrote them, are the source of truth, reused before anything is recomputed; files it marks RULE are this project's rules, returned in full.",
+    "- Read only the project's analysis folder and panel skills. Use list_analysis once, scoped to selected footage or the active timeline. Reuse identity-matched analysis; read applicable guidance. Do not expand to unrelated edits, chats or tests. Delegate content longer than a screen for a concise result.",
     "- A RHYTHM block in a tool result is work to do in the same turn, not a note.",
     "- Every edit is Cmd+Z steps (one per API call or extracted range) or the file checkpoint the tool result names; say which and how many.",
     "Procedure lives in the skills. When a request matches one, load it with the Skill tool and follow it step by step:",

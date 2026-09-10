@@ -1765,16 +1765,68 @@ async function premiereShortcut({ query = "" } = {}) {
 }
 
 // What analysis already exists for this project, from this panel or from anything else that wrote there.
-async function listAnalysis() {
-  const card = addTool("list_analysis", "");
-  const dir = analysisDir();
-  let rows = []; const ruleTexts = [];
-  const fp = timelineFingerprint(timeline || (await readSnapshot().catch(() => null)));
-  try { rows = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).map((f) => { const st = fs.statSync(path.join(dir, f)); let stale = ""; if (f.endsWith(".transcript.md")) { const head = fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400); const m = /<!-- timeline ([^>]*) -->/.exec(head); if (m && m[1] !== fp) stale = "  STALE (timeline changed since; call read_transcript again)"; } let head = ""; if (/safe-zone|procedure|rule|notes|handoff/i.test(f) && f.endsWith(".md")) { try { const body = fs.readFileSync(path.join(dir, f), "utf8"); const first = body.split("\n").find((l) => l.trim()) || ""; head = "  | RULE: " + first.replace(/^#+\s*/, "").slice(0, 140); if (body.length <= 8000) ruleTexts.push("----- " + f + " -----\n" + body.trim()); } catch (_) {} } return f + "  " + Math.round(st.size / 1024) + " KB  " + st.mtime.toISOString().slice(0, 16).replace("T", " ") + stale + head; }); } catch (_) {}
-  // Rule files come back in full (no extra reads, no extra turns); only very long ones need a Read.
-  const text = (rows.length ? dir + "\n" + rows.join("\n") : "no analysis files yet in " + dir) + (rows.some((r) => r.includes("| RULE:")) ? "\nFiles marked RULE are this project's rules (safe zones, procedures, approved placements); they are not optional. Their full text follows, so there is nothing to read again:\n\n" + ruleTexts.join("\n\n") : "");
+async function listAnalysis({ all = false } = {}) {
+  const card = addTool("list_analysis", ""), dir = analysisDir();
+  const stems = new Set(), media = new Set();
+  const safe = name => String(name || "").replace(/[\/\\:]/g, "_");
+  const addMedia = (name, file) => {
+    if (!file) return;
+    media.add(file);
+    for (const n of [name, path.basename(file)]) if (n) { stems.add(safe(n)); stems.add(safe(n.replace(/\.[^.]+$/, ""))); }
+  };
+  let scope = "no selected footage or active timeline", snap = null;
+  if (all !== true) {
+    try {
+      const raw = await host("binMedia", "", "false", "true");
+      if (raw.indexOf("ERR:") === 0 || raw === "EvalScript error.") throw new Error(raw);
+      const bins = raw ? [] : await selectedBins();
+      const sources = raw ? [raw] : [];
+      for (const bin of bins) {
+        const rows = await host("binMedia", bin, "false");
+        if (rows.indexOf("ERR:") === 0 || rows === "EvalScript error.") throw new Error(rows);
+        stems.add(safe(bin)); sources.push(rows);
+      }
+      for (const rows of sources) for (const row of rows.split("\u0003").filter(Boolean)) {
+        const [name, file] = row.split("\u0002"); addMedia(name, file);
+      }
+      if (raw || bins.length) scope = media.size + " selected source clip(s)" + (bins.length ? " in " + bins.length + " bin(s)" : "");
+      else {
+        snap = await readSnapshot();
+        if (snap && !snap.error && snap.name) {
+          scope = "active timeline: " + snap.name; stems.add(safe(snap.name));
+          for (const c of snap.clips || []) addMedia(c.name, c.mediaPath);
+        }
+      }
+    } catch (error) { return err(card, "Cannot scope analysis: " + error.message); }
+  } else scope = "whole project (explicit request)";
+  const suffixes = [".transcript.md", ".timeline.transcript.md", ".classification.md", ".timeline.json", ".transcript.json", ".diarization.json", ".delivery.json", ".sounds.json", ".notes.md", ".selects.md"];
+  const matches = f => [...stems].some(stem => suffixes.some(suffix => f === stem + suffix));
+  const rows = [], guidance = [];
+  try {
+    for (const f of fs.readdirSync(dir).filter(f => !f.startsWith(".")).sort()) {
+      const st = fs.statSync(path.join(dir, f)); if (!st.isFile()) continue;
+      // ponytail: legacy files have no scope manifest; exact names are candidates, never proof of cache validity.
+      const rule = /safe-zone|procedure|(?:^|[-_ ])rules?(?:[-_. ]|$)/i.test(f) && f.endsWith(".md");
+      if (rule) {
+        const title = fs.readFileSync(path.join(dir, f), "utf8").split("\n").find(l => l.trim()) || "";
+        guidance.push(f + " — " + title.replace(/^#+\s*/, "").slice(0, 140));
+      }
+      if (all !== true && (!matches(f) || rule)) continue;
+      let stale = "";
+      if (snap && !snap.error && f.endsWith(".transcript.md")) {
+        const m = /<!-- timeline ([^>]*) -->/.exec(fs.readFileSync(path.join(dir, f), "utf8").slice(0, 400));
+        if (m && m[1] !== timelineFingerprint(snap)) stale = "  STALE for active timeline";
+      }
+      rows.push(f + "  " + Math.round(st.size / 1024) + " KB" + stale);
+    }
+  } catch (error) { if (error.code !== "ENOENT") return err(card, "Cannot list analysis: " + error.message); }
+  const limit = all === true ? rows.length : 30;
+  let text = "Analysis scope: " + scope + "\n" + dir + "\n" + (rows.length ? rows.slice(0, limit).join("\n") : "No matching analysis files. This does not mean the source clips have no cached transcripts.");
+  if (rows.length > limit) text += "\n" + (rows.length - limit) + " more matches; use all:true only if the full listing is needed.";
+  if (guidance.length) text += "\n\nProject guidance candidates (read only those applicable to this task; titles do not establish approval):\n" + guidance.slice(0, all === true ? guidance.length : 12).join("\n") + (all !== true && guidance.length > 12 ? "\nMore guidance files exist; request all:true to list them." : "");
+  text += "\nReuse only analysis whose source/timeline identity matches. Other edits, chats, renders and debug files are omitted by default; do not expand to the whole project just because there are no matches.";
   card.done(text, true);
-  return { text: text + (rows.length ? "\n(read any of these with a subagent; prosody / diarization / notes may come from other tools)" : "") };
+  return { text };
 }
 
 // Claude's own notes (shot descriptions, decisions) saved next to the project so later turns and sessions reuse them.
@@ -2312,8 +2364,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { at_seconds: { type: "number" }, track: { type: "number", description: "1-based video track, default 1" }, sensitivity: { type: "string", description: "low | medium | high, default medium" } }, required: ["at_seconds"] } },
   { name: "premiere_shortcut", description: "The editor's own keyboard shortcut for a Premiere command (reads their .kys sets; nothing is pressed). Use it to say the exact key when a job is the editor's click (Transcribe, Delete all pauses, Scene Edit Detection...). Query words match the command id: 'extract', 'ripple delete', 'caption', 'transcribe', 'reframe'. The full id list with default keys is premiere-scripting/commands-26.md.",
     inputSchema: { type: "object", properties: { query: { type: "string", description: "words that must all appear in the command id" } }, required: ["query"] } },
-  { name: "list_analysis", description: "Lists the analysis files next to this project (transcripts, classifications, notes, and anything extracted elsewhere such as prosody or diarization). Check it first; read files with a subagent.",
-    inputSchema: { type: "object", properties: {} } },
+  { name: "list_analysis", description: "Compact analysis lookup for selected Project clips, then selected bins, otherwise the active timeline. Lists exact-name analysis candidates and short project-guidance titles; verify identity and read only applicable guidance. Omits unrelated chats, renders and debug files. all:true explicitly requests the whole project inventory; never use it just because the scoped lookup has no matches.",
+    inputSchema: { type: "object", properties: { all: { type: "boolean", description: "default false; true only for an explicitly needed whole-project inventory" } } } },
   { name: "save_notes", description: "Save your notes (shot descriptions per b-roll clip, decisions, selects) as a markdown file next to the project, so later turns and sessions reuse them instead of looking again.",
     inputSchema: { type: "object", properties: { name: { type: "string", description: "file name, e.g. broll-notes" }, text: { type: "string" } }, required: ["text"] } },
   { name: "create_captions", description: "Plain native captions on the active sequence: builds cues from the transcript (the exact timeline transcript when it exists for this cut, else per-clip), writes an SRT next to the project, imports it and creates a caption track. Editable in Premiere's Captions panel. Not undoable (import), so the panel checkpoints first. Defaults come from Settings (a few words per caption, one line, 3 s); pass max_words etc. only when the editor asks for something different.",

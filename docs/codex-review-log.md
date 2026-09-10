@@ -232,3 +232,9 @@ Focused checks 3/3; full175/174pass/1online-schema skip. Real existing audio: 38
 Independent Terra traced the exact toFixed crash to a SOLO header misread as a frame. Read-only review approved filtering that header, the nine-sample/two-batch regression, explicit REMOVE plan labels, and consistent duration-limited prompt/skill guidance selecting only resolved story ranges before apply. No host, planner or native cut changes. Full176/175pass/1schema skip; syntax and whitespace checks passed.
 
 Live dev speaker_check on an existing test sequence passed all nine67.11-71.11second samples, without edits. The requested short edit was not rebuilt: new orchestration still needs an end-to-end run, and dialogue listening/final framing remain separate verification. No release.
+
+## 2026-09-10: scoped analysis discovery
+
+Independent read-only Terra review APPROVED exact selected-source/bin/timeline scoping, explicit full-inventory opt-in, compact guidance candidates without implied approval, and consistent shared prompt/skill instructions. Reviewer independently ran the full suite: 178 total / 177 pass / 1 online Adobe schema skip, plus syntax and whitespace checks. README documentation added afterward; no host changes.
+
+Regression covers exact names versus prefix collisions, unrelated active timelines and historical selections, selected bins, stale timeline transcripts, explicit all:true, selection errors, and no selection/timeline. Live dev-panel read-only call returned one selected source, no matched analysis and two guidance titles; unrelated edits/chats/renders were absent and the model did not expand scope. Current Editorial remained unchanged. No release.

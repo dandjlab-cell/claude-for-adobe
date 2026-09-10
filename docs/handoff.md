@@ -9,6 +9,14 @@
 
 ---
 
+## Scoped analysis lookup (2026-09-10 follow-up)
+
+- Default list_analysis now uses direct selected Project clips, otherwise individually selected bins, otherwise the fresh active timeline. Exact filename candidates replace the full project inventory; unrelated edits, chats, renders and debug artifacts are omitted. Selection errors refuse rather than broaden. Full inventory requires explicit all:true.
+- Matching legacy filenames are candidates, not proof of cache identity. Project guidance is compact titles only, read when applicable; generic notes/handoff names no longer become mandatory approved rules. Scoped results are capped with explicit omission notices. Prompt, tool schema, edit-footage workflow and README agree on scope and no automatic expansion after no matches.
+- Two regression tests failed before implementation and pass afterward. Independent Terra review APPROVED; full suite 178 total / 177 pass / 1 expected online Adobe schema skip. Syntax and whitespace checks pass.
+- Live reloaded dev-panel lookup with one selected source and a different active Editorial returned the selected-clip scope, no matching analysis, and two guidance titles. No unrelated edits, chats or audio renders; no all:true or follow-up file reads. Read-only test chat saved beside the private project. Timeline unchanged.
+- Separate observation: the user's latest Editorial now displays 00:00:44:19, but its prior conversation reported an Auto Reframe centring-check failure. Duration alone is not full editing/framing verification; investigate separately. No release.
+
 ## Speaker-check crash and duration workflow (2026-09-10 follow-up)
 
 - User's live under-45-second run reached a223.77-second Editorial, then failed speaker_check with `Cannot read properties of undefined (reading 'toFixed')`;36.2-second story plan remained unapplied. The new intact transcript presentation did run, but it did not change the old broad-cleanup-first orchestration.

@@ -31,7 +31,7 @@ For an audio cut on an existing timeline: `transcribe_timeline`, `transcript_ind
 
 The full workflow when the request is open-ended:
 
-1. **What's already known.** `list_analysis`. If transcripts, notes, prosody, or diarization files exist (from this panel or anything else), read them with a subagent before doing new work.
+1. **What's already known.** `list_analysis` once, with default scoped lookup. It follows selected clips/bins or the active timeline. Reuse only matching transcripts, notes, prosody or diarization after verifying identity. Read relevant project guidance from its titles; skip unrelated chats, tests, old edits and handoffs. No matching files is a valid result: continue with the footage, never expand to `all:true` merely to find something to read.
 2. **Inspect.** The selected bin is the scope. `classify_clips` (no arguments) reports footage sizes and rates, speech coverage, and talking head vs b-roll.
 3. **Ask once.** If no sequence exists or none was named: ONE question with concrete choices for settings (match the footage, `vertical`, `hd`) and a name. Then use the two-sequence `rough_cut` workflow above.
 4. **Transcript.** `read_transcript` if Premiere has one (saved), else `transcribe_whisper`. Long transcripts: a subagent reads the file and returns what you ask for (the story beats, the best takes, where a phrase is). `find_in_transcript` for exact moments.
