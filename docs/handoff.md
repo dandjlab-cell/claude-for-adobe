@@ -9,6 +9,15 @@
 
 ---
 
+## Speaker-check crash and duration workflow (2026-09-10 follow-up)
+
+- User's live under-45-second run reached a223.77-second Editorial, then failed speaker_check with `Cannot read properties of undefined (reading 'toFixed')`;36.2-second story plan remained unapplied. The new intact transcript presentation did run, but it did not change the old broad-cleanup-first orchestration.
+- Root cause: host frames prepends a SOLO status row. speakerCheck treated it as a frame, shifting sample timestamps and giving the last face an undefined time. Filter the exact SOLO+column header before mapping frames. Regression reproduced the exact error, then passed nine timestamps across two batches. No host or native cut algorithm changes.
+- Dynamic rough_cut/transcript_index instructions, rough_cut tool description and edit-footage skill now direct duration-limited requests to choose the short story from the audio_cut report's resolved kept ranges and plan/apply only that subset via existing keep_only. No full multi-minute intermediate apply. Confirm actual target duration before speaker_check/final visual work; avoid rereading an unchanged transcript already returned by rough_cut. This is orchestration guidance, not a new hard duration constraint in code.
+- Dry-run output now labels extracted intervals REMOVE; previous unlabelled ranges were discarded gaps despite the summary saying keep. The plan arithmetic was consistent; no range calculation changed.
+- Independent Terra review APPROVED. Full176/175pass/1Adobe-schema skip; syntax and whitespace checks pass. Live reloaded dev speaker_check on an existing sandbox test sequence returned all9samples67.11-71.11at.5second spacing, no errors. No edit applied. Test sequence closed afterward; no sequence left open, matching initial state. Reported failed Editorial was not visible in the current project; it was not recreated.
+- Remaining: fresh end-to-end under45s run to verify model follows the revised orchestration; listening/syllable quality and final crop checks still required. Passing duration CHECK does not prove dialogue boundaries. The pasted chat's mojibake is absent from the saved UTF-8 evidence (zero such markers); clipboard encoding remains unmodified. No release.
+
 ## Intact dialogue and optional speaker annotations (2026-09-10)
 
 - User requested the stronger intact-dialogue presentation with prosody now, ready to consume diarization later. Added `src/transcript_presentation.cjs`, integrated it into `panel.js` transcript_index (already called by rough_cut), documented the sidecar contract in README, and updated edit-footage guidance. No diarizer installation, model call, host mutation or editing-policy change.
