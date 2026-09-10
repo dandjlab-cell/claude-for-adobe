@@ -12,6 +12,16 @@ Click the folder you want to work on, then ask Claude to edit it. Tip: keep b-ro
 
 For a new video from a folder, the panel creates two sequences: **Cleanup** removes measured silences and sets the initial framing while retaining takes; **Editorial** starts as a native copy for take selection and story edits. Cleanup remains available for comparison. New sequences use the footage’s folder (beside source-only bins such as TALKING HEAD), preferring a nearby existing Sequences, Timelines, Cuts or Edits bin when there is one clear match.
 
+`transcript_index` now presents intact dialogue, qualitative delivery observations and the original word indices. `rough_cut` calls it automatically. Delivery uses a fresh mono audio render and local signal processing; no extra AI call or model download. Whisper words and timestamps are unchanged. Punctuation defines passages; speech without punctuation remains together. Speaker changes never split the main dialogue. These measurements describe the current cut's audio, not raw pre-Cleanup delivery or emotions.
+
+Optional diarization can be supplied beside the project as `<sequence>.diarization.json` (sequence filename replaces `/`, `\\` and `:` with `_`). No diarization model runs automatically. Version 1 contract:
+
+```json
+{"schema":"cfa-diarization","version":1,"timeline":"<exact timeline.json fingerprint>","wordsSha256":"<canonical word hash>","speakers":[{"scope":"clip-01","speaker":"SPEAKER_00"},null]}
+```
+
+`speakers` has exactly one entry per timeline word, in order; null means unknown. Scope and speaker are opaque identifiers of 1–80 ASCII letters, digits, `_`, `.`, `:` or `-`. Labels establish identity only within their scope. The canonical hash is SHA-256 of UTF-8 `JSON.stringify(words.map((w,i) => [i,w.text,w.start,w.end]))`, also exported as `wordsHash` by `src/transcript_presentation.cjs`. A future diarization adapter must align its output to these exact words; raw diarizer segments are not this format. Invalid or stale annotations are rejected as a whole, with an explicit warning and intact dialogue retained. Derived `.delivery.json` stores measured per-word observations bound to the words, timeline, measurement settings and rendered audio hash; it never overwrites the transcript.
+
 **Codex instead of Claude:** pick it in the dropdown at the top. It needs the Codex CLI signed in (`npm i -g @openai/codex`, then `codex login`). Same tools, same rules, same skills; what Codex reads goes to OpenAI under your account.
 
 Updated regularly; the panel tells you when a new version is ready and installs it in one click. Coming next: After Effects.

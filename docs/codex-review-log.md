@@ -220,3 +220,9 @@ Live waveform-ready follow-up: 131 extracts passed duration checks, Cleanup 1223
 Independent read-only Terra host review APPROVED the actual-source common-ancestor placement helper, source-bin lifting, nearest unambiguous dedicated sequence bin selection, both creation routes, and existing clone placement. Reviewer ran all 8 host tests. No concrete regression found.
 
 Regression failed before implementation; final suite 172 tests / 171 pass / 1 online Adobe schema skip. Live dev-panel creation from one directly selected clip placed an empty 9:16 sequence in its footage folder, confirmed by native projectItem.treePath. Empty test removed; existing user Cleanup/Editorial pair moved to the same folder and confirmed by full Project tree. Editorial duration remained 4:15:03. Dedicated-bin and ambiguity cases are unit-tested, not separately exercised live. No release.
+
+## 2026-09-10: intact transcript presentation
+
+Independent plan review required validated PCM format/duration, versioned delivery cache settings, canonical word identity, all-or-nothing optional annotation validation and whole-passage filtering. Implemented with no new dependencies or diarizer. Implementation review identified an audio-identity blocker: geometry fingerprints cannot detect gain/effect changes, so cached mix reuse could describe stale delivery. Changed transcript_index to fresh-export presentation audio, remove old output and check snapshots before/after; export failures retain plain dialogue with unavailable observations. Independent Terra re-review APPROVED.
+
+Focused checks 3/3; full175/174pass/1online-schema skip. Real existing audio: 387.8875seconds,752words,25passages, unchanged global index coverage;1.107seconds fresh prosody and0.035seconds cache (Premiere export excluded). Panel path verified through VM execution with export failure and changed-sequence guards; no live Premiere invocation of the new formatter yet. No host/cut logic or release change.

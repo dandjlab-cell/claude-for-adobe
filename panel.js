@@ -1327,18 +1327,33 @@ async function transcriptIndex({ start_seconds = 0, end_seconds } = {}) {
   const tlw = freshTimelineWords(snap);
   if (!tlw) return err(card, "no transcript for this exact timeline: run transcribe_timeline (or rough_cut) first");
   const a = Math.max(0, Number(start_seconds) || 0), b = Number(end_seconds) > 0 ? Number(end_seconds) : Infinity;
-  const lines = [];
-  let cur = [], curStart = null;
-  tlw.words.forEach((w, i) => {
-    if (w.end <= a || w.start >= b) return;
-    if (curStart === null) curStart = w.start;
-    const gap = i && cur.length ? w.start - tlw.words[i - 1].end : 0;
-    if (cur.length && (gap >= 0.6 || cur.length >= 14)) { lines.push(curStart.toFixed(2) + "s  " + cur.join(" ")); cur = []; curStart = w.start; }
-    cur.push(i + ":" + w.text);
-  });
-  if (cur.length) lines.push(curStart.toFixed(2) + "s  " + cur.join(" "));
-  const text = "Indexed words of the exact timeline transcript (" + tlw.words.length + " words; each line starts at the time shown; a new line marks a pause of 0.6 s or more):\n" + lines.join("\n") + "\n\nAuthor thoughts: every word in exactly one thought, in order; label = what was said (a concrete action or idea, not a sentiment); kind = answer for a complete statement, or production for between-take chatter, greetings, crew talk and abandoned incomplete attempts; never let a cut-off fragment compete as an answer retake. retake_of = the id of the earlier thought that says the same thing. Do not choose which take wins: audio_cut measures that. Then audio_cut with thoughts (report); check every kept piece for complete meaning and re-author if fragments won before apply: true.";
-  card.done(lines.length + " line(s), " + tlw.words.length + " words", true);
+  const P = require(path.join(extensionRoot, "src", "transcript_presentation.cjs"));
+  const fingerprint = timelineFingerprint(snap), warnings = [];
+  const wav = seqFile(".presentation.wav"), deliveryFile = seqFile(".delivery.json"), speakerFile = seqFile(".diarization.json");
+  let perWord, diarization;
+  try {
+    // Geometry fingerprints cannot see gain/mute/effects: measure a fresh mix, never reuse .mix.wav.
+    const preset = wavPreset();
+    if (!preset) throw new Error("Premiere mono WAV preset unavailable");
+    if (timelineFingerprint(await readSnapshot()) !== fingerprint) throw new Error("sequence changed before render");
+    try { fs.unlinkSync(wav); } catch (_) {}
+    const out = await host("exportSequenceAudio", wav, preset);
+    if (out.indexOf("ERR:") === 0 || !fs.existsSync(wav)) throw new Error("audio render failed: " + out);
+    if (timelineFingerprint(await readSnapshot()) !== fingerprint) throw new Error("sequence changed during render");
+    perWord = P.delivery(wav, tlw.words, fingerprint, snap.duration, deliveryFile).perWord;
+  } catch (error) { warnings.push("Delivery observations unavailable: " + error.message); }
+  if (timelineFingerprint(await readSnapshot()) !== fingerprint) return err(card, "Sequence changed during transcript presentation; retry on the intended sequence");
+  if (fs.existsSync(speakerFile)) {
+    try {
+      diarization = JSON.parse(fs.readFileSync(speakerFile, "utf8"));
+      P.render(tlw.words, { timeline: fingerprint, diarization }); // all-or-nothing identity and alignment validation
+    } catch (error) { diarization = undefined; warnings.push("Diarization annotations unavailable: " + error.message); }
+  }
+  let presentation;
+  try { presentation = P.render(tlw.words, { timeline: fingerprint, perWord, diarization, start: a, end: b }); }
+  catch (error) { return err(card, error.message); }
+  const text = presentation + (warnings.length ? "\n" + warnings.join("\n") : "") + "\n\nAuthor thoughts: every word in exactly one thought, in order; label = what was said (a concrete action or idea, not a sentiment); kind = answer for a complete statement, or production for between-take chatter, greetings, crew talk and abandoned incomplete attempts; never let a cut-off fragment compete as an answer retake. retake_of = the id of the earlier thought that says the same thing. Do not choose which take wins: audio_cut measures that. Then audio_cut with thoughts (report); check every kept piece for complete meaning and re-author if fragments won before apply: true.";
+  card.done(tlw.words.length + " words; intact dialogue with available delivery observations", true);
   return { text };
 }
 
@@ -2273,7 +2288,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { preset: { type: "string", enum: ["vertical", "hd", "uhd", "square", "four_five"] }, aspect: { type: "string", description: "any ratio like 9:16, 4:5, 1:1, 16:9, 2.39:1" }, width: { type: "number" }, height: { type: "number" }, fps: { type: "number" }, reframe: { type: "string", enum: ["fill", "fit", "none"] } } } },
   { name: "place_broll", description: "Lay one b-roll clip over the talking head: on V2 (or given track) at a sequence time, for a duration; its audio is removed and every other track is locked during the overwrite so nothing shifts. media_path is the clip's file path, its name, or bin/path/name as project_bins lists it. If it returns an error, report the error to the editor and stop; never search the project for the clip with run_extendscript. The result says WARNING if anything else moved; then Cmd+Z. Deterministic. Use after you understand what each b-roll clip shows (preview_frames, save_notes) and where the words call for it.",
     inputSchema: { type: "object", properties: { media_path: { type: "string" }, at_seconds: { type: "number" }, duration_seconds: { type: "number", description: "default 4" }, in_seconds: { type: "number", description: "where in the source clip to start, default 0" }, track: { type: "number", description: "1-based video track, default 2" } }, required: ["media_path", "at_seconds"] } },
-  { name: "transcript_index", description: "The exact timeline transcript as indexed words (index:word, with a time at the start of each line), the input for authoring thoughts: group every word into thoughts by word_start_i / word_end_i, label what was said, kind answer or production, retake_of when a thought says the same thing as an earlier one. Then audio_cut with those thoughts.",
+  { name: "transcript_index", description: "Intact dialogue from the exact timeline transcript, followed by qualitative measured delivery, optional identity-bound speaker runs, and unchanged index:word mappings. Whole punctuation-delimited passages are returned for intersecting time ranges; unavailable observations are explicit. The input for authoring thoughts: group every word into thoughts by word_start_i / word_end_i, label what was said, kind answer or production, retake_of when a thought says the same thing as an earlier one. Then audio_cut with those thoughts.",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" } }, required: [] } },
   { name: "audio_cut", description: "The audio cut at the level of thoughts, one pass: the transcript is split into thoughts, fragments and false starts are dropped whole, the losing take of a repeated line is dropped whole (delivery measured from the timeline render, among complete answers you author), every complete thought is kept in order with a little air on each side, and the cut lands only between thoughts; the one cut inside a thought is a failed restart (first attempt out, retake kept). Report first (kept thoughts numbered with times and text, dropped ones with reasons); apply: true does it as one keep_only. Needs a transcript for this exact timeline (rough_cut and transcribe_timeline make it).",
     inputSchema: { type: "object", properties: { silence_threshold_db: { type: "number", minimum: -100, maximum: 0, description: "For authored thoughts: audio silence floor in dBFS, default -35. Adjust for the recording; pauses come from a fresh timeline render. The legacy no-thoughts mode does not use this setting." }, thoughts: { type: "array", description: "authored thoughts from transcript_index: [{id, word_start_i, word_end_i, label, kind: 'answer'|'production', retake_of}] covering every word; without it the split is by pauses alone, which is cruder", items: { type: "object" } }, apply: { type: "boolean", description: "cut now; default false (report only)" }, gap_seconds: { type: "number", description: "fallback split: pause that ends a thought, default 0.6" }, pad_seconds: { type: "number", description: "fallback split: air on each side of a thought, default 0.18" } }, required: [] } },

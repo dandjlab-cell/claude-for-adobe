@@ -7,6 +7,8 @@ description: Use when the editor asks to edit, assemble, rough-cut, or "do somet
 
 Work like an editor at the timeline. Short sentences, timecodes as m:ss, one question at a time. Prefer the tools; scripts only for what they don't cover.
 
+Read `transcript_index` before authoring thoughts: it presents intact dialogue, available measured delivery and optional scoped speaker annotations, followed by the original word indices. `rough_cut` already returns this presentation. Use dialogue as the primary evidence; measurements are fallible context, never emotion labels or permission to delete. Missing diarization is UNKNOWN, not evidence of one speaker. Do not infer cross-clip identity from repeated speaker labels.
+
 **The order for "make me a 9:16 (or 4:5, 16:9) video from this folder".** Tracking, frames and checks are the
 expensive steps; cutting is cheap. They come last, once, on what survives. Never run Auto Reframe,
 snapshot_moments or seam_frames on six minutes of raw footage that will become one.
