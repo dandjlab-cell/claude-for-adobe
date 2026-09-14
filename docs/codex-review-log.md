@@ -259,3 +259,31 @@ Context: the editor asked the panel to "see the scopes". The model believed its 
 ### Round 2 — **APPROVED**
 
 All eight resolved. Notes: the display remap keeps the whole 0-255 range, drawn on 220 levels; superwhite/superblack lost in the 8-bit export cannot be recovered. `sendTurn` changes nothing but the turn count. 184 tests, 183 pass, 1 network skip. Not yet validated: calibration against Lumetri Scopes on a known target inside Premiere.
+
+## 2026-09-14 — guard, approvals and working copies after the live colour probe (branch feat/scopes)
+
+Context: a live probe on a sandbox project found three problems. (1) The premiere-scripting skill told the model to build newlines with `String.fromCharCode`, which the guard has refused since 2026-09-05; the model followed the docs, was refused, and the per-turn latch blocked the one-line rewrite. (2) A script that added Lumetri Color succeeded, but `run_extendscript` deleted its working copy as "changed nothing": the timeline snapshot compares clips, not effects or parameters. (3) A script waiting for the Run it click sends no MCP progress; the CLI aborted the call after 643 s and the approval card stayed clickable.
+
+First draft of the fix: latch only on capability refusals and let form refusals be rewritten; skills stop recommending string builders, with a test that runs every skill snippet through the guard; remove the working copy only when the script failed and the snapshot is unchanged; `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=3600000` for the panel's CLI.
+
+### Round 1 — CHANGES REQUIRED (3 HIGH, 1 MEDIUM, 1 LOW)
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| H1 | HIGH | Allowing a retry after a form refusal lets a model rewrite toward a capability: a computed method call could evade the computed-call rule through grouping parentheses (a gap that predates this change; the approval click still applied unless Run all this session was on). First-match ordering also let a form rule mask a capability rule in the same script | The computed-call rule now catches grouped calls; computed calls stop the turn like the capabilities they can name; form rules are checked last, so a capability match is always the one reported. Only `this`/escapes and string builders stay rewritable. Regression tests in core.test.cjs |
+| H2 | HIGH | A failed script can still lose completed effect edits (edit, then throw, snapshot unchanged, copy deleted); a timeout cannot prove nothing changed | `run_extendscript` never deletes its working copy; Discard copy is the editor's |
+| H3 | HIGH | An abandoned approval stays executable: nothing cancels the card when the CLI gives up or Stop kills it; the latch read the current turn, not the call's own | The MCP server aborts a call whose connection closes (the CLI giving up, or Stop killing it); the panel passes that signal to the tool; the approval card resolves to "Cancelled" and the script checks the signal before running; the latch captures the call's own turn and chat. HTTP test in mcp-http.test.cjs |
+| M1 | MEDIUM | The prompt still said "a tool error ... then you stop" while a form refusal asks for a rewrite | "... then you stop, unless the error says how to rewrite" (prompt 699 words, cap 700) |
+| L1 | LOW | The snippet test passes with zero matches and overstates its coverage | Requires at least 10 snippets; tolerant fence pattern; named as guard compatibility, not an ES3 or run check |
+
+### Round 2 — CHANGES REQUIRED (H1, H3 partial)
+
+H1 partial: widening the computed-call regex to `\]\s*\)*\s*\(` still missed spaced grouped parens `(obj[k]) )()` and, worse, gave false positives on legit `if (clips[i]) (x)` and `outer(inner(a[i]))(x)`, which would latch the whole turn. `this` still masked a computed call because it was ordered first. H3 partial: the abort check ran before the awaited copy/checkpoint prep, so a call abandoned during prep still dispatched.
+
+### Round 3 — APPROVED
+
+- Computed-call rule reverted to the direct form `/\]\s*\(/` (no false positives: a plain indexed read is never followed by `(`) and moved ABOVE the two form rules, so a script with both reports the capability and latches. The grouped invoked form `(obj[k])()` is a documented residual, present identically in earlier versions and gated by the approval click; not introduced or worsened here.
+- A third abort check sits immediately before `evalScript` dispatch, after copy creation and the checkpoint save. A dispatched host script cannot be recalled; this stops only one that has not started.
+- Known LOW residuals, both pre-existing: a regex literal containing `](x)` trips the computed-call rule (regex literals are not blanked); the grouped bypass skips the click under "Run all this session". Neither blocks.
+
+**Verified:** 190 tests, 189 pass, 1 network skip. Codex APPROVED round 3.

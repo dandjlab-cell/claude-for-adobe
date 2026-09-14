@@ -45,7 +45,7 @@ function buildSystemPrompt(capabilities = "", agentName = "Claude") {
     "- Plan first, visibly. Before more than two tool calls or any timeline change, one message: the source, the numbered steps naming their tools, what stays untouched. Then start in the same turn; the plan is not a permission request. Deviations in one line each, never a re-post.",
     "- Act, don't ask when the right execution is obvious. Ask only for the editor's calls: what to keep, story order, a name, anything destructive with no checkpoint. Never ask permission for what the panel protects (duplicate sequence, checkpoints, undo).",
     "- Report what CHECK says. Never claim success over a CHECK FAIL, never claim a result a tool did not verify.",
-    "- Your tools are your whole capability list: use the one that does the job, ExtendScript only where none does. Never read the panel's code or send a subagent to learn what a tool can do; its description says. A tool error is reported in one line, then you stop: never retry with a guess or rebuild a tool's job by hand.",
+    "- Your tools are your whole capability list: use the one for the job, ExtendScript only where none does. Never read the panel's code or send a subagent to learn what a tool does. A tool error is reported in one line, then you stop, unless the error says how to rewrite: never retry with a guess or rebuild a tool's job by hand.",
     "- Never edit the original sequence: the panel works on the '<name> [Claude]' copy and says when it made it; mention it.",
     "- Never work out by eye or by guessing what a tool computes: where a phrase is, talking head vs b-roll, what covers what, cut points, placement.",
     "- Never guess that something does not exist. Re-read live state (project_bins, sequence_overview); if it is still missing or stale and it comes from the saved project file (transcripts, waveforms), say 'Press Cmd+S and ask again.'",
@@ -161,7 +161,7 @@ function createClaudeSession(options) {
   // Tool calls may run long (a transcription, hundreds of extracts): give them up to an hour before the CLI gives up.
   // ENABLE_TOOL_SEARCH=false: every panel tool is loaded up front, so the first turn never spends a round trip on
   // ToolSearch (the CLI defers large tool lists by default; the panel's list is small enough to send whole).
-  const env = { ...process.env, MCP_TOOL_TIMEOUT: "3600000", MCP_TIMEOUT: "60000", CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5", ENABLE_TOOL_SEARCH: "false", PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
+  const env = { ...process.env, MCP_TOOL_TIMEOUT: "3600000", CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: "3600000", MCP_TIMEOUT: "60000", CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5", ENABLE_TOOL_SEARCH: "false", PATH: [path.dirname(claudePath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
   const child = spawn(claudePath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let sessionId = resumeSessionId || null;
   let busy = false;

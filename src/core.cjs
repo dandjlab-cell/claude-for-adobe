@@ -78,14 +78,28 @@ const rejectionPatterns = [
   ["Render and export operations are not allowed.", /\bencoder\b|\brenderQueue\b|\.\s*(?:encode\w*|export\w*)\b/],
   ["Dynamic evaluation is not allowed.", /\b(?:eval|Function|constructor|callee|caller|toSource|evalFile|with|call|apply|bind)\b/],
   ["Filesystem, network, shell, and engine objects are not allowed.", /\b(?:File|Folder|Socket|BridgeTalk|ExternalObject|system|callSystem|XML|reflect|Reflection|Window|ScriptUI|Palette|Dialog|\$)\b|(?:^|[^\w$])\$(?![\w$])/],
-  ["`this` and escape sequences are not allowed.", /\bthis\b|\\[ux0-7]/],
   ["Preprocessor directives are not allowed.", /^\s*#\s*(?:include|includepath|target|script|strict)\b/m],
   ["Asynchronous execution is not allowed.", /\.\s*scheduleTask\s*\(/],
-  // `obj[k]()` can name any method at runtime (k built from unescape, fromCharCode, join...), so the
-  // receiver-agnostic name checks above would never see it. Methods must be named in the source.
+  // `obj[k]()` can name any method at runtime (k built from a variable, join, fromCharCode...), so the
+  // receiver-agnostic name checks above would never see it. Methods must be named in the source. Only the direct
+  // form `obj[k](` is matched: a computed index followed by `(`. `obj[i]` used as a plain read (clips[i], a[i]) is
+  // never followed by `(`, so this has no false positives. A grouped, invoked form `(obj[k])()` is a residual the
+  // guard shares with earlier versions: it still needs the approval click (isReadOnlyScript rejects computed keys),
+  // and no false-positive-free regex separates it from a legitimate nested read like `outer(inner(a[i]))(x)`.
+  // This is a CAPABILITY rule (it can reach save/quit/export at runtime), so it comes before the FORM rules below
+  // and latches the turn; `this` + a computed call therefore reports the computed call, not `this`.
   ["Computed method calls are not allowed: name the method (obj.method()).", /\]\s*\(/],
+  // FORM rules come last so that when a script matches a capability rule too, the capability is what is reported.
+  ["`this` and escape sequences are not allowed.", /\bthis\b|\\[ux0-7]/],
   ["String-building functions are not allowed.", /\b(?:unescape|escape|decodeURI(?:Component)?|encodeURI(?:Component)?|fromCharCode|charCodeAt)\b/],
 ];
+// Most rules refuse what a script may DO (quit, save, export, eval, files and shell, async, directives, and computed
+// calls, which can name any of those at runtime): a model that hits one must stop, not try another way. Two refuse
+// only a FORM (`this` and escapes, string builders): the purpose may be fine and the script can be rewritten. On
+// 2026-09-14 the scripting skill told the model to build newlines with String.fromCharCode, the guard refused it,
+// and a latch on every refusal blocked the one-line rewrite.
+const FORM_REJECTIONS = new Set(["`this` and escape sequences are not allowed.", "String-building functions are not allowed."]);
+const isCapabilityRejection = (message) => !!message && ![...FORM_REJECTIONS].some((rule) => String(message).startsWith(rule));
 
 const warningPatterns = [
   ["QE DOM use is undocumented and may be unsafe.", /\bapp\s*\.\s*enableQE\b|\bqe\s*\./i],
@@ -195,7 +209,7 @@ function buildExtendScriptWrapper(code) {
   "}())";
 }
 
-module.exports = { isReadOnlyScript,
+module.exports = { isReadOnlyScript, isCapabilityRejection,
   buildExtendScriptWrapper,
   createJsonLineParser,
   createRpcPeer,

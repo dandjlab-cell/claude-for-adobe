@@ -85,3 +85,21 @@ test("ExtendScript classifier treats bracket writes and delete as mutations", ()
     assert.equal(inspectExtendScript(code).mutating, true, `must checkpoint: ${code}`);
   }
 });
+
+test("a capability refusal stops the turn; a form refusal can be rewritten", () => {
+  const { isCapabilityRejection } = require("../src/core.cjs");
+  const refused = (code) => inspectExtendScript(code).rejection;
+  for (const code of ['var f = new Folder("/tmp");', "app.project.save();", "eval(1);", "app.quit();"]) assert.equal(isCapabilityRejection(refused(code)), true, code);
+  for (const code of ["var nl = String.fromCharCode(10);", "var s = this.name;"]) assert.equal(isCapabilityRejection(refused(code)), false, code);
+  // a direct computed call names a method at runtime, so it stops the turn like the capability it may reach
+  for (const code of ["app.project[k]();", 'app.project["sa"+"ve"]();', "var k = m; app.project[ k ]();"]) {
+    assert.ok(refused(code), "must be refused: " + code);
+    assert.equal(isCapabilityRejection(refused(code)), true, code);
+  }
+  // when a script matches a form rule and the computed-call rule, the capability (computed call) is reported, not `this`
+  assert.equal(isCapabilityRejection(refused("var s = this.name; app.project[k]();")), true);
+  assert.equal(isCapabilityRejection(refused("var s = this.name; app.project.scheduleTask(1);")), true);
+  // ordinary indexed reads, and calls whose result is indexed, are NOT refused (no false positives that would latch the turn)
+  for (const code of ["var c = app.project.activeSequence.videoTracks[0].clips[1]; c.name;", "var x = tracks[i].clips.numItems;", "out.push(clips[i].name);", "if (clips[i]) alert(x);", "outer(inner(a[i]))(x);"]) assert.equal(refused(code), null, code);
+  assert.equal(isCapabilityRejection(null), false);
+});

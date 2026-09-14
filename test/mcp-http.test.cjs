@@ -58,3 +58,21 @@ test("requests without the session token, or with a browser Origin, are refused"
     assert.equal((await post(mcp.url, { jsonrpc: "2.0", id: 1, method: "ping" }, mcp.token)).status, 200);
   } finally { mcp.close(); }
 });
+
+test("a tools/call whose client drops the request aborts the tool's signal", async () => {
+  const http = require("node:http");
+  let resolveAborted;
+  const aborted = new Promise((r) => { resolveAborted = r; });
+  const server = await createMcpServer({ tools: [{ name: "wait", description: "", inputSchema: { type: "object" } }], onCall: (name, args, signal) => new Promise((resolve) => {
+    signal.addEventListener("abort", () => { resolveAborted(true); resolve({ text: "cancelled" }); }, { once: true });
+  }) });
+  try {
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "wait", arguments: {} } });
+    const req = http.request(server.url, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + server.token } });
+    req.on("error", () => {});
+    req.end(body);
+    setTimeout(() => req.destroy(), 150);
+    const result = await Promise.race([aborted, new Promise((r) => setTimeout(() => r(false), 3000))]);
+    assert.equal(result, true, "the signal must abort when the request closes before a response");
+  } finally { server.close(); }
+});

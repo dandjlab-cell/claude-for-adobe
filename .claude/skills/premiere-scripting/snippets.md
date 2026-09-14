@@ -7,7 +7,7 @@ note, not yet run from this panel: run the read part first and check the result.
 ## 1. Enumerate clips of the active sequence, ticks to seconds (verified)
 
 ```javascript
-var T = 254016000000, NL = String.fromCharCode(10), TAB = String.fromCharCode(9);
+var T = 254016000000, NL = " | ", TAB = " ";
 var seq = app.project.activeSequence, out = [];
 function scan(list, prefix) {
   for (var t = 0; t < list.numTracks; t++) {
@@ -205,12 +205,12 @@ else {
 }
 res;
 ```
-Keep `newText` ASCII with no quotes. Non-ASCII needs `\uXXXX` escapes; build the backslash with `String.fromCharCode(92)`.
+Keep `newText` ASCII with no quotes. Non-ASCII text cannot be set from a script (escape sequences and `String.fromCharCode` are both refused); leave it to the editor.
 
 ## 11. Find a project item by media path (verified walk; docs alternative in the comment)
 
 ```javascript
-var want = "/path/to/interview.mov", NL = String.fromCharCode(10), hits = [];
+var want = "/path/to/interview.mov", NL = " | ", hits = [];
 function walk(bin, depth, prefix) {
   if (depth > 10) return;
   for (var i = 0; i < bin.children.numItems; i++) {

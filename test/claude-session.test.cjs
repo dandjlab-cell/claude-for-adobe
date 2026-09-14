@@ -77,3 +77,10 @@ test("the Claude process gets a long MCP tool timeout", () => {
   assert.match(envLine, /MCP_TOOL_TIMEOUT: "3600000"/); assert.match(envLine, /CLAUDE_CODE_SUBAGENT_MODEL: "claude-haiku-4-5"/); assert.equal(DISALLOWED_TOOLS.includes("Agent"), false); assert.equal(DISALLOWED_TOOLS.includes("Bash"), true);
   assert.match(src.split("\n").find((l) => l.includes("spawn(claudePath")), /\{ cwd, env, stdio/);
 });
+
+// A script waiting for the editor's Run it click sends no MCP progress. On 2026-09-14 the CLI aborted such a call
+// after 643 s of silence ("set CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"), leaving an approval card nobody would hear back from.
+test("the CLI session allows a tool call to sit silent as long as a human approval may take", () => {
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "claude-session.cjs"), "utf8");
+  assert.match(src, /CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: "3600000"/);
+});

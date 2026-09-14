@@ -127,8 +127,33 @@ test("a refused script latches run_extendscript for the rest of that CLI turn in
   assert.equal((src.match(/session\.send\(/g) || []).length, 1, "every send to the agent goes through sendTurn, which starts a turn");
   assert.match(src, /function sendTurn\(\.\.\.args\) \{ turnSeq\+\+; return session\.send\(\.\.\.args\); \}/);
   const i = src.indexOf("async function runExtendScript"), run = src.slice(i, i + 3000);
-  assert.match(run, /scriptRefused\.turn === turnSeq && scriptRefused\.chat === activeChat/, "keyed to the turn and the chat");
+  assert.match(run, /const myTurn = turnSeq, myChat = activeChat;/, "captured when the call starts");
+  assert.match(run, /scriptRefused\.turn === myTurn && scriptRefused\.chat === myChat/, "keyed to that turn and chat");
   assert.ok(run.indexOf("if (latched()) return refusedAgain();") < run.indexOf("inspectExtendScript(code)"), "checked before the guard");
-  assert.match(run, /scriptRefused = \{ turn: turnSeq, chat: activeChat, reason: inspection\.rejection \}/);
+  assert.match(run, /scriptRefused = \{ turn: myTurn, chat: myChat, reason: inspection\.rejection \}/);
+  assert.ok(run.indexOf("!isCapabilityRejection(inspection.rejection)) return err(") < run.indexOf("scriptRefused = {"), "a form refusal (fromCharCode, escapes, computed calls) returns before the latch is set");
   assert.ok(run.indexOf("if (latched()) return refusedAgain(); // a parallel call") > run.indexOf("askInline("), "re-checked after the approval wait");
+});
+
+// The working copy is never deleted after a script. The timeline snapshot sees clips, not effects or parameters, so on
+// 2026-09-14 a script that added Lumetri Color "changed nothing" by that measure and its graded copy was deleted.
+test("run_extendscript never deletes the working copy it made", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const i = src.indexOf("async function runExtendScript"), j = src.indexOf("\n}\n", i), run = src.slice(i, j);
+  assert.ok(i > 0 && j > i);
+  assert.equal((run.match(/deleteSequence/g) || []).length, 0, "no deletion inside run_extendscript; Discard copy is the editor's");
+});
+
+// An approval card whose call the agent abandoned must not stay clickable (2026-09-14: the CLI gave up after 643 s and
+// a later click would have run a script whose result nobody received).
+test("an abandoned call cancels its approval card and runs nothing", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const ask = src.slice(src.indexOf("function askInline("), src.indexOf("function askInline(") + 1600);
+  assert.match(ask, /signal\.addEventListener\("abort", \(\) => finish\(false, "Cancelled: the call was abandoned"\)/);
+  const i = src.indexOf("async function runExtendScript"), run = src.slice(i, src.indexOf("\n}\n", i));
+  assert.match(run, /"Run all this session", signal\);/, "the card is tied to the call's signal");
+  assert.ok(run.indexOf("if (signal && signal.aborted) return abandonedErr();", run.indexOf("askInline(")) > 0, "checked again after the wait, before running");
+  assert.equal((run.match(/if \(signal && signal\.aborted\) return abandonedErr\(\);/g) || []).length, 3, "checked at entry, after the approval wait, and right before evalScript dispatch");
+  assert.match(src, /onCall: \(name, args, signal\) =>/);
+  assert.match(src, /const out = await TOOLS\[name\]\(args, \{ signal \}\);/);
 });

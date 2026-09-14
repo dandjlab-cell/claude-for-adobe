@@ -4,7 +4,7 @@ const path = require("node:path");
 
 // CEP hands back a file: URL with percent-encoding; require() needs a plain path.
 const extensionRoot = decodeURIComponent(window.__adobe_cep__.getSystemPath("extension").replace(/^file:\/{0,2}/, ""));
-const { buildExtendScriptWrapper, inspectExtendScript } = require(path.join(extensionRoot, "src", "core.cjs"));
+const { buildExtendScriptWrapper, inspectExtendScript, isCapabilityRejection } = require(path.join(extensionRoot, "src", "core.cjs"));
 const { createCheckpoint, createHoldingCopy, listCheckpoints, revertCheckpoint } = require(path.join(extensionRoot, "src", "checkpoint.cjs"));
 const { createMcpServer } = require(path.join(extensionRoot, "src", "mcp-http.cjs"));
 const { createClaudeSession, availableModels, readClaudeJson } = require(path.join(extensionRoot, "src", "claude-session.cjs"));
@@ -176,7 +176,7 @@ const err = (card, text) => { card.done(text, false); return { text: "CLAUDE_FOR
 
 // In-panel yes/no card (no system dialog). Used only for destructive actions: Revert, Discard copy.
 // Resolves true / false, or the string "all" when an `allLabel` third button is offered and chosen.
-function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "") {
+function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "", signal = null) {
   return new Promise((resolve) => {
     // A question must always be visible, even while a button job is keeping notes inside its card.
     const q = quietCard; quietCard = null;
@@ -186,11 +186,14 @@ function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "") {
     row.className = "row";
     const yes = document.createElement("button"); yes.textContent = yesLabel;
     const no = document.createElement("button"); no.textContent = noLabel; no.className = "utility";
-    const finish = (v) => { row.remove(); el.textContent += (v === "all" ? allLabel : v ? yesLabel : noLabel) + "."; resolve(v); };
+    let done = false;
+    const finish = (v, label) => { if (done) return; done = true; row.remove(); el.textContent += (label || (v === "all" ? allLabel : v ? yesLabel : noLabel)) + "."; resolve(v); };
     yes.onclick = () => finish(true); no.onclick = () => finish(false);
     row.append(yes, no);
     if (allLabel) { const all = document.createElement("button"); all.textContent = allLabel; all.className = "utility"; all.onclick = () => finish("all"); row.append(all); }
     el.appendChild(row);
+    // A call the agent abandoned (Stop, or it gave up waiting) must not stay clickable: a later click would act for nobody.
+    if (signal) { if (signal.aborted) finish(false, "Cancelled: the call was abandoned"); else signal.addEventListener("abort", () => finish(false, "Cancelled: the call was abandoned"), { once: true }); }
     followBottom(ui.messages);
   });
 }
@@ -413,19 +416,24 @@ async function snapshotTimeline() {
 
 // ---- tools ------------------------------------------------------------------------------------
 
-async function runExtendScript({ summary = "", code = "" }) {
+async function runExtendScript({ summary = "", code = "" }, { signal } = {}) {
   const card = addTool(summary || "run_extendscript", code);
   setStatus("Running: " + (summary || "script"));
-  const latched = () => !!scriptRefused && scriptRefused.turn === turnSeq && scriptRefused.chat === activeChat;
+  const myTurn = turnSeq, myChat = activeChat; // the turn this call belongs to, not whatever is current after a wait
+  const abandonedErr = () => err(card, "This call was abandoned (Stop, or the agent stopped waiting) before it could run; nothing ran.");
+  if (signal && signal.aborted) return abandonedErr();
+  const latched = () => !!scriptRefused && scriptRefused.turn === myTurn && scriptRefused.chat === myChat;
   const refusedAgain = () => err(card, "No script runs for the rest of this turn: the guard refused one already (" + scriptRefused.reason + "). If a panel tool does the job, use it; otherwise tell the editor in one line what could not be done and stop. Never read the panel's code or hand the search to a subagent.");
   if (latched()) return refusedAgain();
   const inspection = inspectExtendScript(code);
-  if (inspection.rejection) { scriptRefused = { turn: turnSeq, chat: activeChat, reason: inspection.rejection }; return err(card, inspection.rejection + " This is the script guard, not a bug: no other script runs this turn. If a panel tool does the job, use it; otherwise tell the editor in one line what could not be done and stop."); }
+  if (inspection.rejection && !isCapabilityRejection(inspection.rejection)) return err(card, inspection.rejection + " Only the form is refused, not the purpose: rewrite the script and run it again. Name every method directly (obj.method()), build text by pushing lines into an array and joining them with \" | \", and use no escape sequences or `this`.");
+  if (inspection.rejection) { scriptRefused = { turn: myTurn, chat: myChat, reason: inspection.rejection }; return err(card, inspection.rejection + " This is the script guard, not a bug: no other script runs this turn. If a panel tool does the job, use it; otherwise tell the editor in one line what could not be done and stop."); }
   // Enforced human approval: the guard cannot prove ExtendScript safe, so anything that is not a plain read waits for a
   // click. "Run all this session" skips the click for undoable scripts until New is pressed; non-undoable ones always ask.
   if (!inspection.readOnly && (inspection.notUndoable.length || !(allowScriptsThisSession || !ui.askScripts.checked))) {
     const what = inspection.notUndoable.length ? "This cannot be undone with Cmd+Z (" + inspection.notUndoable.join(", ") + ")." : (inspection.mutating ? "This edits the project (Cmd+Z undoes it)." : "The guard could not prove this script is read-only.");
-    const answer = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run", inspection.notUndoable.length ? "" : "Run all this session");
+    const answer = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run", inspection.notUndoable.length ? "" : "Run all this session", signal);
+    if (signal && signal.aborted) return abandonedErr();
     if (latched()) return refusedAgain(); // a parallel call was refused while this one waited for the click
     if (!answer) return err(card, "The user declined to run this script. Ask before trying a different approach.");
     if (answer === "all") { allowScriptsThisSession = true; addMessage("assistant muted", "Scripts run without asking until you open a new chat. Actions Cmd+Z can't undo will still ask."); }
@@ -450,6 +458,10 @@ async function runExtendScript({ summary = "", code = "" }) {
       } catch (error) { return err(card, (forced ? forced + " blocked: it cannot be undone and a checkpoint was not possible: " : "Mutating script blocked, checkpoint not possible: ") + error.message); }
     }
   }
+  // Copy creation and the checkpoint save above are awaited, so re-check right before dispatch: a call abandoned
+  // (Stop, or the agent gave up) during that preparation must not still run the script. Once dispatched a script
+  // cannot be recalled; this only stops one that has not started.
+  if (signal && signal.aborted) return abandonedErr();
   const raw = await Promise.race([
     evalScript(buildExtendScriptWrapper(code)),
     new Promise((resolve) => setTimeout(() => resolve("CLAUDE_FOR_ADOBE_ERROR:Script did not return within " + TOOL_TIMEOUT_MS / 1000 + "s (a Premiere dialog may be open)."), TOOL_TIMEOUT_MS)),
@@ -457,16 +469,11 @@ async function runExtendScript({ summary = "", code = "" }) {
   const ok = raw.indexOf("CLAUDE_FOR_ADOBE_OK:") === 0;
   const body = raw === "EvalScript error." ? "ExtendScript host error (script could not be evaluated)"
     : raw.replace(/^CLAUDE_FOR_ADOBE_(?:OK|ERROR):/, "") || (ok ? "(empty result)" : "EvalScript returned nothing");
-  if (freshCopy) {
-    // The duplicate was made for this script only. If nothing changed, drop it so the project stays tidy.
-    const after = await readSnapshot();
-    if (formatSnapshot(after) === freshCopy.before) {
-      const c = workingCopies.get(freshCopy.id);
-      if (c) { try { await host("deleteSequence", freshCopy.id, c.originalId); } catch (_) {} workingCopies.delete(freshCopy.id); renderCopies(); }
-      copyNote = "[The panel duplicated the sequence first, but this script changed nothing, so the duplicate was removed again; \"" + (c ? c.originalName : "the original") + "\" is active.]\n";
-      addMessage("assistant muted", "No changes were made, so the duplicate was removed.");
-    } else timeline = after;
-  }
+  // The working copy is never deleted automatically. The timeline snapshot sees clips, not effects or parameters, so
+  // "unchanged" cannot prove a script changed nothing: on 2026-09-14 a script that added Lumetri Color looked like a
+  // no-op and its graded copy was deleted, and a script that edits an effect and then throws would lose the same way.
+  // The editor removes a copy with Discard copy.
+  if (freshCopy) timeline = await readSnapshot().catch(() => timeline);
   card.done((note ? note + "\n" : "") + body, ok);
   setStatus("Thinking…");
   if (inspection.mutating) refreshProject();
@@ -2579,11 +2586,11 @@ async function boot() {
     // Tool calls run one at a time: Premiere's host is single-threaded, and two frame renders in flight at once
     // (the model likes to call tools in parallel) only make both slow.
     let toolQueue = Promise.resolve();
-    mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: (name, args) => {
+    mcp = await createMcpServer({ tools: TOOL_DEFS, onCall: (name, args, signal) => {
       // The rhythm rules monitor every edit rather than waiting to be asked: if a tool changed the timeline, the
       // cut is checked (holes on V1, flash gaps and blinks on the b-roll tracks, scroll stop on vertical) and any
       // finding is appended to that tool's own result, where the model cannot miss it.
-      const run = async () => { const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline); const out = await TOOLS[name](args);
+      const run = async () => { if (signal && signal.aborted) return { text: "CLAUDE_FOR_ADOBE_ERROR:This call was abandoned before it ran; nothing ran.", isError: true }; const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline); const out = await TOOLS[name](args, { signal });
         if (timelineFingerprint(timeline) !== fpBefore) { refreshLedgerSoon(); const note = require(path.join(extensionRoot, "src", "rhythm.cjs")).rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
       const next = toolQueue.then(run, run);
       toolQueue = next.catch(() => {});

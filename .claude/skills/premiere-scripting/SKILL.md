@@ -36,8 +36,9 @@ read-only script that enumerates `displayName` / `matchName` first, then write t
    The panel's tools already export for you, so a refused export is never a dead end: frames with the grade
    (`preview_frames` up to full resolution, `scopes` for exposure and colour numbers) and the audio mix
    (`transcribe_timeline`). Reach for those before any script.
-4. No backslash escapes `\u`, `\x`, `\0`-`\7`. Avoid backslashes entirely: build newlines with
-   `String.fromCharCode(10)` and tabs with `String.fromCharCode(9)`. Comments are fine.
+4. No backslash escapes `\u`, `\x`, `\0`-`\7`. Also refused: string builders (`String.fromCharCode`,
+   `charCodeAt`, `unescape`, `encodeURI`...) and computed calls (`obj[k]()`). Return text by pushing lines into an
+   array and joining them with `" | "`. Comments are fine.
 5. Anything that edits waits for the user's click. Edits are: property assignments, and any call starting
    with add/attach/change/clear/create/delete/execute/import/insert/move/overwrite/remove/rename/set.
    Only the plainest reads (no strings, no comments, allowlisted getters) run without a click, so expect a

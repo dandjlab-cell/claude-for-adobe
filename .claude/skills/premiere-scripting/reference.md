@@ -116,7 +116,7 @@ UXP cannot set MOGRT text or create caption tracks; those are ExtendScript jobs,
 ## Writing a script that gets through the gate
 
 - Start with `var seq = app.project.activeSequence; if (!seq) ...` and return a string on failure rather than throwing.
-- Keep strings ASCII, no backslashes; build separators with `String.fromCharCode`.
+- Keep strings ASCII, no backslashes; join lines with `" | "` (`String.fromCharCode` is refused as a string builder).
 - Use `Number(x)` on tick strings before arithmetic and `String(n)` when passing ticks back.
 - Use `try { } catch (e) { }` around per-item calls that can throw (`getMediaPath`, `getValue`) and keep going.
 - End with one expression: `out.join(NL)` or a status string like `"scaled 3 clips"`.
@@ -133,14 +133,14 @@ UXP cannot set MOGRT text or create caption tracks; those are ExtendScript jobs,
 - `alert()` opens a modal that the user may not see behind the panel; return text instead.
 - A script that throws returns `CLAUDE_FOR_ADOBE_ERROR: <message>`; ExtendScript messages are short ("undefined is not an object"),
   so wrap suspect calls in `try` and push `"step N: " + e` into the result to learn which line failed.
-- Unicode in string literals is not reliable; keep literals ASCII and build other characters with `String.fromCharCode`.
+- Unicode in string literals is not reliable; keep literals ASCII. Non-ASCII text cannot be built in a script (escape sequences and `String.fromCharCode` are both refused): say so and leave it to the editor.
 
 ## Read-first recipes (run these before an edit when a name or index is uncertain)
 
 Components and params on a clip (replace the indexes):
 
 ```javascript
-var NL = String.fromCharCode(10), cl = app.project.activeSequence.videoTracks[0].clips[0], out = [cl.name];
+var NL = " | ", cl = app.project.activeSequence.videoTracks[0].clips[0], out = [cl.name];
 for (var i = 0; i < cl.components.numItems; i++) {
   var comp = cl.components[i];
   out.push(i + " " + comp.displayName + " [" + comp.matchName + "]");
