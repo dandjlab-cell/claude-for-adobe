@@ -238,3 +238,24 @@ Live dev speaker_check on an existing test sequence passed all nine67.11-71.11se
 Independent read-only Terra review APPROVED exact selected-source/bin/timeline scoping, explicit full-inventory opt-in, compact guidance candidates without implied approval, and consistent shared prompt/skill instructions. Reviewer independently ran the full suite: 178 total / 177 pass / 1 online Adobe schema skip, plus syntax and whitespace checks. README documentation added afterward; no host changes.
 
 Regression covers exact names versus prefix collisions, unrelated active timelines and historical selections, selected bins, stale timeline transcripts, explicit all:true, selection errors, and no selection/timeline. Live dev-panel read-only call returned one selected source, no matched analysis and two guidance titles; unrelated edits/chats/renders were absent and the model did not expand scope. Current Editorial remained unchanged. No release.
+
+## 2026-09-14 — `scopes` tool, capability-first tool text, script refusal latch (branch feat/scopes)
+
+Context: the editor asked the panel to "see the scopes". The model believed its frames were 512 px thumbnails (the preview_frames description led with the default), read in the scripting skill that `.export` is refused and concluded export was impossible (preview_frames already renders through QE exportFramePNG at full size), then sent a Haiku Explore subagent to read the panel's source. That subagent, which never receives the panel prompt, tried Bash (refused), Reads outside the allowed folders (denied), a `new Folder(...)` disk walk through run_extendscript (refused by the guard) and a media_info call on a fake path. No data left the machine; every guard held.
+
+### Round 1 — NOT APPROVED (2 HIGH, 5 MEDIUM, 1 LOW)
+
+| # | Severity | Finding | Response |
+|---|---|---|---|
+| H1 | HIGH | Scope picture used ffmpeg's implicit limited-range BT.601 conversion: pure red at Y 81 against Rec.709's 54 | Explicit `out_color_matrix=bt709`. Probed on exact RGB patches (red 54, green 182, blue 18, white 255, black 0, grey 128). ffmpeg's waveform graticule and vectorscope targets assume limited range, so the display maps full range onto it: a 0/64/128/191/255 step chart lands on 0/25/50/75/100 and 75% bars on their targets. Numbers stay full range |
+| H2 | HIGH | Minimum luma always 0 (p0 returned the first bin even when empty) | Nearest-rank percentile with rank >= 1; a flat grey frame reports 50.2 |
+| M1 | MEDIUM | Colour-space claim unverified | Module, tool description and result say the exported 8-bit frame is read as SDR Rec.709 and is not calibrated against Lumetri; compare shots with each other |
+| M2 | MEDIUM | Saturation capped at 100 | Kept to 150; normalisation stated (127.5 Cb/Cr radius: pure red ~103, pure green ~119) |
+| M3 | MEDIUM | Pixel occupancy presented as a diagnosis | Readings are occupancy with qualified meaning (a letterbox fills the luma floor, a saturated title a channel at 255); fallback states thresholds |
+| M4 | MEDIUM | Failed render leaked files and reported success | Per-position try/finally cleanup; zero measured is an error; partial says "Measured N of M" |
+| M5 | MEDIUM | Latch outlived its turn (nudges bypass sendMessage), global across chats, not re-checked after an approval wait | All three sends go through `sendTurn` (turn counter); latch keyed to turn and chat; re-checked after the click |
+| L1 | LOW | Full-detail guidance wrong for vertical frames | "the frame's longest edge" |
+
+### Round 2 — **APPROVED**
+
+All eight resolved. Notes: the display remap keeps the whole 0-255 range, drawn on 220 levels; superwhite/superblack lost in the 8-bit export cannot be recovered. `sendTurn` changes nothing but the turn count. 184 tests, 183 pass, 1 network skip. Not yet validated: calibration against Lumetri Scopes on a known target inside Premiere.

@@ -119,3 +119,16 @@ test("sequence placement follows footage and reuses a nearby sequences bin",()=>
   shoot=bin("Shoot",[a,bin("Sequences"),bin("Cuts")]);root=bin("root",[shoot]);
   assert.equal(run(root,[a]),shoot); // Ambiguous destinations never pick an arbitrary bin.
 });
+
+// A guard refusal ends scripting for the rest of that CLI turn in that chat. On 2026-09-14 a subagent, which never sees
+// the panel's system prompt, answered a refused script with a Folder walk of the disk; the stop has to live in code.
+test("a refused script latches run_extendscript for the rest of that CLI turn in that chat", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  assert.equal((src.match(/session\.send\(/g) || []).length, 1, "every send to the agent goes through sendTurn, which starts a turn");
+  assert.match(src, /function sendTurn\(\.\.\.args\) \{ turnSeq\+\+; return session\.send\(\.\.\.args\); \}/);
+  const i = src.indexOf("async function runExtendScript"), run = src.slice(i, i + 3000);
+  assert.match(run, /scriptRefused\.turn === turnSeq && scriptRefused\.chat === activeChat/, "keyed to the turn and the chat");
+  assert.ok(run.indexOf("if (latched()) return refusedAgain();") < run.indexOf("inspectExtendScript(code)"), "checked before the guard");
+  assert.match(run, /scriptRefused = \{ turn: turnSeq, chat: activeChat, reason: inspection\.rejection \}/);
+  assert.ok(run.indexOf("if (latched()) return refusedAgain(); // a parallel call") > run.indexOf("askInline("), "re-checked after the approval wait");
+});

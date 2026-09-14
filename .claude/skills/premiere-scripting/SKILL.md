@@ -33,6 +33,9 @@ read-only script that enumerates `displayName` / `matchName` first, then write t
    `scheduleTask`; `#include`-style directives.
 3. Refused methods: `.quit`, `.openDocument`, `.newProject`, `.closeDocument`, `.save`, `.saveAs`,
    anything starting with `.export` or `.encode`, `encoder`, `renderQueue`. Never save; the panel saves.
+   The panel's tools already export for you, so a refused export is never a dead end: frames with the grade
+   (`preview_frames` up to full resolution, `scopes` for exposure and colour numbers) and the audio mix
+   (`transcribe_timeline`). Reach for those before any script.
 4. No backslash escapes `\u`, `\x`, `\0`-`\7`. Avoid backslashes entirely: build newlines with
    `String.fromCharCode(10)` and tabs with `String.fromCharCode(9)`. Comments are fine.
 5. Anything that edits waits for the user's click. Edits are: property assignments, and any call starting

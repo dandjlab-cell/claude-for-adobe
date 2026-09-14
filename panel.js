@@ -14,6 +14,7 @@ const { classifyMedia, formatClassification } = require(path.join(extensionRoot,
 const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captions.cjs"));
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
+const { measure: measureScopes, report: scopeReport, decodeRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
@@ -127,6 +128,12 @@ let lastPayload = "";
 let pendingProjectRestart = false; // the project changed mid-turn: restart (new read path) when the turn ends
 let lastCopyId = null;        // working copy created by the most recent ensureWorkingCopy()
 let allowScriptsThisSession = false; // set by "Run all this session"; cleared on New
+// A guard refusal ends scripting for the rest of that CLI turn in that chat. The rule "stop on a tool error" never
+// reached the Haiku subagent that walked the disk with Folder on 2026-09-14 (subagents do not get the panel prompt),
+// so the stop travels in the tool result and is enforced here for whoever calls, subagents included. Every send to the
+// agent (the editor's message, a job-finished nudge, a model-fallback resend) goes through sendTurn and starts a turn.
+let turnSeq = 0, scriptRefused = null; // { turn, chat, reason }
+function sendTurn(...args) { turnSeq++; return session.send(...args); }
 function setStatus(text, cls) { ui.status.textContent = text; ui.status.className = cls || (/^(Ready|Starting)/.test(text) ? "" : "busy"); }
 function setBusy(busy) { ui.send.disabled = busy || (!session && !!activeChat); ui.stop.disabled = !busy; if (!busy) ui.input.focus(); } // no chat: Send opens one
 
@@ -409,13 +416,17 @@ async function snapshotTimeline() {
 async function runExtendScript({ summary = "", code = "" }) {
   const card = addTool(summary || "run_extendscript", code);
   setStatus("Running: " + (summary || "script"));
+  const latched = () => !!scriptRefused && scriptRefused.turn === turnSeq && scriptRefused.chat === activeChat;
+  const refusedAgain = () => err(card, "No script runs for the rest of this turn: the guard refused one already (" + scriptRefused.reason + "). If a panel tool does the job, use it; otherwise tell the editor in one line what could not be done and stop. Never read the panel's code or hand the search to a subagent.");
+  if (latched()) return refusedAgain();
   const inspection = inspectExtendScript(code);
-  if (inspection.rejection) return err(card, inspection.rejection);
+  if (inspection.rejection) { scriptRefused = { turn: turnSeq, chat: activeChat, reason: inspection.rejection }; return err(card, inspection.rejection + " This is the script guard, not a bug: no other script runs this turn. If a panel tool does the job, use it; otherwise tell the editor in one line what could not be done and stop."); }
   // Enforced human approval: the guard cannot prove ExtendScript safe, so anything that is not a plain read waits for a
   // click. "Run all this session" skips the click for undoable scripts until New is pressed; non-undoable ones always ask.
   if (!inspection.readOnly && (inspection.notUndoable.length || !(allowScriptsThisSession || !ui.askScripts.checked))) {
     const what = inspection.notUndoable.length ? "This cannot be undone with Cmd+Z (" + inspection.notUndoable.join(", ") + ")." : (inspection.mutating ? "This edits the project (Cmd+Z undoes it)." : "The guard could not prove this script is read-only.");
     const answer = await askInline("Claude wants to run a script: " + (summary || "(no summary)") + "\n" + what + " The code is in the card above.", "Run it", "Don't run", inspection.notUndoable.length ? "" : "Run all this session");
+    if (latched()) return refusedAgain(); // a parallel call was refused while this one waited for the click
     if (!answer) return err(card, "The user declined to run this script. Ask before trying a different approach.");
     if (answer === "all") { allowScriptsThisSession = true; addMessage("assistant muted", "Scripts run without asking until you open a new chat. Actions Cmd+Z can't undo will still ask."); }
   }
@@ -520,6 +531,46 @@ async function previewFrames({ seconds = [], max_px = 512, solo_track, labels = 
   if (soloNote) content.push({ type: "text", text: soloNote });
   content.push({ type: "text", text: "Captions are a caption track, not a video track: they appear in every render, solo or not. That is expected and says nothing about graphics." });
   card.done(content.filter((c) => c.type === "text").map((c) => c.text).join("\n"), true);
+  setStatus("Thinking…");
+  return { content };
+}
+
+// Lumetri Scopes as numbers, from Premiere's own full-resolution render of the frame (grade included), plus one scope
+// picture. Added 2026-09-14 after the panel had no way to answer "is this exposed right" but eyeballing a thumbnail.
+async function scopesTool({ seconds = [], solo_track } = {}) {
+  const secs = [].concat(seconds).map(Number).filter((n) => n >= 0).slice(0, 3);
+  if (!secs.length) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds[] required (up to 3 timeline positions)", isError: true };
+  const base = path.join(os.tmpdir(), "claude-for-adobe-scopes-" + Date.now().toString(36));
+  const solo = solo_track ? Number(solo_track) - 1 : -1;
+  const where = (i, tc) => "timeline " + secs[i] + "s (" + tc + ")" + (solo >= 0 ? " V" + (solo + 1) + " alone" : "");
+  const card = addTool("scopes" + (solo >= 0 ? " V" + (solo + 1) + " alone" : "") + " at " + secs.map((n) => n + "s").join(", "), "");
+  setStatus("Measuring " + secs.length + " frame(s)…");
+  const raw = await host("frames", JSON.stringify(secs), base, solo >= 0 ? String(solo) : "");
+  if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4));
+  const content = [];
+  let rows = raw.split(ROW);
+  if (rows[0] && rows[0].indexOf("SOLO" + COL) === 0) {
+    const [, hid, others] = rows.shift().split(COL);
+    if (Number(hid) !== Number(others)) content.push({ type: "text", text: "SOLO NOT HONOURED: only " + hid + " of " + others + " other video tracks could be hidden, so these numbers are (partly) the composite." });
+  }
+  let measured = 0;
+  rows.forEach((row, i) => {
+    const [b, ok, tc] = row.split(COL);
+    const src = [b + ".png", b].find((f) => fs.existsSync(f)), jpg = b + "_scopes.jpg";
+    try {
+      if (!src) { content.push({ type: "text", text: "at " + secs[i] + "s: export failed (" + ok + ")" }); return; }
+      content.push({ type: "text", text: scopeReport(measureScopes(decodeRgb(src)), where(i, tc)) });
+      measured++;
+      renderScopes(src, jpg);
+      content.push({ type: "image", data: fs.readFileSync(jpg).toString("base64"), mimeType: "image/jpeg" });
+    } catch (error) { content.push({ type: "text", text: "at " + secs[i] + "s: " + error.message }); }
+    finally { for (const f of [src, jpg]) { try { if (f) fs.rmSync(f, { force: true }); } catch (_) {} } }
+  });
+  const texts = () => content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  if (!measured) return err(card, "no position could be measured: " + texts());
+  if (measured < rows.length) content.unshift({ type: "text", text: "Measured " + measured + " of " + rows.length + " positions; the rest failed, see below." });
+  content.push({ type: "text", text: "Image: luma waveform and vectorscope on top, R G B parade below, from the same Rec.709 conversion as the numbers. Values read the exported 8-bit frame as SDR Rec.709 and are not calibrated against Lumetri, so compare shots with each other; a log, HDR or wide-gamut working space is not what Lumetri would show. Pixel counts are not a diagnosis: a letterbox fills the luma floor, a saturated title fills a channel at 255. The grade is the editor's Lumetri click." });
+  card.done(texts(), true);
   setStatus("Thinking…");
   return { content };
 }
@@ -770,7 +821,7 @@ function nudge(text) {
   if (!session) return;
   if (session.busy) { queuedNudges.push(text); return; }
   setBusy(true); setStatus("Thinking…");
-  try { session.send(text); } catch (_) { setBusy(false); }
+  try { sendTurn(text); } catch (_) { setBusy(false); }
 }
 function freshTimelineWords(snap) {
   try { const j = JSON.parse(fs.readFileSync(timelineTranscriptPath(), "utf8")); return j.fingerprint === timelineFingerprint(snap) ? j : null; } catch (_) { return null; }
@@ -2291,7 +2342,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { scopes: scopesTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -2308,8 +2359,10 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { summary: { type: "string", description: "One line, shown to the user." }, code: { type: "string", description: "ES3 ExtendScript. End with a result expression." } }, required: ["summary", "code"] } },
   { name: "analyze_audio", description: "For every audio clip overlapping a timeline range of the active sequence: levels per window, a waveform sparkline, and silence ranges, in timeline seconds. Read from Premiere's own peak-file waveform cache. Use to answer questions about audio, not before remove_silences (it measures on its own).",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
-  { name: "preview_frames", description: "Render up to 6 frames of the active sequence at the given timeline positions and return them as images. Only when the user asks what something looks like; never to verify edits.",
-    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
+  { name: "scopes", description: "Lumetri Scopes as numbers for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
+    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
+  { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
+    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
   { name: "layer_frames", description: "One layer alone: every clip on a video track rendered with the other video tracks hidden, so that layer's own placement is judged for the shot alone. Reframe order: footage tracks in step 1 (picture), graphic tracks in step 3 (graphics). Fix with nudge_clip and the same track.",
     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track (1 = V1)" }, max_px: { type: "number" } }, required: ["track"] } },
   { name: "seam_frames", description: "The seams: the visible picture just before and just after every cut where it changes, in pairs. Run after the shots are framed (reframe step 1): the subject must not jump across a cut; fix the shot that is off. 3 seams per call; continue with from_seconds.",
@@ -2407,7 +2460,7 @@ function onEvent(event) {
       addMessage("assistant muted", modelLabel(ui.model.value) + " isn't available on this account. Switching to " + modelLabel(MODEL_FALLBACK) + " and sending your message again.");
       ui.model.value = MODEL_FALLBACK;
       const payload = lastPayload;
-      restartSession(event.sessionId).then(() => { if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); session.send(payload); } });
+      restartSession(event.sessionId).then(() => { if (session && !session.busy) { setBusy(true); setStatus("Thinking…"); sendTurn(payload); } });
       return;
     }
     if (event.isError) addMessage("assistant error", event.text || "Claude returned an error.");
@@ -2516,7 +2569,7 @@ async function sendMessage() {
   renderAttachments();
   setBusy(true);
   setStatus("Thinking…");
-  try { session.send(payload, images); } catch (error) { addMessage("assistant error", error.message); setBusy(false); }
+  try { sendTurn(payload, images); } catch (error) { addMessage("assistant error", error.message); setBusy(false); }
 }
 
 async function boot() {
