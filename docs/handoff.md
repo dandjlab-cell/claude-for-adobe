@@ -9,6 +9,16 @@
 
 ---
 
+## Cut silences button native rebuild (2026-09-10)
+
+- Button now detects once and builds a separate native sequence in batches of up to eight linked V1/A1 pairs. Existing chat/editorial extraction paths are unchanged. Host reads back source and destination ranges, links, static intrinsic effects and original geometry; no QE extraction in this button path.
+- Supported: contiguous, source-aligned normal-speed V1/A1, at most 300 source pairs (600 snapshot rows). Other populated tracks, transitions, nests/multicam, sequence markers and animated/nonintrinsic effects are refused. CEP cannot enumerate caption tracks: an explicit per-run no-captions acknowledgement is required; declining does not detect or mutate.
+- Source project-item marks restore before yielding, with exact verification and retained recovery state on failure. Stop leaves a named INCOMPLETE copy and reopens the original after successful mark recovery. Native insertion is still sequential inside bounded batches, not an atomic transaction or a guarantee against Premiere crashes.
+- Actual source/original/new sequence ranges are saved in `.silence-rebuild.json` beside the project. Matching original word metadata, when available, is mapped as evidence with partial-word flags, never stamped as a newly verified transcript. Original source transcription and automatic consumption of this report by editorial tools remain separate follow-ups.
+- Independent Terra review APPROVED after caption acknowledgement, exact inserted counts, mapping validation and pending-mark recovery fixes. Full suite: 190 tests, 189 passed, one external Adobe schema skip. Panel syntax and diff checks passed.
+- Live reloaded dev panel: cancelled the caption acknowledgement, verified original unchanged; then actual Cut silences button rebuilt 144.310833s into 76.993583s, 36 linked pairs from 37 full-precision detector intervals. Report mapping assertions passed; native source/link/effect/mark checks passed. Original UI still 2:24:04; result 1:16:22, 1080x1920, left open at start. Job report 15.821s includes acknowledgement wait, so it is not isolated execution timing. No matching original transcript in this test (words empty); no listening-quality claim. Private chat/report evidence remains beside the project. Project not saved.
+- Ready for the user's larger footage-only sequence test. No release, no version bump. Current changes are local/uncommitted; the dev panel uses repo symlinks and has been reloaded.
+
 ## Scoped analysis lookup (2026-09-10 follow-up)
 
 - Default list_analysis now uses direct selected Project clips, otherwise individually selected bins, otherwise the fresh active timeline. Exact filename candidates replace the full project inventory; unrelated edits, chats, renders and debug artifacts are omitted. Selection errors refuse rather than broaden. Full inventory requires explicit all:true.
@@ -144,6 +154,20 @@ The user supplied the knowledge note about Whisper attaching pauses to neighbori
 A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that runs the user's own Claude Code (or Codex) inside Premiere. The editor clicks a folder or clips, says what they want, and the agent inspects footage, transcribes, cuts silences, fillers and repeated takes, reframes, lays b-roll, organizes bins, and makes captions, all through deterministic panel tools that print CHECK lines and keep a duplicate-sequence safety net. Users install a zip; the panel self-updates from GitHub Releases. Latest public release: **0.1.77 (2026-09-07)**.
 
 ## Where things stand (read this first)
+
+## Colour / scopes + lost-Claude fixes (2026-09-14, branch fix/whisper-metal, commits 2cd371b + dab2098, NOT on main)
+
+The editor asked the panel to "see the scopes" to colour footage, and it got lost (loaded a skill, sent a subagent to read the panel's own source, tried a disk walk). Root cause was no capability map and no colour tool, not a prompt failure. What landed, each Codex-approved (trail in `docs/codex-review-log.md`):
+- **`scopes` tool**: Lumetri-style scopes as NUMBERS for up to 3 timeline positions, from Premiere's own full-res Export Frame (grade included), read as SDR Rec.709 — luma percentiles 0-100, RGB parade means/ranges, clipped/crushed shares, vectorscope saturation and whole-frame cast, plus one scope picture drawn through an explicit Rec.709 conversion so it agrees with the numbers. `src/scopes.cjs`. VERIFIED live against Lumetri Scopes on colour bars in a sandbox: luma waveform, vectorscope and parade values all match; the only picture flaw is the parade graticule hiding a trace that sits exactly on a line.
+- **Capability map in the prompt/tools**: preview_frames says it is Premiere's own full-res render; the scripting skill names the tools that export; the prompt's error rule leads with "your tools are your whole capability list ... never read the panel's code or send a subagent to learn what a tool does".
+- **Script guard split**: CAPABILITY refusals (save/export/eval/files/computed-calls...) latch the turn; FORM refusals (`this`/escapes, string builders) return how to rewrite and allow a retry. The skills no longer recommend `String.fromCharCode` (a test runs every skill snippet through the guard).
+- **`run_extendscript` never deletes its working copy** (the snapshot can't see effects, so a Lumetri add looked like a no-op and its graded copy was being deleted).
+- **Abandoned tool calls cancel**: the MCP server aborts a call whose request closes (CLI gave up, or Stop); the approval card resolves to Cancelled; run_extendscript rechecks the signal before dispatch. `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` raised so an approval wait doesn't abort.
+
+**Answered by the probe:** the panel does NOT read Premiere's Lumetri Scopes panel; it measures Premiere's own rendered frame and computes the scopes itself, and those numbers match Lumetri. It CAN drive Premiere's colour tools through ExtendScript: a script added Lumetri Color via QE `addVideoEffect` and read back all 53 parameters live (Exposure is index 19). Setting a parameter (`property.setValue`) is written but was NOT confirmed live — the one run that would have set Exposure was abandoned before it dispatched (the bug now fixed). Next session: re-run "add Lumetri, set Exposure to 1, measure" on the sandbox and confirm the write plus the scope shift.
+
+Not committed to main; no release. Dev panel needs a reload to pick this up (host/premiere.jsx unchanged, so no Premiere restart).
+
 
 **The product loop being built this weekend is "make this a 9x16 video" from a raw talking-head bin.** It ran end to end once on 2026-09-07 on the user's test project (a folder with a TALKING HEAD bin and a BROLL bin; two BRAW clips, 388 s raw, 748 words). Result: a 1080x1920 sequence, footage filled and face-centred with read-backs, transcript from Whisper, 52 model-authored thoughts, `audio_cut` kept 12 pieces (79.8 s) with CHECK PASS. The user's verdict: **"there are still double moments here."**
 
@@ -300,3 +324,35 @@ git add docs/handoff.md && git commit -m "docs: session handoff <date>" && git p
 Then, in Premiere: the footer must read `dev <sha> (<branch>)` and NOT `v0.1.77`; select the TALKING HEAD and BROLL bins in the Project panel; say "make this a 9x16 video". Pass criteria (MUST vs SHOULD) in What's Next 1.
 
 Requirements on the Mac: Apple Silicon, Node 24 (`node --version` -> v24.1.0 on this Mac), Premiere 25+, Claude desktop app signed in (Claude Code opened once) or the CLI; `gh` authenticated as dandjlab-cell for releases. **The test project lives on an external drive that must be mounted before any re-run** (path in the private memory note `project_claude_for_adobe_test_project.md`; never write it into this repo). Whisper's model downloads once on first use. **Budget for the re-run: several minutes.** Whisper on 6+ minutes of raw audio takes minutes (the job bar shows a percentage); if the editor transcribed in the Text panel and pressed Cmd+S first, `rough_cut` picks up Premiere's own transcript instead and that step is instant. Put the wall time per step in the log. No API keys anywhere; Claude runs under the user's own login.
+
+
+## 2026-09-10 — Larger native rebuild batches
+
+Internal benchmark option accepts only numeric 8, 32 or 64, with per-call timings on successful runs. Independent Terra reviewer approved the bounded option and ascending live trials with escalation stopped on poor responsiveness. Full suite: 191 total / 190 pass / 1 external Adobe schema skip.
+
+Large live baseline at 8 completed 360 linked pairs: 191.649 seconds host roundtrip work; slowest step 9.650 seconds. The 32 trial continued progressing but was substantially less responsive and was stopped. Cancellation requested at 10:32:06 UTC, logged complete at 10:32:53 UTC (about 47 seconds). Original reopened; incomplete copy retained. No successful 32 report or partial host timing record; 64 was not attempted. Sequential trials shared the same Premiere process and accumulated project state, so this does not isolate batch size as the cause. Default restored to 8. No release; investigate the slowdown before larger defaults.
+
+
+### 16-pair follow-up trial
+
+User requested 16. Added exact numeric 16 to the existing host allowlist; regression failed before the change, then full suite passed 191 total / 190 pass / 1 external schema skip. Independent Terra reviewer approved the bounded change before live execution.
+
+Live 16 completed 360 linked pairs with native verification PASS: 161.838 seconds host work versus 191.649 at 8 (15.6% faster); slowest step 11.008 seconds versus 9.650. All mapping rows exactly equal the 8-pair baseline; output duration 748.831416666667 seconds, original preserved. No stall observed; cancellation was not tested at 16. This is one sequential trial, not an isolated repeated benchmark. Default restored to 8 after trial. Dialogue quality not checked. No release.
+
+
+### 24-pair follow-up trial
+
+User requested 24. Exact numeric 24 added to existing host allowlist and fixture. Regression failed before implementation; full191/190pass/1external schema skip after. Independent Terra read-only reviewer approved before live execution.
+
+Live 24 completed360 linked pairs with native verification PASS:135.048s host work (16:161.838s;8:191.649s). Slowest step12.347s (16:11.008s;8:9.650s). All360 mapping rows exactly identical across8/16/24, duration748.831416666667s; original preserved. No stall observed. Cancellation not exercised at24; sequential single trials do not isolate warm caches or accumulated Premiere state. Default restored to8 after trial. Dialogue quality not checked. No release.
+
+
+### Default 24 with verified fallback and format preservation
+
+User requested production default24, smaller batches on failure, and original footage size. Panel/host now begin at24. Only a native insert exception proven to leave source marks, original geometry and the completed output prefix intact may retry on the same clone at16 then8; the original detector plan is reused. Ambiguous mutation, lost response, failed restoration, invalid progress, Stop, or failure at8 terminates. No crash recovery is claimed. Progress shows the current batch, and successful evidence records initial/final batches and fallback reasons.
+
+Clone/frame-size, timebase and pixel-aspect checks plus existing exact static Motion/Opacity copying preserve the original format and clip framing. Success evidence records format. These changes supersede the temporary benchmark defaults above.
+
+Validation: full197/196pass/1external schema skip, independent Terra actual review approved; dev panel reloaded and host load confirmed. Default24 remains installed locally. No fresh live rebuild after adding recovery/format guards; prior24 live trial passed, recovery is covered by actual-host VM fault injection. No commit or release.
+
+ETA: Cut silences progress estimates remaining assembly from the last three successful batches, recalibrates after fallback, and explicitly switches to checking at completion. No estimate during initial detection or final verification. Full198/197pass/1schema skip.
