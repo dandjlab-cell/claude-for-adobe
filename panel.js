@@ -840,8 +840,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     try { currentWheels = (await ww.read()).wheels; } catch (_) { currentWheels = null; }
     try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
     const temp = gradeTemperatureFor(m, tempFrom);
-    const balanced = temp ? temp.predicted : m;
-    const pads = gradePadsFor(balanced, currentWheels);
+    const afterBalance = temp ? temp.predicted : m; // (not `balanced`: that is the tally above)
+    const pads = gradePadsFor(afterBalance, currentWheels);
     const padMoves = Object.keys(pads.wheels);
     if (temp || padMoves.length) {
       try {
@@ -852,7 +852,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         let line = moves.concat(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")")).join("; ");
         if (confirm) {
           state = await measureFrameAt(at, { region, reuse }); renders++;
-          const fb = balanced.frame || balanced, fa = state.frame || state, next = {}, notes = [];
+          const fb = afterBalance.frame || afterBalance, fa = state.frame || state, next = {}, notes = [];
           for (const w of padMoves) {
             const g = pads.wheels[w], after = wheelCastAt(fa, w), beforeCast = wheelCastAt(fb, w);
             if (Math.hypot(after[0], after[1]) <= 1.5) continue;
@@ -866,7 +866,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             state = await measureFrameAt(at, { region, reuse }); renders++;
             line += "; nudged: " + notes.join(", ");
           } else if (notes.length) line += "; " + notes.join(", ");
-        } else state = balanced;
+        } else state = afterBalance;
         parts.push(line);
       } catch (error) { lines.push(label + ": balance write failed (" + error.message + ")"); continue; }
     }

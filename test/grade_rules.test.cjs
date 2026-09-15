@@ -120,7 +120,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
-  assert.ok(seqTool.indexOf("gradePadsFor(balanced, currentWheels)") < seqTool.indexOf("gradeGoalsFor(state, seen)"), "balance on the frame as read, then the sliders on the balanced frame");
+  assert.ok(seqTool.indexOf("gradePadsFor(afterBalance, currentWheels)") > 0 && seqTool.indexOf("gradePadsFor(afterBalance, currentWheels)") < seqTool.indexOf("gradeGoalsFor(state, seen)"), "balance on the frame as read, then the sliders on the balanced frame");
+  // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
+  const loop = seqTool.slice(seqTool.indexOf("for (const c of clips)"));
+  assert.doesNotMatch(loop, /\b(const|let) (balanced|touched|renders|lines|stopped)\b/, "no per-clip declaration shadows a tally the loop adds to");
   for (const tool of ["async function gradeTool", "async function gradeShotTool"]) {
     const body = panel.slice(panel.indexOf(tool), panel.indexOf("\n}\n", panel.indexOf(tool)));
     assert.ok(body.indexOf("ensureWorkingCopy") > 0, tool + " writes on the working copy");
