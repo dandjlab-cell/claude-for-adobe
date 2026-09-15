@@ -275,5 +275,37 @@
     } catch (e) { /* older host or no CEP: the panel still works, paste just stays host-owned */ }
   </script>
   <script src="panel.js"></script>
+  <script>
+    // Belt and braces for paste, because the ask above does not move every Premiere build: read the
+    // system clipboard ourselves. Two ways in, so one of them cannot be intercepted by the host:
+    //   Cmd/Ctrl+V   - works when the keystroke does reach the panel
+    //   right-click  - a menu the host has no say over; use this if the shortcut stays dead
+    (function () {
+      var path = require("node:path");
+      var root = decodeURIComponent(window.__adobe_cep__.getSystemPath("extension").replace(/^file:\/{0,2}/, ""));
+      var clip = require(path.join(root, "src", "clipboard.cjs"));
+      var input = document.getElementById("input");
+
+      function pasteInto(where) {
+        var text = clip.readText();
+        if (!text) { log("paste (" + where + "): the clipboard holds no text"); return; }
+        clip.insertAtCursor(input, text);
+        input.focus();
+        input.dispatchEvent(new Event("input", { bubbles: true })); // the box grows itself on input
+        log("paste (" + where + "): " + text.length + " characters");
+      }
+
+      input.addEventListener("keydown", function (e) {
+        if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "v" || e.altKey) return;
+        e.preventDefault(); // Chromium's own paste is unreliable in CEP; ours is not
+        pasteInto("key");
+      });
+
+      try {
+        window.__adobe_cep__.setContextMenuByJSON(JSON.stringify({ menu: [{ id: "paste", label: "Paste", enabled: true }] }),
+          function (id) { if (id === "paste") pasteInto("menu"); });
+      } catch (e) { /* no context-menu API on this host: the shortcut path still stands */ }
+    })();
+  </script>
 </body>
 </html>
