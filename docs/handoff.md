@@ -168,6 +168,8 @@ The editor asked the panel to "see the scopes" to colour footage, and it got los
 
 Not committed to main; no release. Dev panel needs a reload to pick this up (the colour commits did not touch `host/premiere.jsx`, so no Premiere restart for them — but see the working-tree note: the file shows Modified because of the *other* session's work).
 
+**Native scopes readback — settled 2026-09-15 (premiere-map Round 250, L0 evidence): do not look for a "read Lumetri's own scopes" door.** Premiere's scopes are GPU-resident intermediates (`VideoScopes::*` in the main executable, fed by the internal `HSL::DrawScopeMessage` carrying the rendered `MF::IVideoFrame`) drawn straight to the panel — scope numbers never exist on any CPU-side API. Checked and closed: UXP public classes (no color/frame class), Adobe's own first-party UXP plugins (no frame-read API), `HSL MONITOR_UPDATED` (walled, Round 197 live probe), QE/ExtendScript (no scopes method), commands (two UI toggles only). So Export Frame + our own computation IS the native path — same frame the scopes panel consumes, verified matching Lumetri on colour bars. The native door that IS open: **Lumetri grade parameters via QE** (all 53 readable live, Exposure = index 19, `property.setValue` for writes — the write confirm is still the pending editor click). Product gap to close: tool-ize grade param read/write instead of ad-hoc `run_extendscript`. Evidence: `~/DevApps/premiere-map/reports/round250/lumetri_scopes_native_readback_2026-09-15.md`.
+
 ## Working tree state (READ before any git command)
 
 Branch `fix/whisper-metal` carries TWO independent workstreams:
