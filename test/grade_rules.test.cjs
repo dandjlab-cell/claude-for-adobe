@@ -219,3 +219,13 @@ test("the saturation roll-off skips a coloured end and a curve the clip already 
   assert.ok(one.points.every(([x, y]) => x > 0.2 || y === 0), "no shadow end: " + JSON.stringify(one.points));
   assert.equal(satCurveFor(neutral, [[0, -0.2], [1, 0]]), null, "left as found");
 });
+
+test("mixed light beyond the pads' reach: temperature splits the difference, the pads take each end", () => {
+  // C227 @5.63, 2026-09-16: whites warm by 25, blacks blue by 5.5 - a specular-only balance went to -83.
+  const f = frame(12, 40, 68, [4, 7, 9.5], [80, 72, 55]); // blacks B-R +5.5, whites B-R -25
+  const t = temperatureFor(f);
+  assert.ok(t && /mixed light/.test(t.why), t && t.why);
+  assert.ok(t.value < 0 && t.value > -45, "cooler, but nowhere near the specular-only solution: " + t.value);
+  const after = t.predicted, w = after.blue.p99 - after.red.p99, b = after.blue.p1 - after.red.p1;
+  assert.ok(Math.abs(w + b) < 6, "the two ends end on opposite sides of neutral, about equally: whites " + w.toFixed(1) + ", blacks " + b.toFixed(1));
+});

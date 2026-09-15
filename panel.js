@@ -956,8 +956,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         await writeGradeState(at, track, region, ref);
         let state = confirm ? await confirmRef() : m; if (confirm) renders++;
         parts.push("matched to " + ref.label + " (same source): " + ref.summary);
-        if (confirm && gradeUnsafe(gradeDamage(state), gradeAllowance(baseline))) {
+        // The shot backs off on damage, and on a white point past the accepted band (C193's sibling at
+        // 97.6 under a shared Whites 100, 01:27: not clipped yet, not a picture either).
+        const nearClip = confirm && (state.frame || state).luma.p99 > GRADE_ACCEPT.whiteMax;
+        if (confirm && (gradeUnsafe(gradeDamage(state), gradeAllowance(baseline)) || nearClip)) {
           const h = gradeDamage(state), allow = gradeAllowance(baseline), changed = [];
+          if (nearClip) h.clipped = Math.max(h.clipped, allow.clipped + 0.01);
           const half = (p) => { if (ref.sliders[p]) { ref.sliders[p] = Math.round(ref.sliders[p] / 2 * 100) / 100; changed.push(p + " → " + ref.sliders[p]); } };
           if (h.clipped > allow.clipped) for (const p of ["whites", "highlights", "exposure", "contrast"]) half(p);
           if (h.crushed > allow.crushed) {
@@ -969,7 +973,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             await writeGradeState(at, track, region, ref);
             state = await confirmRef(); renders++;
             ref.summary = gradeStateSummary(ref);
-            parts.push("shot backed off on all " + (ref.cuts.length + 1) + " cuts: " + changed.join(", ") + " (this cut clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "%; the earlier cuts carry the same grade and are not re-read)");
+            parts.push("shot backed off on all " + (ref.cuts.length + 1) + " cuts: " + changed.join(", ") + " (this cut " + (nearClip ? "reached white " + round2((state.frame || state).luma.p99) + ", " : "") + "clipped " + round2(gradeDamage(state).clipped) + "% / crushed " + round2(h.crushed) + "%; the earlier cuts carry the same grade and are not re-read)");
           }
         }
         ref.cuts.push(at);
@@ -1096,7 +1100,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         // correction already touched the whites (two corrections on one end are a guess).
         let temp2 = null, tint2 = null;
         if (temp && !next.highlights) {
-          const c0 = wheelCastAt(wbBefore.frame || wbBefore, "highlights"), c1 = wheelCastAt(fa, "highlights");
+          // A mixed-light balance was solved on the mean of the two ends; its correction must read the
+          // same statistic, or the rescale chases the whites alone and undoes the split.
+          const mixedLight = /mixed light/.test(temp.why || "");
+          const castFor = (x) => { const hi = wheelCastAt(x, "highlights"); if (!mixedLight) return hi; const lo = wheelCastAt(x, "shadows"); return [(hi[0] + lo[0]) / 2, hi[1]]; };
+          const c0 = castFor(wbBefore.frame || wbBefore), c1 = castFor(fa);
           // Each axis scales its own knob from its own move, and only a knob the previous write
           // actually moved: the 22:28 run doubled a temperature to -55 because the pass before had
           // touched only the pad and the curve, the blue-red barely moved, and a 2-axis scale credited

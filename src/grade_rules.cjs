@@ -80,12 +80,19 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   // the Highlights pad can cover, when the white balance takes it and the Shadows pad mops up what
   // that does to the blacks (the 21:05 run left whites warm by 20 on two clips by skipping this).
   const twoLights = Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) <= PAD_REACH;
-  if (Math.abs(whites) > NEUTRAL && !twoLights) temp = balanceAxis(m, "temperature", from, STATISTICS.whitesRB);
+  // Two lights beyond the pads' reach (C227, 2026-09-16 01:27: whites warm by 25, blacks BLUE by 5-8): a
+  // temperature that lines the whites up alone pushes the whole frame blue (-83, whites +18 on a sibling
+  // cut). Mixed light is split: temperature takes the part both ends share (the mean of the two casts to
+  // zero), the pads take the opposite residuals, each now inside their reach.
+  const mixed = Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) > PAD_REACH;
+  const meanRB = (x) => (STATISTICS.whitesRB(x) + STATISTICS.blacksRB(x)) / 2;
+  if (Math.abs(whites) > NEUTRAL && !twoLights) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
   const afterTemp = temp ? temp.predicted : m;
   const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
   if (!temp && !tint) return null;
   const why = [];
-  if (temp) why.push("whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
+  if (temp) why.push(mixed ? "mixed light (whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + ", blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(Math.abs(blacks)) + "): temperature " + round(temp.value) + " splits the difference, the pads take each end" + temp.note
+    : "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
   if (tint) why.push("whites " + (whitesG > 0 ? "green" : "magenta") + " by " + round(Math.abs(whitesG)) + ": tint " + round(tint.value) + tint.note);
   return { value: temp ? temp.value : from, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : afterTemp, why: why.join("; ") };
 }
