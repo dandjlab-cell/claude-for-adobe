@@ -16,6 +16,7 @@ const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
+const { solveKnob: gradeSolveKnob } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -934,7 +935,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         const h = gradeDamage(state), allow = gradeAllowance(baseline), undone = [];
         if (lev && h.crushed > allow.crushed) { await cw.write(currentCurves || {}); undone.push("curve"); }
         if (h.clipped > allow.clipped || !undone.length) {
-          if (temp) { await tw.set(tempFrom); if (temp.tint !== null) await tiw.set(tintFrom); undone.push("white balance"); }
+          // Half the move, like the sliders: C187 lost a whole -29 white balance over 0.51% against 0.5.
+          if (temp) { await tw.set(Math.round((tempFrom + (temp.value - tempFrom) / 2) * 100) / 100); if (temp.tint !== null) await tiw.set(Math.round((tintFrom + (temp.tint - tintFrom) / 2) * 100) / 100); undone.push("half the white balance"); }
           if (padMoves.length) { applied = Object.assign({}, currentWheels || {}); await ww.write(applied); undone.push("pads"); }
           if (lev && undone.indexOf("curve") < 0) { await cw.write(currentCurves || {}); undone.push("curve"); }
         }
@@ -970,6 +972,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
               if (temp.value !== tempFrom && Math.abs(v - temp.value) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(temp.value) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
               if (temp.tint !== null) { const tv = Math.round((tintFrom + t * (temp.tint - tintFrom)) * 100) / 100; if (Math.abs(tv - temp.tint) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(temp.tint) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
             }
+          }
+          // A green-magenta residual that only appeared after the temperature move (under the line at
+          // read, 1.6-2.4 after): Tint is solved from the real reading, from the model, one write.
+          if (temp.tint === null && Math.abs(c1[1]) > 1.5) {
+            const st = gradeSolveKnob(state, "tint", tintFrom, GRADE_STATS.whitesG, 0);
+            if (st && st.helps) { const tv = Math.round(Math.max(-50, Math.min(50, st.value)) * 100) / 100; if (Math.abs(tv - tintFrom) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); } }
           }
         }
         let curve2 = null;
