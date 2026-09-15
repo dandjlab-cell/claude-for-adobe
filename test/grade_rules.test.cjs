@@ -155,7 +155,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
     const body = panel.slice(panel.indexOf(tool), panel.indexOf("\n}\n", panel.indexOf(tool)));
     assert.ok(body.indexOf("ensureWorkingCopy") > 0, tool + " writes on the working copy");
   }
-  assert.match(panel, /measureFrameAt\(at, \{ region, reuse \}\)/, "the confirm measures the read's pixels");
+  assert.match(panel, /measureFrameAt\(at, \{ region, reuse, keepPlayhead: true \}\)/, "the confirm measures the read's pixels, and leaves the playhead on the clip");
+  assert.match(panel, /finally \{ if \(playheadBefore !== null\) \{ try \{ await host\("playhead", playheadBefore\); \}/, "the playhead goes back to the editor's position once, when the run ends");
   assert.match(panel, /NEEDS: /, "what the panel cannot drive is said out loud");
   assert.match(panel, /wheelWriter\(at, track\)/, "the wheels are written from the sequence tool");
 });

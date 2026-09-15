@@ -311,7 +311,10 @@ var PCX = (function () {
   // Render frames of the active sequence via QE to base_<i>.png. Returns rows of base|ok|timecode.
   // solo: 0-based video track index to render ALONE (every other video track hidden for the render, then restored);
   // "" or -1 renders the composite. Caption tracks are not video tracks and stay visible either way.
-  function frames(json, base, solo) {
+  // keep === "1": leave the playhead on the last frame rendered instead of putting it back - a loop that
+  // renders the same clip several times moves it once per clip and restores it itself at the end
+  // (playhead()), instead of flicking it to the clip and back on every render.
+  function frames(json, base, solo, keep) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
     var q = null;
@@ -340,8 +343,16 @@ var PCX = (function () {
       outs.push(b + COL + ok + COL + tc);
     }
     for (var hi = 0; hi < hidden.length; hi++) { try { hidden[hi].setMute(0); } catch (e2) { try { hidden[hi].setMute(false); } catch (e2b) {} } }
-    s.setPlayerPosition(prev);
+    if (String(keep) !== "1") s.setPlayerPosition(prev);
     return outs.join(ROW);
+  }
+
+  // The playhead of the active sequence, in ticks: value === "" reads, anything else sets. Returns "OK<COL>ticks".
+  function playhead(value) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    if (String(value) !== "") { try { s.setPlayerPosition(String(value)); } catch (e) { return "ERR:" + e; } }
+    return "OK" + COL + s.getPlayerPosition().ticks;
   }
 
   function isMediaPath(want) {
@@ -1661,7 +1672,7 @@ var PCX = (function () {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE
   };
 }());
 "PCX loaded";

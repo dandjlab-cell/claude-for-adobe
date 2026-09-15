@@ -616,9 +616,9 @@ async function scopesTool({ seconds = [], solo_track, region = "frame", source =
 
 // One frame measured the way `scopes` measures it, as numbers rather than a report: Premiere's own
 // render of the composite at that time. The grade loop calls this after every write.
-async function measureFrameAt(seconds, { region = "frame", reuse = null } = {}) {
+async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPlayhead = false } = {}) {
   const base = path.join(os.tmpdir(), "claude-for-adobe-grade-" + Date.now().toString(36));
-  const raw = await host("frames", JSON.stringify([seconds]), base, "");
+  const raw = await host("frames", JSON.stringify([seconds]), base, "", keepPlayhead ? "1" : "");
   if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
   const rows = raw.split(ROW).filter((r) => r.indexOf("SOLO" + COL) !== 0);
   const [b, ok] = String(rows[0] || "").split(COL);
@@ -815,6 +815,9 @@ async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame",
   setStatus("Thinking…");
   return { text: copyNote + lines.join("\n") };
 }
+// The correction step is driven by a real reading, not the fitted line, so it may use the wheel's room
+// past the model's cap (0.3): up to 0.5.
+const NUDGE_MAX_SAT = 0.5;
 // The whole job, deterministically: every footage clip on the track, read once, goals from the rules,
 // knobs from the model. The agent calls this once and reports; it decides nothing per shot.
 //
@@ -838,6 +841,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   if (!clips.length) return err(card, "no footage on V" + track);
   const lines = [], t0 = Date.now();
   let renders = 0, balanced = 0, touched = 0, stopped = false;
+  // The playhead follows the clip being graded and goes back to where the editor had it when the run
+  // ends - not to the clip and back on every render, which read as a bug.
+  let playheadBefore = null;
+  try { const raw = await host("playhead", ""); if (raw.indexOf("OK") === 0) playheadBefore = raw.split(COL)[1]; } catch (_) {}
+  try {
   for (const c of clips) {
     if (cancelRequested) { stopped = true; break; }
     const at = Math.round(((c.start + c.end) / 2) * 1000) / 1000;
@@ -862,8 +870,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     try {
       if ((read === "source" || read === "auto") && !graded) {
         try { m = await timed(() => measureSourceAt(at, track, region, snap), "read"); readFrom = "source"; }
-        catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region }), "render"); renders++; readFrom = "premiere"; }
-      } else { m = await timed(() => measureFrameAt(at, { region }), "render"); renders++; readFrom = "premiere"; }
+        catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
+      } else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
     const f0 = m.frame || m;
@@ -904,7 +912,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    baseline it restores the sliders and confirms again - the clip's one correction. Otherwise
     //    the correction goes to the pads, if a cast is left and the real reading says how much.
     let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false;
-    const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse }), "render") : async () => afterLevels;
+    const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
     try {
       if (temp) await tw.set(temp.value);
       if (padMoves.length) await ww.write(applied);
@@ -933,7 +941,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         for (const w of padMoves) {
           const after = wheelCastAt(fa, w);
           if (Math.hypot(after[0], after[1]) <= 1.5) continue;
-          const n = wheelNudgePad((currentWheels && currentWheels[w]) || { hue: 0, sat: 0 }, pads.wheels[w], wheelCastAt(fb, w), after);
+          const n = wheelNudgePad((currentWheels && currentWheels[w]) || { hue: 0, sat: 0 }, pads.wheels[w], wheelCastAt(fb, w), after, NUDGE_MAX_SAT);
           if (n) { next[w] = { ...applied[w], hue: n.hue, sat: n.sat }; notes.push(w + " pad → " + round2(n.hue) + "°/" + round2(n.sat) + (n.capped ? " (cap)" : "")); }
           else notes.push(w + " pad is not the tool for what is left");
         }
@@ -955,6 +963,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     log("grade " + label + took);
     lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
+  } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");

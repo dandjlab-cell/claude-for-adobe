@@ -27,9 +27,13 @@ const ACCEPT = { blackMax: BLACK_POINT[1] + 1, whiteMin: WHITE_POINT[0] - 3, whi
 const SKIN_LUMA = [40, 70];      // a face: light skin 60-70, dark skin 40-60; alive around 60-65
 const SKIN_HUE = [116, 126];     // the vectorscope skin line, 123 at centre
 const SKIN_SAT = [20, 50];       // percent of the vectorscope radius; ~30 reads natural on Rec.709
-const SPREAD = { flat: 55, harsh: 85, target: 70 };
+// harsh was 85 - which the targets themselves exceed (black 4, white 92 = 88), so Contrast -60 fired on
+// five clips of the 21:05 run and lifted the black points the curve had just set. Harsh is past the
+// canon's own range.
+const SPREAD = { flat: 55, harsh: 93, target: 70 };
 const NEUTRAL = 1.5;             // parade ends within this of each other are neutral
 const TEMPERATURE_CAP = 50;      // a balance is not a look: half the slider
+const PAD_REACH = 12;            // about what a pad at its cap (0.3) cancels, from the 21:00 sweep (6.5 per 0.15)
 // Blacks is a toe control ("black clipping", Adobe), not a lift: the sweep's p1 sits at 0 from -20 down,
 // so nothing below -20 is calibrated and nothing above the toe is reached by it. The -20..0 slope (0.41
 // per unit) is a lower bound taken on a clipped sample; an automatic pass never goes past -20 and says
@@ -46,7 +50,11 @@ const frameOf = (m) => m.frame || m;
 function temperatureFor(m, from = 0) {
   const f = frameOf(m);
   const whites = STATISTICS.whitesRB(f), blacks = STATISTICS.blacksRB(f);
-  if (Math.abs(whites) <= NEUTRAL || Math.abs(blacks) <= NEUTRAL || Math.sign(whites) !== Math.sign(blacks)) return null;
+  if (Math.abs(whites) <= NEUTRAL) return null;
+  // Two lights (a warm top under blue blacks) are the pads' job - unless the whites' cast is more than
+  // the Highlights pad can cover, when the white balance takes it and the Shadows pad mops up what
+  // that does to the blacks (the 21:05 run left whites warm by 20 on two clips by skipping this).
+  if (Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) <= PAD_REACH) return null;
   const s = solveKnob(m, "temperature", from, STATISTICS.whitesRB, 0);
   if (!s || !s.helps) return null;
   const value = Math.max(-TEMPERATURE_CAP, Math.min(TEMPERATURE_CAP, s.value));
