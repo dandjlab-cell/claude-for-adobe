@@ -692,7 +692,8 @@ function lumetriWriter(at, track, lumetriName, region) {
     return Number(readBack);
   };
   const measure = async () => { const m = await measureFrameAt(at, { region }); seen = m.region || region; fell = m.fellBack || null; return m; };
-  return { set, clipName: () => clip, regionSeen: { measure, which: () => seen, fellBack: () => fell } };
+  const read = async () => { const raw = await host("lumetriParam", String(at), String(track), lumetriName, ""); if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4)); return Number(raw.split(COL)[1]); };
+  return { set, read, clipName: () => clip, regionSeen: { measure, which: () => seen, fellBack: () => fell } };
 }
 
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
@@ -716,7 +717,7 @@ async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame",
   let result;
   try {
     const plan = goals.map((g) => ({ param: g.parameter, target: Number(g.target), statistic: g.statistic }));
-    result = await planGradeShot({ set: (value, param) => writers[param].set(value), measure, goals: plan, tolerance });
+    result = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure, goals: plan, tolerance });
   } catch (error) { return err(card, error.message); }
   for (const w of Object.values(writers)) if (w.clipName()) clip = w.clipName();
   const lines = [];
@@ -760,7 +761,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance } = 
     for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
     let r;
     try {
-      r = await planGradeShot({ set: (value, param) => writers[param].set(value), measure: () => measureFrameAt(at, { region }), goals, tolerance, measured: m });
+      r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: () => measureFrameAt(at, { region }), goals, tolerance, measured: m });
       renders += r.renders;
     } catch (error) { lines.push(label + ": " + error.message); continue; }
     touched++;

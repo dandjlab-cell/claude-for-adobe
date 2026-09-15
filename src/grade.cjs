@@ -149,7 +149,7 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 // to neutral and confirmed once more - safety spends the third render, not a nudge.
 const WHITE_CEILING = 95; // the sweep clipped nothing until p99 reached 99.6; 92 blocked moves that were safe
 const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites", "shadows", "blacks"]);
-async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null }) {
+async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null }) {
   const before = measured || await measure(); // a caller that has just read the scopes passes the reading
   let renders = measured ? 1 : 2;
   let state = before;
@@ -161,8 +161,10 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     const statName = g.statistic || spec.steer;
     const readStat = STATISTICS[statName];
     if (!readStat) throw new Error("unknown statistic: " + statName);
-    const from = spec.neutral || 0;
-    const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)) };
+    // Solve from where the knob actually is: an editor's earlier move, or a previous grade, is the
+    // starting point, not zero. Assuming neutral would compound on top of whatever is already set.
+    const from = current ? Number(await current(g.param)) : (spec.neutral || 0);
+    const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), from };
     const s = SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null;
     if (!s) { plan.push({ ...entry, skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
     if (s.partial && !s.helps) { plan.push({ ...entry, skipped: "beyond the knob's range and the range end does not help" }); continue; }
