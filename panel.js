@@ -607,7 +607,7 @@ async function scopesTool({ seconds = [], solo_track, region = "frame", source =
 
 // One frame measured the way `scopes` measures it, as numbers rather than a report: Premiere's own
 // render of the composite at that time. The grade loop calls this after every write.
-async function measureFrameAt(seconds, { region = "frame" } = {}) {
+async function measureFrameAt(seconds, { region = "frame", reuse = null } = {}) {
   const base = path.join(os.tmpdir(), "claude-for-adobe-grade-" + Date.now().toString(36));
   const raw = await host("frames", JSON.stringify([seconds]), base, "");
   if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
@@ -616,7 +616,7 @@ async function measureFrameAt(seconds, { region = "frame" } = {}) {
   const src = [b + ".png", b].find((f) => f && fs.existsSync(f));
   if (!src) throw new Error("frame export failed at " + seconds + "s (" + ok + ")");
   // One export, then decode as many regions as needed: a face or subject costs no extra render.
-  try { return measureRegion(src, region); }
+  try { return measureRegion(src, region, reuse); }
   finally { try { fs.rmSync(src, { force: true }); } catch (_) {} }
 }
 
@@ -624,8 +624,11 @@ async function measureFrameAt(seconds, { region = "frame" } = {}) {
 // without hair and clothes - the right thing for skin tone); "subject" is Vision's foreground mask, whatever
 // the subject is - a face, hands, a product - which is the general answer to "the subject, not the room".
 // Returns the measurement plus what was actually measured, since a region can fall back to the frame.
-function measureRegion(src, region) {
+function measureRegion(src, region, reuse = null) {
   const frame = measureScopes(decodeRgb(src));
+  // A region fixed by an earlier read (its box, as frame fractions): the same pixels, whatever Vision
+  // would say about this render. Precision of a box against a mask is a fair trade for consistency.
+  if (reuse && reuse.box && region !== "frame") return Object.assign(measureScopes(decodeRgb(src, reuse.box)), { region, box: reuse.box, reused: true, frame });
   // A region reading always carries the whole-frame numbers too (`frame`): clipping and crushing are
   // judged on the frame, because pushing a small subject up blows the room behind it.
   if (region === "face") {
@@ -801,26 +804,32 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
     const goals = gradeGoalsFor(m, seen);
-    const before = "whites " + round2(GRADE_STATS.whitesRB(m)) + " / bright " + round2(GRADE_STATS.brightness(m)) + " / spread " + round2(GRADE_STATS.spread(m));
+    const needs = goals.needs && goals.needs.length ? " NEEDS: " + goals.needs.join("; ") : "";
+    const f0 = m.frame || m;
+    const before = "black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(m)) + " / whites " + round2(GRADE_STATS.whitesRB(m)) + " / spread " + round2(GRADE_STATS.spread(f0)) + (seen === "face" ? " / face " + round2(GRADE_STATS.brightness(m)) + " @" + round2(GRADE_STATS.skinHue(m)) + "°" : "");
     if (!goals.length) {
       const v = gradeVerdict(m, seen);
       balanced += v.balanced ? 1 : 0;
-      lines.push(label + " [" + seen + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : ""));
+      lines.push(label + " [" + seen + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + needs);
       continue;
     }
+    // The confirm must measure the same pixels as the read: reuse the read's region instead of asking
+    // Vision again on a differently rendered frame (the masks did not agree, and a subject's
+    // brightness "fell" after a lift).
+    const reuse = m.region !== "frame" && m.box ? { box: m.box } : null;
     const writers = {};
     for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
     let r;
     try {
-      const confirmMeasure = confirm ? () => measureFrameAt(at, { region }) : async () => m; // no confirm: the model's word stands, unverified
+      const confirmMeasure = confirm ? () => measureFrameAt(at, { region, reuse }) : async () => m; // no confirm: the model's word stands, unverified
       r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: m });
-      renders += confirm ? r.renders - 1 : 0;
+      renders += confirm ? r.renders : 0; // planShot counts its own renders (the read was passed in)
     } catch (error) { lines.push(label + ": " + error.message); continue; }
     touched++;
     const v = gradeVerdict(r.after, r.after.region || seen);
     balanced += v.balanced ? 1 : 0;
     const knobs = r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; ");
-    lines.push(label + " [" + seen + "] " + before + " → " + knobs + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + (r.unsafe ? " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off" : ""));
+    lines.push(label + " [" + seen + "] " + before + " → " + knobs + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + (r.unsafe ? " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off" : "") + needs);
   }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + balanced + " balanced, " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");

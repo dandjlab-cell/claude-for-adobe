@@ -45,41 +45,61 @@ fell back to the whole frame because nothing was found, treat the cast reading w
 
 ## The scale
 
-Everything is 0-100 (the 8-bit frame read full-range as SDR Rec.709), except cast, which is -50..50.
+Everything is 0-100, except cast, which is -50..50. Our numbers matched Lumetri's own scopes on colour
+bars, so **read them as IRE / percent directly**: 0 is black, 100 is reference white.
 
 | Reading | What it is |
 |---|---|
+| `luma p1` / `p99` | black point / white point - the honest ends, ignoring stray pixels |
 | `luma median` | overall brightness of what you measured |
-| `luma p1` / `p99` | where the shadows and highlights sit; the honest ends, ignoring stray pixels |
-| `luma min` / `max` | the actual ends |
 | `spread` (p99 − p1) | contrast |
-| `R/G/B means` | the parade; their differences are the cast |
-| `cast Cr` / `Cb` | warm↔cyan / blue↔yellow. 0 is neutral |
-| `saturation median` | colourfulness |
-| `clipped %` | pixels pinned at 255. **Unrecoverable** |
-| `crushed %` | pixels at the floor. **Unrecoverable** |
+| `red/green/blue p1` | the parade's bottoms: equal when the blacks are neutral |
+| `red/green/blue p99` | the parade's tops: equal when the whites are neutral |
+| `blacksRB` / `whitesRB` | blue minus red at the bottoms / tops; 0 = neutral, > 0 blue, < 0 warm |
+| `cast Cr` / `Cb` | mean chroma; skin hue = the angle of (Cb, Cr) on the vectorscope |
+| `saturation median` | colourfulness, % of the vectorscope radius |
+| `clipped %` / `crushed %` | pixels pinned at 255 / at the floor. **Unrecoverable** |
 
-Broadcast IRE converts to this scale as `16 + IRE × 2.19` in 8-bit, then `/2.55`. So IRE 70 ≈ **66**
-here and IRE 55 ≈ **53**. A normally exposed face lands in that 53-66 band; that is the one absolute
-target worth remembering.
+## What correct is (the canon, not invented numbers)
 
-## Order of operations
+From the colourist standard - Van Hurkman's *Color Correction Handbook*, Warren Eagles, and the
+broadcast conventions the scopes were built around:
 
-Work in this order and re-measure after each step — the controls interact, which is why `grade`
-measures rather than predicts. (Live example: after exposure was raised, contrast's spread had
-already moved from 74 to 79.6 before contrast was touched at all.)
+- **Black point** at 0-5, not crushed flat. **White point** 90-95 when nothing in shot is true
+  white, never clipped. Peak white just under 100 gains nothing past that: it only greys the whites.
+- **Neutral means the parade lines up**: the three bottoms equal (blacks), the three tops equal
+  (whites). Blacks are balanced with the **Shadows wheel**, whites with the **Highlights wheel**.
+  Temperature/tint act on the white point only - large effect in highlights, almost none in shadows -
+  so they cannot fix a shadow cast, and a shadow cast is what the eye is most sensitive to.
+- **Skin**: hue on the vectorscope skin line - the I-line, ~123° (116-126° across the industry),
+  the same line for every complexion because hue comes from blood and melanin sets brightness.
+  Luma **40-70**: light skin 60-70, dark skin 40-60; a lit face is at its most alive around 60-65
+  and loses it under 50. Saturation **20-50%**, ~30% reads natural on a calibrated Rec.709 display.
+- **Order** - each move changes the next, so: black point → white point → midtones → neutralise
+  the casts on the parade (shadows wheel, highlights wheel) → saturation → skin onto the line →
+  match shots (waveform first, then parade, then vectorscope) → only then the look. Balance every
+  shot to neutral before any look, even when the look is meant to be warm.
+- Everything above is judged on the **whole frame** except skin, which is judged on the **face**.
+  A subject's own spread says nothing about contrast - a bottle is naturally flat.
 
-1. **Exposure** — put the subject in range. Face in 53-66; a landscape's median around 45-55.
-2. **Contrast / whites / blacks** — set the ends. Spread 60-80 is normal; under 55 reads flat and
-   over 85 is aggressive. Watch `clipped` and `crushed`: 0% is the goal, and `grade` refuses to pass
-   0.5% clipped or 1% crushed by default. Getting a target by blowing highlights is not a win.
-3. **White balance** — temperature then tint, on the FACE. Neutral is cast 0, but **skin is not
-   neutral**: a healthy face reads warm. Driving a face's warmth to 0 makes a corpse. Drive a grey
-   card or a white wall to 0; drive a face to a warm target. The right warm number for skin on this
-   scale has NOT been measured yet — calibrate it by measuring a face the editor agrees looks right
-   (`scopes`, region face) and use that Cr as the target, rather than a figure from memory. Until
-   then, matching to a reference shot is safer than an absolute warmth target.
-4. **Saturation / vibrance** — last, and gently.
+Sources: Larry Jordan on Van Hurkman's skin findings; the Adobe community neutralising sequence
+(black point, white point, gamma, white balance, saturation, skin line, look); CineD and Warren
+Eagles on balancing with the parade; Frame.io and Color Finale on the skin line and skin luma; Keith
+Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour section.
+
+## What the panel can drive today, against that list
+
+| Step | The right tool | Driveable now? |
+|---|---|---|
+| black point / white point | Blacks / Whites (or Shadows / Highlights) sliders | writable, **not calibrated** - one sweep each |
+| shadow cast | Shadows wheel | **not yet** - pending the wheel write probe |
+| highlight cast | Highlights wheel | **not yet** - same gate; temperature is the weak stand-in |
+| midtones / skin | Midtones wheel, exposure | exposure calibrated; wheel pending |
+| contrast | Contrast | calibrated; cap an automatic pass at ±60 |
+| saturation | Saturation / Vibrance | writable, not calibrated |
+
+Until the wheels are writable, say plainly when a shot needs one ("blacks are blue by 6: needs the
+Shadows wheel") rather than reaching for temperature to fake it.
 
 ## Matching two shots
 

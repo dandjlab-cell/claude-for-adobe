@@ -31,6 +31,10 @@ const STATISTICS = {
   red: (m) => m.red.mean, green: (m) => m.green.mean, blue: (m) => m.blue.mean,
   warmth: (m) => m.cast.cr, tintCast: (m) => m.cast.cb,
   saturation: (m) => m.saturation.p50,
+  // Skin on the vectorscope: the angle of the mean chroma. Our Cb is the x axis and Cr the y axis, so
+  // skin - red with a yellow lean, Cr > 0 and Cb < 0 - lands between 90 and 180 degrees, and the
+  // industry's skin line (the NTSC +I axis) is 123 degrees, 116-126 across vendors. Judge on a face.
+  skinHue: (m) => { const a = Math.atan2(m.cast.cr, m.cast.cb) * 180 / Math.PI; return a < 0 ? a + 360 : a; },
 };
 
 // Which knob moves which statistic, its slider range in Premiere's UI (the loop never leaves it - the
@@ -168,13 +172,14 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     const s = SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null;
     if (!s) { plan.push({ ...entry, skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
     if (s.partial && !s.helps) { plan.push({ ...entry, skipped: "beyond the knob's range and the range end does not help" }); continue; }
-    let value = clampTo(spec.range, s.value), note = s.partial ? "partial: as far as the knob goes" : "";
+    const limit = g.cap ? [Math.max(spec.range[0], -g.cap), Math.min(spec.range[1], g.cap)] : spec.range;
+    let value = clampTo(limit, s.value), note = s.partial ? "partial: as far as the knob goes" : (Math.abs(value - s.value) > 1e-6 ? "capped at " + g.cap + ": a balance is not a look" : "");
     let predicted = predict(state, g.param, from, value);
     // Cap a brightness move by where the model says the frame's white point lands.
     if (BRIGHTNESS_KNOBS.has(g.param) && frameWhite(predicted) > WHITE_CEILING && frameWhite(state) <= WHITE_CEILING) {
       const cap = solveKnob(state, g.param, from, frameWhite, WHITE_CEILING);
       if (cap && cap.bracketed && Math.abs(cap.value - from) < Math.abs(value - from)) {
-        value = clampTo(spec.range, cap.value); predicted = predict(state, g.param, from, value);
+        value = clampTo(limit, cap.value); predicted = predict(state, g.param, from, value);
         note = "capped: the white point would have passed " + WHITE_CEILING;
       }
     }

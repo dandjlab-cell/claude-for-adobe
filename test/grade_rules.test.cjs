@@ -1,71 +1,85 @@
 "use strict";
-// The decisions "grade this video" makes, as rules, checked against real subject readings from the
-// 2026-09-15 live run - the run where the model's own decisions pushed a dark bottle up three stops.
+// The rules are the colourist canon (black point, white point, parade neutral via the wheels, contrast
+// only when flat or harsh, skin on the vectorscope line), not invented bands. Checked against real
+// frame readings from the 2026-09-15 live runs.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { goalsFor, verdict, BANDS } = require("../src/grade_rules.cjs");
+const { goalsFor, verdict, WHITE_POINT, SKIN_LUMA } = require("../src/grade_rules.cjs");
 
-const m = (luma, red, green, blue, extra = {}) => ({
-  luma: { min: luma[0] - 3, p1: luma[0], p50: luma[1], p99: luma[2], max: luma[2] + 5 },
-  red: { mean: 0, p1: red[0], p99: red[1] }, green: { mean: 0, p1: green[0], p99: green[1] }, blue: { mean: 0, p1: blue[0], p99: blue[1] },
-  saturation: { p50: 15 }, cast: { cb: 0, cr: 0 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0, ...extra,
+const frame = (p1, p50, p99, rgbP1, rgbP99, extra = {}) => ({
+  luma: { min: p1 - 3, p1, p50, p99, max: p99 + 3 },
+  red: { mean: 40, p1: rgbP1[0], p99: rgbP99[0] }, green: { mean: 40, p1: rgbP1[1], p99: rgbP99[1] }, blue: { mean: 40, p1: rgbP1[2], p99: rgbP99[2] },
+  saturation: { p50: 25 }, cast: { cb: -6, cr: 7 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0, ...extra,
+});
+const withSubject = (f, subject) => ({ ...subject, frame: f });
+
+test("a shot with a good white point, neutral parade and normal spread is left alone", () => {
+  const f = frame(5, 40, 89, [5, 5, 5], [89, 89, 89.5]);
+  const g = goalsFor(f, "frame");
+  assert.deepEqual([...g], []);
+  assert.deepEqual(g.needs, []);
+  assert.equal(verdict(f, "frame").balanced, true);
 });
 
-test("a dark bottle is lifted into the product band, not to a face's brightness", () => {
-  const bottle = m([7.1, 21.2, 51.4], [7.5, 57.3], [6.7, 50.6], [5.9, 51]);
-  const g = goalsFor(bottle, "subject");
+test("a low white point is lifted with exposure (gain), not by chasing a subject brightness", () => {
+  // Clip 1 of the live run: whites at 73, a dark bottle as the subject. The canon sets the white point.
+  const f = frame(5, 30, 73, [5, 5, 5], [73, 73, 73]);
+  const g = goalsFor(withSubject(f, frame(7, 21, 51, [7, 7, 6], [57, 50, 51])), "subject");
   const exp = g.find((x) => x.param === "exposure");
-  assert.equal(exp.target, BANDS.subject[0] + 2, "just inside the band, got " + exp.target);
-  assert.ok(exp.target < 53, "never a skin target for a product");
+  assert.equal(exp.statistic, "whitePoint", "gain sets the white point");
+  assert.ok(exp.target >= WHITE_POINT[0] && exp.target <= WHITE_POINT[1]);
+  assert.equal(g.some((x) => x.statistic === "brightness"), false, "no invented subject band");
 });
 
-test("blue whites on the parade become a temperature goal of zero; aligned whites are left alone", () => {
-  const blue = m([22.7, 45, 82], [14.5, 78], [23.5, 81], [31.8, 86]);
-  const g = goalsFor(blue, "subject");
-  assert.deepEqual(g.map((x) => x.param), ["temperature"], "only white balance is off here: " + JSON.stringify(g));
-  assert.equal(g[0].target, 0);
-  assert.match(g[0].why, /blue/);
-
-  const neutral = m([14.1, 44.7, 71.8], [9.4, 72.5], [14.5, 71.8], [17.3, 72.5]);
-  assert.deepEqual(goalsFor(neutral, "subject"), [], "a balanced shot gets no goals");
+test("a subject's own narrow spread is NOT a contrast goal; the frame's is", () => {
+  const f = frame(8, 40, 90, [8, 8, 8], [90, 90, 90]); // frame spread 82: fine
+  const bottle = frame(20, 30, 45, [20, 20, 20], [45, 45, 45]); // subject spread 25: naturally flat
+  assert.equal(goalsFor(withSubject(f, bottle), "subject").some((x) => x.param === "contrast"), false);
+  const flat = frame(20, 40, 65, [20, 20, 20], [65, 65, 65]); // frame spread 45
+  const c = goalsFor(flat, "frame").find((x) => x.param === "contrast");
+  assert.equal(c.cap, 60, "an automatic pass never slams contrast to its end");
 });
 
-test("white balance reads the FRAME's whites when a subject was measured", () => {
-  // A red product: its own brightest pixels are red. The frame's whites are neutral. No temperature goal.
-  const redProduct = m([20, 45, 70], [30, 90], [20, 60], [15, 50], {
-    frame: { luma: { p1: 5, p50: 40, p99: 88 }, red: { p1: 5, p99: 88 }, green: { p1: 5, p99: 88 }, blue: { p1: 5, p99: 88.5 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0 },
-  });
-  assert.equal(goalsFor(redProduct, "subject").some((x) => x.param === "temperature"), false, "the product's colour is not the light");
+test("a shadow cast is a Shadows-wheel need, never faked with temperature", () => {
+  const f = frame(4, 40, 90, [14.5, 23.5, 31.8], [90, 90, 90]); // blacks blue by 17, whites neutral
+  const g = goalsFor(f, "frame");
+  assert.equal(g.some((x) => x.param === "temperature"), false);
+  assert.ok(g.needs.some((n) => /Shadows wheel/.test(n)), g.needs.join(" | "));
 });
 
-test("a face uses the skin band, and flat spread gets a contrast goal", () => {
-  const face = m([12, 45, 62], [12, 62], [12, 62], [12, 62]);
-  const g = goalsFor(face, "face");
-  assert.equal(g.find((x) => x.param === "exposure").target, BANDS.face[0] + 2);
-  assert.equal(g.find((x) => x.param === "contrast").target, 70, "spread 50 is flat");
-  const harsh = m([2, 45, 95], [2, 95], [2, 95], [2, 95]);
-  assert.equal(goalsFor(harsh, "frame").find((x) => x.param === "contrast").target, 70);
+test("a modest whites cast gets temperature as a named stand-in; a large one is a Highlights-wheel need", () => {
+  const modest = frame(4, 40, 90, [4, 4, 4], [86, 88, 93]); // whites blue by 7
+  const g1 = goalsFor(modest, "frame");
+  const t = g1.find((x) => x.param === "temperature");
+  assert.ok(t && /standing in/.test(t.why));
+  const large = frame(4, 40, 90, [4, 4, 4], [55, 70, 95]); // whites blue by 40
+  const g2 = goalsFor(large, "frame");
+  assert.equal(g2.some((x) => x.param === "temperature"), false);
+  assert.ok(g2.needs.some((n) => /Highlights wheel/.test(n)));
 });
 
-test("goals come in colourist order: white balance, exposure, contrast", () => {
-  const messy = m([5, 20, 50], [5, 45], [5, 50], [5, 60]);
-  assert.deepEqual(goalsFor(messy, "subject").map((x) => x.param), ["temperature", "exposure", "contrast"]);
+test("skin is judged on the face: luma into 40-70, hue against the skin line", () => {
+  const f = frame(4, 40, 90, [4, 4, 4], [90, 90, 90]);
+  const darkFace = frame(10, 30, 60, [10, 10, 10], [60, 60, 60], { cast: { cb: -6, cr: 9 } }); // hue ~124: on the line
+  const g = goalsFor(withSubject(f, darkFace), "face");
+  const exp = g.find((x) => x.param === "exposure" && x.statistic === "brightness");
+  assert.equal(exp.target, SKIN_LUMA[0] + 5);
+  assert.equal(g.needs.some((n) => /skin hue/.test(n)), false, "on the line: " + g.needs);
+  const greenFace = frame(10, 55, 70, [10, 10, 10], [70, 70, 70], { cast: { cb: 2, cr: -5 } }); // hue ~292
+  assert.ok(goalsFor(withSubject(f, greenFace), "face").needs.some((n) => /skin hue .* off the skin line/.test(n)));
 });
 
-test("the verdict names what is still off, in words, and is silent when balanced", () => {
-  const good = m([10, 47, 80], [10, 80], [10, 80], [10, 80.5]);
-  assert.deepEqual(verdict(good, "subject"), { balanced: true, notes: [] });
-  const clipped = m([2, 47, 97], [2, 97], [2, 97], [2, 97], { clipped: { red: 3, green: 0, blue: 0 } });
-  const v = verdict(clipped, "subject");
+test("the verdict speaks the canon", () => {
+  const v = verdict(frame(9, 40, 97, [9, 9, 9], [95, 96, 99], { clipped: { red: 3, green: 0, blue: 0 } }), "frame");
   assert.equal(v.balanced, false);
-  assert.ok(v.notes.some((n) => /clipped 3/.test(n)) && v.notes.some((n) => /near clipping/.test(n)) && v.notes.some((n) => /near crushing/.test(n)), v.notes.join(" | "));
+  assert.ok(v.notes.some((n) => /black point .* lifted/.test(n)) && v.notes.some((n) => /near clipping/.test(n)) && v.notes.some((n) => /clipped 3/.test(n)), v.notes.join(" | "));
 });
 
-test("grade_sequence is wired and calls the rules, not the model", () => {
+test("grade_sequence is wired, follows the rules, reuses the read's region on the confirm", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
-  assert.match(panel, /name: "grade_sequence", description:/);
-  assert.match(panel, /gradeGoalsFor\(m, seen\)/, "goals come from grade_rules");
-  assert.match(panel, /if \(cancelRequested\) \{ stopped = true; break; \}/, "Stop ends it after the current clip");
+  assert.match(panel, /gradeGoalsFor\(m, seen\)/);
+  assert.match(panel, /measureFrameAt\(at, \{ region, reuse \}\)/, "the confirm measures the read's pixels");
+  assert.match(panel, /NEEDS: /, "what the panel cannot drive is said out loud");
 });
