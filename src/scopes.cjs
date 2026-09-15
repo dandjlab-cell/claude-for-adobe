@@ -66,12 +66,15 @@ function measure(rgb) {
   };
   const codesBetween = (lo, hi) => { const out = []; for (let c = Math.round(lo * 2.55); c < Math.round(hi * 2.55); c++) out.push([c, 1]); return out; };
   // By rank: the darkest / brightest RANK_SHARE of ALL pixels (luma histogram), the boundary code weighted.
-  const rankCodes = (fromDark) => { const want = Math.max(1, RANK_SHARE * n); const out = []; let acc = 0; for (let i = 0; i < 256 && acc < want; i++) { const c = fromDark ? i : 255 - i; if (!hy[c]) continue; const w = Math.min(1, (want - acc) / hy[c]); out.push([c, w]); acc += hy[c]; } return out; };
+  const rankCodes = (fromDark, share = RANK_SHARE) => { const want = Math.max(1, share * n); const out = []; let acc = 0; for (let i = 0; i < 256 && acc < want; i++) { const c = fromDark ? i : 255 - i; if (!hy[c]) continue; const w = Math.min(1, (want - acc) / hy[c]); out.push([c, w]); acc += hy[c]; } return out; };
   return {
     pixels: n, luma,
     red: chan(hr, sr), green: chan(hg, sg), blue: chan(hb, sb),
     bands: {
       blacks: band(rankCodes(true)), whites: band(rankCodes(false)),
+      // The darkest / brightest 1%: when this differs from the 3% band, the bottom (or top) is mixed - a
+      // black object and a coloured one sharing the parade's end, which the 3% median cannot show.
+      blacks1: band(rankCodes(true, 0.01)), whites1: band(rankCodes(false, 0.01)),
       shadows: band(codesBetween(...LEVEL_BANDS.shadows)), midtones: band(codesBetween(...LEVEL_BANDS.midtones)), highlights: band(codesBetween(...LEVEL_BANDS.highlights)),
     },
     clipped: { red: share(clipR), green: share(clipG), blue: share(clipB) },
@@ -105,7 +108,7 @@ function report(m, label) {
     "parade means R " + m.red.mean + " G " + m.green.mean + " B " + m.blue.mean + "; p1-p99 R " + m.red.p1 + "-" + m.red.p99 + ", G " + m.green.p1 + "-" + m.green.p99 + ", B " + m.blue.p1 + "-" + m.blue.p99,
     "clipped at 255: R " + m.clipped.red + "% G " + m.clipped.green + "% B " + m.clipped.blue + "%; at the luma floor " + m.crushed + "% (pure black " + m.pureBlack + "%); channel at 0: R " + m.floor.red + "% G " + m.floor.green + "% B " + m.floor.blue + "%",
     "vectorscope: saturation median " + m.saturation.p50 + ", p99 " + m.saturation.p99 + " (% of a 127.5 Cb/Cr radius: pure red is about 103, pure green about 119); mean Cb " + m.cast.cb + ", Cr " + m.cast.cr + " (-50..50)",
-    "casts by luma band (median B-R / G-mid of paired pixels, 0-100; >0 blue / green, <0 warm / magenta): " + [["blacks", "darkest 3%"], ["shadows", "5-30"], ["midtones", "30-65"], ["highlights", "65-95"], ["whites", "brightest 3%"]].map(([k, label]) => { const b = m.bands && m.bands[k]; return k + " (" + label + ")" + (b && b.rb !== null ? " " + b.rb + " / " + b.g + " [" + b.share + "%]" : " none"); }).join("; "),
+    "casts by luma band (median B-R / G-mid of paired pixels, 0-100; >0 blue / green, <0 warm / magenta): " + [["blacks1", "darkest 1%"], ["blacks", "darkest 3%"], ["shadows", "5-30"], ["midtones", "30-65"], ["highlights", "65-95"], ["whites", "brightest 3%"], ["whites1", "brightest 1%"]].map(([k, label]) => { const b = m.bands && m.bands[k]; return k + " (" + label + ")" + (b && b.rb !== null ? " " + b.rb + " / " + b.g + " [" + b.share + "%]" : " none"); }).join("; "),
     "reads: " + readings(m).join("; "),
   ].join("\n");
 }
