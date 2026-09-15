@@ -943,17 +943,22 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         state = await confirmMeasure(); renders++; corrected = true;
         parts.push("restored " + undone.join(" + ") + ": the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "% (source " + round2(baseline.clipped) + "% / " + round2(baseline.crushed) + "%)");
       }
-      // The one correction, if it is still free, from the real reading: each pad rescaled from what
-      // it actually did, and the curve's bottom point re-solved from the black point it actually
-      // produced (the source decode and Premiere's render agree on the parade and the median, not on
-      // the 1% tail the curve is solved from: 16.1 -> 0.8 on one clip, 12.5 -> 8.6 on another). One
-      // write for both, one confirm.
-      if (confirm && !corrected) {
-        const fb = afterTemp.frame || afterTemp, fa = state.frame || state, next = {}, notes = [];
-        for (const w of padMoves) {
+      // The corrections, from the real reading: each pad rescaled from what it actually did, the
+      // white balance rescaled on the whites it actually produced, and the curve's bottom point
+      // re-solved from the black point it actually produced (the source decode and Premiere's render
+      // agree on the parade and the median, not on the 1% tail). One write per pass, one confirm; a
+      // second pass only if the confirm still shows a residual (the owner: perfect over instant), so
+      // three renders a clip at most. Each pass scales from the values the previous pass wrote.
+      let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, padSolved = pads.wheels;
+      let tempNow = temp ? temp.value : tempFrom, tintNow = temp && temp.tint !== null ? temp.tint : tintFrom, tempBase = tempFrom, tintBase = tintFrom;
+      let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? lev.predicted.luma.p1 : null;
+      for (let pass = 0; confirm && !corrected && pass < 2; pass++) {
+        if (pass > 0 && gradeVerdict(state, state.region || seen).balanced) break;
+        const fb = stateBefore.frame || stateBefore, fa = state.frame || state, next = {}, notes = [];
+        for (const w of Object.keys(padSolved)) {
           const after = wheelCastAt(fa, w);
           if (Math.hypot(after[0], after[1]) <= 1.5) continue;
-          const n = wheelNudgePad((currentWheels && currentWheels[w]) || { hue: 0, sat: 0 }, pads.wheels[w], wheelCastAt(fb, w), after, NUDGE_MAX_SAT);
+          const n = wheelNudgePad(padBase[w] || { hue: 0, sat: 0 }, applied[w], wheelCastAt(fb, w), after, NUDGE_MAX_SAT);
           if (n) { next[w] = { ...applied[w], hue: n.hue, sat: n.sat }; notes.push(w + " pad → " + round2(n.hue) + "°/" + round2(n.sat) + (n.capped ? " (cap)" : "")); }
           else notes.push(w + " pad is not the tool for what is left");
         }
@@ -963,57 +968,58 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         // correction already touched the whites (two corrections on one end are a guess).
         let temp2 = null, tint2 = null;
         if (temp && !next.highlights) {
-          const c0 = wheelCastAt(m.frame || m, "highlights"), c1 = wheelCastAt(fa, "highlights");
+          const c0 = wheelCastAt(fb, "highlights"), c1 = wheelCastAt(fa, "highlights");
           const d = [c1[0] - c0[0], c1[1] - c0[1]], dd = d[0] * d[0] + d[1] * d[1];
           if (dd > 1e-6 && Math.hypot(c1[0], c1[1]) > 1.5) {
             const t = -(c0[0] * d[0] + c0[1] * d[1]) / dd;
             if (t > 0 && t < 3) {
-              const v = Math.round((tempFrom + t * (temp.value - tempFrom)) * 100) / 100;
-              if (temp.value !== tempFrom && Math.abs(v - temp.value) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(temp.value) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
-              if (temp.tint !== null) { const tv = Math.round((tintFrom + t * (temp.tint - tintFrom)) * 100) / 100; if (Math.abs(tv - temp.tint) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(temp.tint) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
+              const v = Math.round((tempBase + t * (tempNow - tempBase)) * 100) / 100;
+              if (tempNow !== tempBase && Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
+              if (tintNow !== tintBase) { const tv = Math.round((tintBase + t * (tintNow - tintBase)) * 100) / 100; if (Math.abs(tv - tintNow) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(tintNow) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
             }
           }
           // A green-magenta residual that only appeared after the temperature move (under the line at
           // read, 1.6-2.4 after): Tint is solved from the real reading, from the model, one write.
           if (temp.tint === null && Math.abs(c1[1]) > 1.5) {
-            const st = gradeSolveKnob(state, "tint", tintFrom, GRADE_STATS.whitesG, 0);
+            const st = gradeSolveKnob(state, "tint", tintNow, GRADE_STATS.whitesG, 0);
             if (st && st.helps) {
               // The correction's write takes the last render, so it checks the predicted ceiling itself:
               // Tint clips red or blue past +50 (its sweep), and C209 clipped 1.1% on the 22:17 run.
               let tv = Math.max(-50, Math.min(50, st.value));
               const tops = (x) => { const f = x.frame || x; return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
-              while (Math.abs(tv - tintFrom) > 1 && tops(gradePredict(state, "tint", tintFrom, tv)) > 98.5) tv = tintFrom + (tv - tintFrom) * 0.8;
+              while (Math.abs(tv - tintNow) > 1 && tops(gradePredict(state, "tint", tintNow, tv)) > 98.5) tv = tintNow + (tv - tintNow) * 0.8;
               tv = Math.round(tv * 100) / 100;
-              if (Math.abs(tv - tintFrom) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
+              if (Math.abs(tv - tintNow) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
             }
           }
         }
         let curve2 = null;
-        if (lev) {
+        if (lev && curveNow !== null) {
           const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
-          const p1Before = (afterBalance.frame || afterBalance).luma.p1, predictedMove = p1Before - lev.predicted.luma.p1, actualMove = p1Before - p1;
+          const predictedMove = curveBaseP1 - curvePredictedP1, actualMove = curveBaseP1 - p1;
           if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.25) { // 21:37: a 39% response re-solved to 4.3 the run before; 25% is the line between 'slow' and 'not a black'
             // The black point did not follow the curve: the darkest pixels are not a black (a coloured
             // surface keeps its luma in one channel while the curve crushes the other two). Pushing
             // further only crushes more - C187 on the 21:26 run went to the cap for nothing.
-            notes.push("black point read " + round2(p1) + " after a curve predicted to reach " + round2(lev.predicted.luma.p1) + ": the darkest pixels do not respond to a levels move, left at " + lev.blackIn.toFixed(2));
+            if (pass === 0) notes.push("black point read " + round2(p1) + " after a curve predicted to reach " + round2(curvePredictedP1) + ": the darkest pixels do not respond to a levels move, left at " + curveNow.toFixed(2));
           } else if (p1 > GRADE_ACCEPT.blackMax || p1 < 1) {
             // Compose a second toe pull on the first, below the same anchor: the extra bottom point in
             // the post-curve domain is A (p1 - t) / (A - t); back through the first curve that is
             // x2 = x + xAdd * (a - x) / a.
             const xAdd = (A * (p1 - target) / (A - target)) / 100;
-            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, lev.blackIn + xAdd * (a - lev.blackIn) / a));
-            if (Math.abs(x2 - lev.blackIn) >= 0.005) { curve2 = x2; notes.push("curve black " + lev.blackIn.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
+            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, curveNow + xAdd * (a - curveNow) / a));
+            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
           }
         }
         if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {
-          if (temp2 !== null) await tw.set(temp2);
-          if (tint2 !== null) await tiw.set(tint2);
-          if (Object.keys(next).length) { applied = Object.assign({}, applied, next); await ww.write(applied); }
-          if (curve2 !== null) await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor));
+          stateBefore = state;
+          if (temp2 !== null) { await tw.set(temp2); tempBase = tempNow; tempNow = temp2; }
+          if (tint2 !== null) { await tiw.set(tint2); tintBase = tintNow; tintNow = tint2; }
+          if (Object.keys(next).length) { padBase = Object.assign({}, applied); applied = Object.assign({}, applied, next); await ww.write(applied); }
+          if (curve2 !== null) { await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor)); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
           state = await confirmMeasure(); renders++;
-          parts.push("corrected: " + notes.join(", "));
-        } else if (notes.length) parts.push(notes.join(", "));
+          parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
+        } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }
       }
     } catch (error) { lines.push(label + ": " + error.message); continue; }
 
