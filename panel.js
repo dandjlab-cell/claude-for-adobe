@@ -951,6 +951,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       // three renders a clip at most. Each pass scales from the values the previous pass wrote.
       let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, padSolved = pads.wheels;
       let tempNow = temp ? temp.value : tempFrom, tintNow = temp && temp.tint !== null ? temp.tint : tintFrom, tempBase = tempFrom, tintBase = tintFrom;
+      let tempWrote = !!(temp && temp.value !== tempFrom), tintWrote = !!(temp && temp.tint !== null); // what the last write moved
       let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? lev.predicted.luma.p1 : null;
       for (let pass = 0; confirm && !corrected && pass < 2; pass++) {
         if (pass > 0 && gradeVerdict(state, state.region || seen).balanced) break;
@@ -969,18 +970,18 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         let temp2 = null, tint2 = null;
         if (temp && !next.highlights) {
           const c0 = wheelCastAt(fb, "highlights"), c1 = wheelCastAt(fa, "highlights");
-          const d = [c1[0] - c0[0], c1[1] - c0[1]], dd = d[0] * d[0] + d[1] * d[1];
-          if (dd > 1e-6 && Math.hypot(c1[0], c1[1]) > 1.5) {
-            const t = -(c0[0] * d[0] + c0[1] * d[1]) / dd;
-            if (t > 0 && t < 3) {
-              const v = Math.round((tempBase + t * (tempNow - tempBase)) * 100) / 100;
-              if (tempNow !== tempBase && Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
-              if (tintNow !== tintBase) { const tv = Math.round((tintBase + t * (tintNow - tintBase)) * 100) / 100; if (Math.abs(tv - tintNow) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(tintNow) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
-            }
-          }
+          // Each axis scales its own knob from its own move, and only a knob the previous write
+          // actually moved: the 22:28 run doubled a temperature to -55 because the pass before had
+          // touched only the pad and the curve, the blue-red barely moved, and a 2-axis scale credited
+          // a 0.4 change to temperature. A move under 1 point is not a slope to divide by.
+          const scale1 = (before, after) => { const d = after - before; if (Math.abs(d) < 1 || Math.abs(after) <= 1.5) return null; const t = -before / d; return t > 0 && t < 3 ? t : null; };
+          const tT = tempWrote ? scale1(c0[0], c1[0]) : null;
+          if (tT !== null) { const v = Math.round((tempBase + tT * (tempNow - tempBase)) * 100) / 100; if (Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); } }
+          const tG = tintWrote ? scale1(c0[1], c1[1]) : null;
+          if (tG !== null) { const tv = Math.round((tintBase + tG * (tintNow - tintBase)) * 100) / 100; if (Math.abs(tv - tintNow) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(tintNow) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
           // A green-magenta residual that only appeared after the temperature move (under the line at
           // read, 1.6-2.4 after): Tint is solved from the real reading, from the model, one write.
-          if (temp.tint === null && Math.abs(c1[1]) > 1.5) {
+          if (tint2 === null && !tintWrote && Math.abs(c1[1]) > 1.5) {
             const st = gradeSolveKnob(state, "tint", tintNow, GRADE_STATS.whitesG, 0);
             if (st && st.helps) {
               // The correction's write takes the last render, so it checks the predicted ceiling itself:
@@ -1013,6 +1014,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         }
         if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {
           stateBefore = state;
+          tempWrote = temp2 !== null; tintWrote = tint2 !== null;
           if (temp2 !== null) { await tw.set(temp2); tempBase = tempNow; tempNow = temp2; }
           if (tint2 !== null) { await tiw.set(tint2); tintBase = tintNow; tintNow = tint2; }
           if (Object.keys(next).length) { padBase = Object.assign({}, applied); applied = Object.assign({}, applied, next); await ww.write(applied); }

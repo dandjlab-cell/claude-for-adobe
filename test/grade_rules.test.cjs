@@ -151,7 +151,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.ok(iPads > 0 && iPads < iLev && iLev < iGoals, "balance on the frame as read, the curve's black point on the balanced state, the sliders on the state after both");
   assert.match(seqTool, /if \(lev && h\.crushed > allow\.crushed\) \{ await cw\.write\(currentCurves \|\| \{\}\);/, "a crush rolls back the curve first, not the whole balance");
   assert.match(seqTool, /undone\.push\("half the white balance"\)/, "a clip rolls the white balance back to half its move, both axes, like the sliders");
-  assert.match(seqTool, /if \(temp\.tint === null && Math\.abs\(c1\[1\]\) > 1\.5\) \{/, "the correction can introduce Tint for a green residual that only appeared after the temperature move");
+  assert.match(seqTool, /if \(tint2 === null && !tintWrote && Math\.abs\(c1\[1\]\) > 1\.5\) \{/, "the correction can introduce Tint for a green residual that only appeared after the temperature move");
+  assert.match(seqTool, /const tT = tempWrote \? scale1\(c0\[0\], c1\[0\]\) : null;/, "temperature is rescaled from blue-red alone, and only if the last write moved it");
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");
