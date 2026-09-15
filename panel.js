@@ -859,6 +859,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   // a mismatch switches the run to Premiere reads and says so.
   let parity = null;
   const PARITY_MAX = 1.5; // verified 2026-09-15: parade identical, median within 0.4
+  // Shot match: one grade per SOURCE file. The first cut of a file is graded; every later cut of the
+  // same file gets the same Lumetri state and one confirm (the owner, 2026-09-16 00:52: C227's three
+  // cuts had three grades, temperature -64 / -83 / -47, and "look very different").
+  const matched = {};
   // The playhead follows the clip being graded and goes back to where the editor had it when the run
   // ends - not to the clip and back on every render, which read as a bug.
   let playheadBefore = null;
@@ -876,6 +880,28 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Premiere's render, since its source pixels no longer describe it. A wheel read that fails means
     // the pads are left alone for this clip: writing "all neutral" over an unknown state is not a grade.
     const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), tiw = lumetriWriter(at, track, "Tint", region), cw = curveWriter(at, track), sw = satWriter(at, track);
+    const tookOf = () => { const totalMs = Date.now() - clipT0, hostCalls = hostTime.calls - host0.calls; return " [" + (totalMs / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " host calls, rest " + (Math.max(0, totalMs - readMs - renderMs) / 1000).toFixed(1) + "]"; };
+    if (matched[c.name]) {
+      const ref = matched[c.name];
+      try {
+        await tw.set(ref.temp); await tiw.set(ref.tint);
+        if (ref.wheels) await ww.write(ref.wheels);
+        if (ref.curves) await cw.write(ref.curves);
+        await sw.write(ref.sat);
+        for (const [param, value] of Object.entries(ref.sliders)) await lumetriWriter(at, track, GRADE_PARAMS[param].lumetri, region).set(value);
+        touched++;
+        let tail = " (not confirmed)";
+        if (confirm) {
+          const st = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++;
+          const v = gradeVerdict(st, st.region || region), f1 = st.frame || st;
+          balanced += v.balanced ? 1 : 0;
+          tail = " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(st)) + " / whites " + round2(GRADE_STATS.whitesRB(st)) + (v.balanced ? " ✓" : " — " + v.notes.join("; "));
+        }
+        const took = tookOf(); log("grade " + label + took);
+        lines.push(label + " → matched to " + ref.label + " (same source): " + ref.summary + tail + took);
+      } catch (error) { lines.push(label + ": " + error.message); }
+      continue;
+    }
     let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null, currentSat = null, satErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
     try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
@@ -1001,7 +1027,18 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           const after = wheelCastAt(fa, w);
           if (Math.hypot(after[0], after[1]) <= 1.5) continue;
           const n = wheelNudgePad(padBase[w] || { hue: 0, sat: 0 }, applied[w], wheelCastAt(fb, w), after, NUDGE_MAX_SAT);
-          if (n) { next[w] = { ...applied[w], hue: n.hue, sat: n.sat }; notes.push(w + " pad → " + round2(n.hue) + "°/" + round2(n.sat) + (n.capped ? " (cap)" : "")); }
+          if (n) {
+            // The same floor guard as the first pad: a nudge must not put a channel bottom on the floor,
+            // nor push one already there lower (C227 at 5.6 s, 00:48: an orange Shadows pad 0.21 -> 0.35
+            // over a -83 temperature put blue on the floor across the whole parade bottom).
+            const cand = { ...applied[w], hue: n.hue, sat: n.sat };
+            const floorOf = (x) => { const f = x.frame || x; return Math.min(f.red.p1, f.green.p1, f.blue.p1); };
+            const now = floorOf(state);
+            let held = false, pf = floorOf(wheelPredictPads(state, { [w]: cand }, applied));
+            while (cand.sat > 0.02 && pf < 1.5 && pf < now - 0.2) { cand.sat = Math.round(cand.sat * 0.8 * 1000) / 1000; held = true; pf = floorOf(wheelPredictPads(state, { [w]: cand }, applied)); }
+            if (held && cand.sat <= (applied[w] ? applied[w].sat : 0) + 0.005 && cand.sat >= (applied[w] ? applied[w].sat : 0) - 0.005) notes.push(w + " pad held: further would put a channel on the floor");
+            else { next[w] = cand; notes.push(w + " pad → " + round2(cand.hue) + "°/" + round2(cand.sat) + (n.capped ? " (cap)" : "") + (held ? " (held back: a channel bottom would reach the floor)" : "")); }
+          }
           else notes.push(w + " pad is not the tool for what is left");
         }
         // The white balance, from the real reading: the temperature model transfers a little strong on
@@ -1081,8 +1118,17 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const v = gradeVerdict(state, state.region || seen);
     balanced += confirm && v.balanced ? 1 : 0;
     const f1 = state.frame || state;
-    const totalMs = Date.now() - clipT0, hostCalls = hostTime.calls - host0.calls;
-    const took = " [" + (totalMs / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " host calls, rest " + (Math.max(0, totalMs - readMs - renderMs) / 1000).toFixed(1) + "]";
+    // What this cut ended with, read back from Premiere (no render), for the later cuts of the same file.
+    try {
+      const sliders = {};
+      for (const g of goals) sliders[g.param] = await lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region).read();
+      const wheels = wheelsErr ? null : (await ww.read()).wheels, curves = curvesErr ? null : (await cw.read()).curves, satNow = satErr ? [] : (await sw.read()).points;
+      const tempNow = await tw.read(), tintNow = await tiw.read();
+      const pads = wheels ? Object.keys(wheels).filter((w) => wheels[w].sat > 0.005).map((w) => w + " " + round2(wheels[w].hue) + "°/" + round2(wheels[w].sat)) : [];
+      matched[c.name] = { label, temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders,
+        summary: "temperature " + round2(tempNow) + ", tint " + round2(tintNow) + (pads.length ? ", " + pads.join(", ") : "") + (curves && !curvesIdentity(curves) ? ", curve" : "") + (satNow.length ? ", sat roll-off" : "") + Object.entries(sliders).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("") };
+    } catch (_) {}
+    const took = tookOf();
     log("grade " + label + took);
     lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
