@@ -981,8 +981,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           // touched only the pad and the curve, the blue-red barely moved, and a 2-axis scale credited
           // a 0.4 change to temperature. A move under 1 point is not a slope to divide by.
           const scale1 = (before, after) => { const d = after - before; if (Math.abs(d) < 1 || Math.abs(after) <= 1.5) return null; const t = -before / d; return t > 0 && t < 3 ? t : null; };
+          const tops = (x) => { const f = x.frame || x; return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
           const tT = tempWrote ? scale1(c0[0], c1[0]) : null;
-          if (tT !== null) { const v = Math.round((tempBase + tT * (tempNow - tempBase)) * 100) / 100; if (Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); } }
+          if (tT !== null) {
+            // Same ceiling check as the initial white balance: a rescale after a whites backoff took C227
+            // to -83 and clipped 1% (22:55). Scaled back while the predicted tops would pass the ceiling.
+            let v = tempBase + tT * (tempNow - tempBase);
+            while (Math.abs(v - tempNow) > 1 && tops(gradePredict(state, "temperature", tempNow, v)) > 98.5) v = tempNow + (v - tempNow) * 0.8;
+            v = Math.round(v * 100) / 100;
+            if (Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
+          }
           const tG = tintWrote ? scale1(c0[1], c1[1]) : null;
           if (tG !== null) { const tv = Math.round((tintBase + tG * (tintNow - tintBase)) * 100) / 100; if (Math.abs(tv - tintNow) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(tintNow) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
           // A green-magenta residual that only appeared after the temperature move (under the line at
@@ -992,8 +1000,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             if (st && st.helps) {
               // The correction's write takes the last render, so it checks the predicted ceiling itself:
               // Tint clips red or blue past +50 (its sweep), and C209 clipped 1.1% on the 22:17 run.
-              let tv = Math.max(-50, Math.min(50, st.value));
-              const tops = (x) => { const f = x.frame || x; return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
+              let tv = Math.max(-100, Math.min(100, st.value));
               while (Math.abs(tv - tintNow) > 1 && tops(gradePredict(state, "tint", tintNow, tv)) > 98.5) tv = tintNow + (tv - tintNow) * 0.8;
               tv = Math.round(tv * 100) / 100;
               if (Math.abs(tv - tintNow) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
