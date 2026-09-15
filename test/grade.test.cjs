@@ -8,9 +8,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
-const { steer, PARAMS, MAX_MEASURES } = require("../src/grade.cjs");
+const { steer, planShot, PARAMS, MAX_RENDERS } = require("../src/grade.cjs");
 
-const SWEEPS = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "lumetri_sweeps.json"), "utf8"));
+const SWEEPS = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "src", "lumetri_sweeps.json"), "utf8"));
 
 // Piecewise-linear replay of a sweep: exact at every measured point, reasonable between them. Outside
 // the swept range it clamps, which stands in for a parameter refusing to go further.
@@ -32,7 +32,9 @@ function premiereStandIn(name) {
       const at = (k) => pick(k, current);
       return {
         luma: { min: at("min"), p1: at("p1"), p50: at("p50"), p99: at("p99"), max: at("max") },
-        red: { mean: at("red") }, green: { mean: at("green") }, blue: { mean: at("blue") },
+        red: { mean: at("red"), p1: at("redP1"), p99: at("redP99") },
+        green: { mean: at("green"), p1: at("greenP1"), p99: at("greenP99") },
+        blue: { mean: at("blue"), p1: at("blueP1"), p99: at("blueP99") },
         saturation: { p50: at("sat") }, cast: { cb: at("cb"), cr: at("cr") },
         // Real clipping from the sweep: a channel piles into 255 as the picture is pushed up, and the
         // floor fills as it is pushed down. Modelled off the measured ends so the guard is exercised.
@@ -44,90 +46,88 @@ function premiereStandIn(name) {
   };
 }
 
-test("steers Exposure to a brightness target and verifies it on the render", async () => {
+test("a calibrated knob is set in ONE go: read, set from the model, confirm - two renders", async () => {
   const host = premiereStandIn("exposure");
   const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 45 });
-  assert.equal(r.hit, true, "achieved " + r.achieved + " after " + r.measures + " measures");
-  assert.ok(Math.abs(r.achieved - 45) <= 0.5);
+  assert.equal(r.how, "model", "the value came from the calibration, not a search");
+  assert.equal(r.renders, 2, "one render to read, one to confirm; took " + r.renders);
+  assert.equal(r.hit, true, "achieved " + r.achieved + " (residual " + r.residual + ")");
+  assert.equal(r.nudged, false);
   assert.ok(r.value > 0 && r.value < 1, "45 sits between the readings at 0 (36.9) and 1 (47.5), got " + r.value.toFixed(2));
-  assert.ok(r.measures <= 4, "took " + r.measures + " measures");
-  assert.equal(r.reliable, true);
 });
 
-test("steers Contrast by the spread, which is the statistic it actually moves", async () => {
+test("white balance is read from the parade: temperature aligns the channels' whites", async () => {
+  // At Temperature 0 the calibration clip's whites read B 86.3 / R 83.9: slightly blue. Neutral is a
+  // small warm move, not the -72 the frame-average cast asked for on the same clip.
+  const host = premiereStandIn("temperature");
+  const r = await steer({ set: host.set, measure: host.measure, param: "temperature", target: 0 });
+  assert.equal(r.statistic, "whitesRB");
+  assert.equal(r.hit, true, "whites B-R achieved " + r.achieved);
+  assert.ok(r.value > 0 && r.value < 15, "a small warm correction, got " + r.value.toFixed(1));
+  assert.ok(r.renders <= 2);
+});
+
+test("contrast is set by the spread in one go", async () => {
   const host = premiereStandIn("contrast");
   const r = await steer({ set: host.set, measure: host.measure, param: "contrast", target: 80 });
   assert.equal(r.hit, true, "achieved " + r.achieved);
+  assert.equal(r.renders, 2);
   assert.ok(r.value > 20 && r.value < 60, "spread 80 sits between contrast 20 and 50, got " + r.value.toFixed(1));
 });
 
-test("steers Temperature through a cast that crosses zero", async () => {
-  const host = premiereStandIn("temperature");
-  const cool = await steer({ set: host.set, measure: host.measure, param: "temperature", target: 1.0 });
-  assert.equal(cool.hit, true, "achieved " + cool.achieved + " at " + cool.value);
-  assert.ok(cool.value < -50, "warmth 1.0 needs a strongly cool setting, got " + cool.value.toFixed(1));
-
-  const warm = await steer({ set: host.set, measure: host.measure, param: "temperature", target: 11 });
-  assert.equal(warm.hit, true, "achieved " + warm.achieved);
-  assert.ok(warm.value > 50, "warmth 11 needs a warm setting, got " + warm.value.toFixed(1));
-});
-
-test("a target the parameter cannot reach ends honestly instead of looping", async () => {
+test("a knob never leaves its slider range, and a target past it is reported as a residual", async () => {
   const host = premiereStandIn("exposure");
   const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 95 }); // the median tops out at 58.8
   assert.equal(r.hit, false);
-  assert.ok(r.measures <= MAX_MEASURES, "bounded at " + r.measures + " measures");
-  assert.ok(r.achieved <= 58.9, "got as close as the parameter allows: " + r.achieved);
+  assert.ok(r.value <= 5 && r.value >= -5, "stayed inside -5..5, got " + r.value);
+  assert.ok(r.renders <= MAX_RENDERS);
+  assert.ok(Math.abs(r.residual) > 30, "the residual is stated: " + r.residual);
 });
 
-test("steering by a statistic the parameter does not move does not fake a result", async () => {
-  // Contrast pivots around the median: it moved 39.2 -> 36.1 across the entire range. An agent that
-  // steers brightness with Contrast must be told it failed, not handed a confident number.
-  const host = premiereStandIn("contrast");
-  const r = await steer({ set: host.set, measure: host.measure, param: "contrast", statistic: "brightness", target: 50 });
-  assert.equal(r.hit, false);
-  assert.ok(r.measures <= MAX_MEASURES);
+test("an unswept knob gets one probe to measure its slope, then one write and the confirm", async () => {
+  // No calibration for 'shadows' in the fixture; stand in with the exposure response so there is a slope to find.
+  const host = premiereStandIn("exposure");
+  const r = await steer({ set: host.set, measure: host.measure, param: "shadows", statistic: "brightness", target: 45, tolerance: 2 });
+  assert.match(r.how, /probe/);
+  assert.ok(r.renders <= MAX_RENDERS, "took " + r.renders);
+  assert.equal(r.tested, false);
 });
 
-test("a parameter that will not take the value reports the clamp", async () => {
-  const stuck = { set: () => 0, measure: () => premiereStandIn("exposure").measure() };
-  const r = await steer({ set: stuck.set, measure: stuck.measure, param: "exposure", target: 45, start: 3 });
-  assert.equal(r.hit, false);
-  assert.match(r.problem, /clamped/);
-});
-
-test("a target only reachable by clipping is refused, and the safe value is left on the clip", async () => {
-  // The whole point of grading by numbers is that it must not trade picture for a statistic. Brightness
-  // 58.8 needs Exposure 2, which piles a channel into 255; the loop has to hand back the last setting
-  // that did not, and say why, rather than reporting a proud PASS over blown highlights.
+test("a target only reachable by clipping is refused, judged on the whole frame", async () => {
   const host = premiereStandIn("exposure");
   const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 58.8 });
-  assert.match(r.problem, /backed off/, "it must say it gave up the target on purpose");
-  assert.ok(r.clipped <= 0.5, "left clipping " + r.clipped + "%, above the guard");
-  assert.ok(r.value < 2, "backed away from Exposure 2, landed at " + r.value);
-  assert.equal(host.counts.current, r.value, "and the clip is left holding the safe value, not the clipped one");
+  assert.match(r.problem, /backed off/);
+  assert.ok(r.clipped <= 0.5, "left clipping " + r.clipped + "%");
+  assert.equal(host.counts.current, r.value, "the clip is left holding the safe value");
 });
 
-test("a guard the caller widens is respected", async () => {
+test("a whole shot in one go: every knob chosen from one reading, one confirm render for all of them", async () => {
+  // A stand-in that responds to several knobs at once is beyond the one-knob fixtures; here the plan is
+  // exercised on the exposure host with a single goal, and its shape and render count are the contract.
   const host = premiereStandIn("exposure");
-  const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 58.8, guard: { clipped: 100, crushed: 100 } });
-  assert.equal(r.problem, null, "told it may clip, it takes the target");
-  assert.ok(r.hit);
+  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "exposure", target: 45 }] });
+  assert.equal(r.renders, 2);
+  assert.equal(r.plan.length, 1);
+  assert.equal(r.plan[0].hit, true, "predicted " + r.plan[0].predicted + " achieved " + r.plan[0].achieved);
+  assert.ok(Math.abs(r.plan[0].predicted - r.plan[0].achieved) < 1.5, "the internal scopes agree with the real ones");
+});
+
+test("a plan skips a knob it has no calibration for, and says so, rather than guessing", async () => {
+  const host = premiereStandIn("exposure");
+  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "shadows", target: 10 }, { param: "exposure", target: 45 }] });
+  assert.match(r.plan[0].skipped, /no calibration/);
+  assert.equal(r.plan[1].hit, true);
 });
 
 test("every reading taken is returned, so the panel can show its work", async () => {
   const host = premiereStandIn("exposure");
   const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 45 });
-  assert.ok(r.readings.length >= 2);
-  for (const reading of r.readings) {
-    assert.ok(isFinite(reading.value) && isFinite(reading.stat));
-  }
-  assert.equal(r.readings.length, r.measures);
+  assert.equal(r.readings.length, r.renders);
+  for (const reading of r.readings) assert.ok(isFinite(reading.value) && isFinite(reading.stat));
 });
 
 test("the three swept parameters are marked tested and the rest are not", () => {
   assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["contrast", "exposure", "temperature"]);
-  assert.equal(PARAMS.shadows.tested, false, "reasoned from the control's purpose, not measured yet");
 });
 
 test("the tool is wired, and its schema cannot drift from the parameters it can actually drive", () => {

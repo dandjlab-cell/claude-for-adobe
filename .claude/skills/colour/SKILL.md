@@ -11,29 +11,38 @@ judgement below is a number you can measure and a number you can drive.
 
 ## "Grade this video"
 
-The whole job, start to finish. Say the plan in three lines, then do it; do not ask which shot to
-start from unless the editor named one.
+Balance every shot from its own scopes, in one go each. Say the plan in three lines, then do it; do
+not ask which shot to start from unless the editor named one.
 
-1. `sequence_overview` — the clips and their ranges.
-2. **Measure every clip once**: `scopes` at each clip's midpoint, `region: "subject"`. Note which
-   region actually came back (the panel says: subject, face, or whole frame because nothing was
-   found) and how much of the frame it covered. Where a face is the subject, measure `face` too —
-   that is the skin reading.
-3. **Pick the reference.** The shot the editor named; otherwise the best-exposed face shot (face
-   brightness nearest 53-66, nothing clipped or crushed); otherwise the best-exposed subject shot.
-   Say which one and why in one line. Everything else is matched to it.
-4. **Grade every other clip to the reference**, in timeline order, same region it was measured
-   with: `grade exposure` → the reference's brightness, then `grade contrast` → its spread, then
-   `grade temperature` → its warmth. Skip a step when the clip is already within 1 of the target -
-   that saves renders and leaves good footage alone. A reading that backed off because it would
-   have clipped stays where the tool left it; do not widen the guard.
-5. **Verify**: `scopes` at each graded clip again. Report one table - clip, region, before → after
-   for brightness / spread / warmth, what was set, anything that backed off or fell back to the
-   whole frame - and one line on how to undo (the grade is on the working copy; Discard copy
-   removes all of it).
+1. `sequence_overview` — the clips. Grade the footage on V1 at each clip's midpoint; graphics, titles
+   and generated layers are not footage and are left alone. Do not solo tracks to find out what
+   renders: measure the composite.
+2. **Read every shot once**: `scopes` at each midpoint, `region: "subject"` (and `face` where a face
+   is the subject). One render per shot.
+3. **Set goals per shot from what its parade and waveform say** — a colourist's order, white balance
+   first:
+   - **White balance** — the parade's three whites must line up. `whitesRB` (blue minus red at the
+     whites) → **0** with `temperature`. Read it off the parade: R p99 56 / B p99 64 is blue whites,
+     and the fix is a modest warm move, not a hunt. (`tint` → `whitesG` 0 once it is calibrated; until
+     then leave tint alone unless the whites are clearly green or magenta.)
+   - **Exposure** — put the subject where it belongs: a face at brightness **53-66**; hands or a
+     product **40-55**. Do NOT force every shot's subject to one number - a dark bottle and a bright
+     hand are different things, and matching them is what produced +3 stops. A shot already inside
+     its band is left alone.
+   - **Contrast** — only if the spread is flat (< 55) or harsh (> 85); target **65-75**. Otherwise
+     leave it.
+   - Keep the white point (`luma p99`) at or under **92** and the black point (`luma p1`) at or over
+     **4**; if a goal would push past those, lower the goal, do not fight the guard.
+4. **One `grade_shot` per clip** with those goals in that order (temperature, exposure, contrast).
+   Two renders per shot: one to read, one to confirm. Its report shows before → predicted → confirmed
+   per knob; the residual is stated, not chased.
+5. **Report** one table — clip, region, whitesRB / brightness / spread before → after, knobs set,
+   anything skipped or that backed off — and one line on undo (the grade is on the working copy;
+   Discard copy removes all of it). Then, only for shots of the same kind (two faces, two shots of the
+   same table) that still differ by more than 3 in brightness, one `grade exposure` to match them.
 
-Cost: each `grade` is 3-5 renders at about 0.7 s, so a 20-clip sequence takes a few minutes. Say
-so once at the start and keep going; do not stop to ask between clips.
+Cost: two renders per shot, about 1.5 s; a 20-clip sequence is under a minute. Say so once and keep
+going; do not stop between clips.
 
 ## Measure the subject, not the frame
 
@@ -93,8 +102,9 @@ already moved from 74 to 79.6 before contrast was touched at all.)
 
 ## Matching two shots
 
-This is most of real grading, and it needs no theory at all: measure the shot you like, then drive
-the other one to those numbers.
+For two shots of the SAME thing (the same face, the same table), measure the one you like and drive
+the other to its numbers - no theory needed. Never match different subjects to each other: that is
+how a dark object gets pushed three stops to look like a bright one.
 
 ```
 scopes at the reference time, region subject (or face)

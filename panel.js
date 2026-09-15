@@ -15,7 +15,7 @@ const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captio
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
-const { steer: steerGrade, PARAMS: GRADE_PARAMS } = require(path.join(extensionRoot, "src", "grade.cjs"));
+const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
@@ -606,15 +606,17 @@ async function measureFrameAt(seconds, { region = "frame" } = {}) {
 // Returns the measurement plus what was actually measured, since a region can fall back to the frame.
 function measureRegion(src, region) {
   const frame = measureScopes(decodeRgb(src));
+  // A region reading always carries the whole-frame numbers too (`frame`): clipping and crushing are
+  // judged on the frame, because pushing a small subject up blows the room behind it.
   if (region === "face") {
     const box = biggestFaceBox(src);
     if (!box) return Object.assign(frame, { region: "frame", fellBack: "no face found" });
-    return Object.assign(measureScopes(decodeRgb(src, box)), { region: "face", box });
+    return Object.assign(measureScopes(decodeRgb(src, box)), { region: "face", box, frame });
   }
   if (region === "subject") {
     const found = subjectMask(src);
     if (!found) return Object.assign(frame, { region: "frame", fellBack: "no subject found" });
-    try { return Object.assign(measureScopes(maskRgb(decodeRgb(src), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box }); }
+    try { return Object.assign(measureScopes(maskRgb(decodeRgb(src), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box, frame }); }
     finally { try { fs.rmSync(found.mask, { force: true }); } catch (_) {} }
   }
   return Object.assign(frame, { region: "frame" });
@@ -655,50 +657,79 @@ async function gradeTool({ parameter, target, statistic, seconds, track = 1, tol
   if (!(at >= 0)) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds required (the timeline position to grade by)", isError: true };
   if (!GRADE_PARAMS[parameter]) return { text: "CLAUDE_FOR_ADOBE_ERROR:unknown parameter " + parameter + "; known: " + Object.keys(GRADE_PARAMS).join(", "), isError: true };
   if (!isFinite(Number(target))) return { text: "CLAUDE_FOR_ADOBE_ERROR:target required (the number the statistic should reach)", isError: true };
-  const name = GRADE_PARAMS[parameter].lumetri;
-  const card = addTool("grade " + parameter + " to " + (statistic || GRADE_PARAMS[parameter].steer) + " " + target + " at " + at + "s", "");
+  const card = addTool("grade " + parameter + " → " + (statistic || GRADE_PARAMS[parameter].steer) + " " + target + " at " + at + "s", "");
   setStatus("Grading " + parameter + "…");
-
-  let clip = "";
-  const set = async (value) => {
-    const raw = await host("lumetriParam", String(at), String(track), name, String(value));
-    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
-    const [, readBack, clipName] = raw.split(COL);
-    clip = clipName;
-    return Number(readBack);
-  };
-
+  const { set, clipName, regionSeen } = lumetriWriter(at, track, GRADE_PARAMS[parameter].lumetri, region);
   let result;
-  try {
-    let measuredRegion = region, fellBack = null;
-    const measure = async () => {
-      const m = await measureFrameAt(at, { region });
-      measuredRegion = m.region || region; fellBack = m.fellBack || null;
-      return m;
-    };
-    result = await steerGrade({ set, measure, param: parameter, target: Number(target), statistic, tolerance });
-    result.measuredRegion = measuredRegion; result.fellBack = fellBack;
-  } catch (error) { return err(card, error.message); }
-
+  try { result = await steerGrade({ set, measure: regionSeen.measure, param: parameter, target: Number(target), statistic, tolerance }); }
+  catch (error) { return err(card, error.message); }
   const lines = [
-    (result.hit ? "CHECK PASS" : "CHECK MISS") + ": " + parameter + " = " + round2(result.value) + " on " + clip +
-      " — " + result.statistic + " of the " + (result.measuredRegion || "frame") + " measured " + round2(result.achieved) +
-      ", asked for " + round2(Number(target)),
-    "readings: " + result.readings.map((r) => round2(r.value) + "→" + round2(r.stat)).join(", ") + " (" + result.measures + " renders)",
+    (result.hit ? "CHECK PASS" : "CHECK MISS") + ": " + parameter + " = " + round2(result.value) + " on " + clipName() + " — " +
+      result.statistic + " of the " + regionSeen.which() + " reads " + round2(result.achieved) + ", asked " + round2(Number(target)) +
+      (result.hit ? "" : " (residual " + result.residual + ")"),
+    "how: " + (result.how === "model" ? "set from the calibration model" : "one probe to measure the slope, then set") + (result.nudged ? ", one nudge from the real readings" : "") +
+      "; " + result.renders + " render" + (result.renders === 1 ? "" : "s") + ": " + result.readings.map((r) => round2(r.value) + "→" + round2(r.stat)).join(", "),
   ];
   if (result.problem) lines.push(result.problem);
-  if (result.fellBack) lines.push(result.fellBack + ", so this is the whole frame: the background pulls these numbers away from the subject.");
-  else if (result.measuredRegion === "face") lines.push("measured the face only (Vision's biggest face box), not the whole frame.");
-  else if (result.measuredRegion === "subject") lines.push("measured Vision's foreground subject only, not the whole frame.");
-  if (!result.hit && !result.problem) lines.push("that is as close as this parameter gets; another parameter or statistic may be the one that moves it.");
-  if (result.hit && !result.reliable) lines.push("low confidence: the statistic barely moves over this range, so the value is approximate — check the picture.");
-  if (!result.tested) lines.push("NOTE: " + parameter + " has not been swept live, so its steering statistic is inferred. Trust the picture over the number.");
-  lines.push("Set on the clip; one Cmd+Z per write (" + result.measures + " here).");
+  if (regionSeen.fellBack()) lines.push(regionSeen.fellBack() + ", so this is the whole frame.");
+  if (!result.tested) lines.push("NOTE: " + parameter + " has no calibration yet; its steering statistic is inferred. Trust the picture over the number.");
+  lines.push("Set on the clip; Cmd+Z per write.");
   card.done(lines.join("\n"), true);
   setStatus("Thinking…");
   return { text: lines.join("\n") };
 }
 
+// The Premiere side of a grade at one timeline position: a writer for one Lumetri parameter, a
+// measurer for the chosen region, and what they saw.
+function lumetriWriter(at, track, lumetriName, region) {
+  let clip = "", seen = region, fell = null;
+  const set = async (value) => {
+    const raw = await host("lumetriParam", String(at), String(track), lumetriName, String(value));
+    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+    const [, readBack, clipName] = raw.split(COL);
+    clip = clipName;
+    return Number(readBack);
+  };
+  const measure = async () => { const m = await measureFrameAt(at, { region }); seen = m.region || region; fell = m.fellBack || null; return m; };
+  return { set, clipName: () => clip, regionSeen: { measure, which: () => seen, fellBack: () => fell } };
+}
+
+// A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
+// all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
+async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
+  const at = Number(seconds);
+  if (!(at >= 0)) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds required", isError: true };
+  if (!Array.isArray(goals) || !goals.length) return { text: "CLAUDE_FOR_ADOBE_ERROR:goals[] required: [{parameter, target}] in the order to apply", isError: true };
+  for (const g of goals) {
+    if (!GRADE_PARAMS[g.parameter]) return { text: "CLAUDE_FOR_ADOBE_ERROR:unknown parameter " + g.parameter, isError: true };
+    if (!isFinite(Number(g.target))) return { text: "CLAUDE_FOR_ADOBE_ERROR:target required for " + g.parameter, isError: true };
+    if (g.statistic && !GRADE_STATS[g.statistic]) return { text: "CLAUDE_FOR_ADOBE_ERROR:unknown statistic " + g.statistic, isError: true };
+  }
+  const card = addTool("grade shot at " + at + "s: " + goals.map((g) => g.parameter + "→" + g.target).join(", "), "");
+  setStatus("Grading shot…");
+  let clip = "", seen = region, fell = null;
+  const writers = {};
+  for (const g of goals) writers[g.parameter] = lumetriWriter(at, track, GRADE_PARAMS[g.parameter].lumetri, region);
+  const measure = async () => { const m = await measureFrameAt(at, { region }); seen = m.region || region; fell = m.fellBack || null; return m; };
+  // planShot names the knob it is writing, so each goes to its own Lumetri parameter.
+  let result;
+  try {
+    const plan = goals.map((g) => ({ param: g.parameter, target: Number(g.target), statistic: g.statistic }));
+    result = await planGradeShot({ set: (value, param) => writers[param].set(value), measure, goals: plan, tolerance });
+  } catch (error) { return err(card, error.message); }
+  for (const w of Object.values(writers)) if (w.clipName()) clip = w.clipName();
+  const lines = [];
+  for (const p of result.plan) {
+    if (p.skipped) { lines.push("skipped " + p.param + ": " + p.skipped); continue; }
+    lines.push((p.hit ? "PASS" : "MISS") + " " + p.param + " = " + round2(p.value) + " (" + p.statistic + " " + p.before + " → predicted " + p.predicted + ", reads " + p.achieved + ", asked " + p.target + (p.hit ? "" : ", residual " + p.residual) + ")");
+  }
+  lines.unshift("Shot at " + at + "s on " + clip + ", " + seen + (fell ? " (" + fell + ")" : "") + ": " + result.renders + " renders.");
+  if (result.unsafe) lines.push("WARNING: the frame now clips " + round2(result.clipped) + "% / crushes " + round2(result.crushed) + "% — lower the white point or exposure goal.");
+  lines.push("Set on the clip; Cmd+Z per knob.");
+  card.done(lines.join("\n"), true);
+  setStatus("Thinking…");
+  return { text: lines.join("\n") };
+}
 // Audio clips of the active sequence overlapping [a,b], with their peak file when Premiere has one.
 async function audioClipsIn(a, b) {
   const snap = await readSnapshot();
@@ -2467,7 +2498,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { scopes: scopesTool, grade: gradeTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { scopes: scopesTool, grade: gradeTool, grade_shot: gradeShotTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -2486,7 +2517,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `colour` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face", "subject"], description: "\"subject\" measures only Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" measures only the biggest face box (skin without hair and clothes, best for skin tone). Use one of them whenever the shot has a subject: the background drags whole-frame numbers away from it. Says so when nothing is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
-  { name: "grade", description: "Load the `colour` skill before grading: it has the order of operations, what each number means and what \"correct\" is as a number. Sets one Lumetri Color parameter on the clip at a timeline position until the picture MEASURES what you asked for. Adds Lumetri Color if the clip has none. Give the number you want the picture to reach, not the slider value: the panel brackets, writes and re-measures Premiere's own render (about 0.7 s each, at most 6), then reports every reading and whether it hit. Each parameter moves its own statistic and steering by the wrong one reads as nothing happening, so the default is the measured one: exposure -> brightness (luma median), contrast -> spread (luma p99-p1, the median barely moves), temperature -> warmth (cast Cr). Typical targets on the 0-100 scale: brightness 45-55 for a normally exposed face, spread 60-80, warmth 0 for neutral. Read the shot with `scopes` first, then set a target from what you saw. Exposure, contrast and temperature were swept live; the rest are inferred and say so in the result. Curves, colour wheels and HSL secondaries are not reachable this way - they are packed values, not numbers.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["exposure", "contrast", "temperature", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should measure, 0-100 (cast is -50..50)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "shadows", "highlights", "spread", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to measure and steer by. \"subject\" is Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" is the biggest face box only (best for skin tone). Use one whenever the shot has a subject: whole-frame numbers grade the background too, so neutralising a warm room drains the skin. Falls back to the whole frame, and says so, when nothing is found." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
+  { name: "grade", description: "Load the `colour` skill before grading. Sets ONE Lumetri Color parameter on the clip at a timeline position so the scopes read what you asked, in one go: one render to read the scopes, the calibration model chooses the value, one render to confirm (one nudge from the two real readings if the confirm is off, then it stops and reports the residual). Never leaves the slider's range, never leaves the frame clipped or crushed. Give the number the statistic should reach, not the slider value. Defaults: temperature steers whitesRB (the parade's blue-minus-red whites; 0 = neutral whites), exposure steers brightness (luma median), contrast steers spread (luma p99-p1). For a whole shot use grade_shot instead: one render for all the knobs.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should read (0-100 scale; parade differences and cast are signed)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "blackPoint", "whitePoint", "spread", "whitesRB", "whitesG", "blacksRB", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by. \"subject\" = Vision's foreground subject; \"face\" = the biggest face box. Clipping is always judged on the whole frame." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
+  { name: "grade_shot", description: "Grade a whole shot in ONE go: one render to read its scopes, the calibration model chooses every knob, all are written, one render confirms the lot. Two renders per shot. goals are applied in the order given - a colourist's order is white balance (temperature → whitesRB 0), then exposure (→ brightness), then contrast (→ spread). Each knob is solved on the state predicted after the ones before it. Reports, per knob: before, predicted, what the confirm actually read, the residual; and warns if the frame ended up clipped or crushed. Knobs without a calibration (anything but temperature, exposure, contrast) are skipped and named - set those with grade.",     inputSchema: { type: "object", properties: { goals: { type: "array", items: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "exposure", "contrast", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number" }, statistic: { type: "string" } }, required: ["parameter", "target"] }, description: "In the order to apply." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by; clipping is judged on the whole frame regardless." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit per knob, default 1." } }, required: ["goals", "seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
   { name: "layer_frames", description: "One layer alone: every clip on a video track rendered with the other video tracks hidden, so that layer's own placement is judged for the shot alone. Reframe order: footage tracks in step 1 (picture), graphic tracks in step 3 (graphics). Fix with nudge_clip and the same track.",
