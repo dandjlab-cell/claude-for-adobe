@@ -1,5 +1,15 @@
-// What macOS itself can see in a frame, so the panel never guesses. Two modes, one binary:
-//   bin/ocr <image...>           text: {"file":"...","items":[{"text":"Codex","conf":0.98,"box":[x0,y0,x1,y1]}]}
+// What macOS itself can see in a frame, so the panel never guesses. One binary; with no flag it runs EVERY
+// detector on the frame in one pass and prints one line with all of it (the owner, 2026-09-16 01:50: "why are
+// we limiting Apple Vision at all"): text, faces, hands, the subject's extent, the person's extent. A flag
+// narrows it to one section (the older callers) and is the only way a mask PNG is written.
+//   bin/ocr <image...>           everything: {"file":"...","items":[...],"faces":[...],"hands":[...],
+//                                            "subject":{"coverage":..,"box":[..]},"person":{"coverage":..,"box":[..]}}
+//   bin/ocr --text <image...>    text: {"file":"...","items":[{"text":"Codex","conf":0.98,"box":[x0,y0,x1,y1]}]}
+//   bin/ocr --hands <image...>   hands: {"file":"...","hands":[{"box":[..],"chirality":"left|right|unknown","confidence":0..1}]}
+//                                Vision's hand pose (21 joints a hand); the box is the joints' extent. Skin work
+//                                keys the skin colour range inside these boxes, so an oak table never counts as a hand.
+//   bin/ocr --person <image...>  person: {"file":"...","mask":"<image>.person.png","coverage":0..1,"box":[..]}
+//                                Vision's person segmentation (people, clothes included) as an 8-bit mask image.
 //   bin/ocr --sounds <audio>     sounds: one line per window {"t0":s,"t1":s,"labels":[["laughter",0.71],...]} using Apple's
 //                                303-class sound classifier (laughter, applause, cheering, sigh, gasp, speech, music, silence...)
 //   bin/ocr --faces <image...>   faces: {"file":"...","faces":[{"box":[..],"yaw":deg,"pitch":deg,"roll":deg,
@@ -43,7 +53,7 @@ func centre(_ r: VNFaceLandmarkRegion2D?) -> (x: Double, y: Double)? {
   return (pts.reduce(0.0) { $0 + Double($1.x) } / n, pts.reduce(0.0) { $0 + Double($1.y) } / n)
 }
 
-func faces(_ cg: CGImage, _ file: String) {
+func faces(_ cg: CGImage, _ file: String) -> String {
   let landmarks = VNDetectFaceLandmarksRequest()
   // Head pose (yaw, and pitch on macOS 13+) only comes from revision 3; the default revision returns zeros.
   if VNDetectFaceLandmarksRequest.supportedRevisions.contains(VNDetectFaceLandmarksRequestRevision3) {
@@ -52,7 +62,7 @@ func faces(_ cg: CGImage, _ file: String) {
   let quality = VNDetectFaceCaptureQualityRequest()
   let handler = VNImageRequestHandler(cgImage: cg, options: [:])
   do { try handler.perform([landmarks, quality]) } catch {
-    print("{\"file\":\(json(file)),\"error\":\(json(String(describing: error)))}"); return
+    return "\"faces\":null,\"facesError\":\(json(String(describing: error)))"
   }
   let quals = quality.results ?? []
   var out: [String] = []
@@ -88,52 +98,86 @@ func faces(_ cg: CGImage, _ file: String) {
       + "\"quality\":\(q < 0 ? "null" : num(q)),\"eyes\":\(num(eyes)),\"mouth\":\(num(mouth)),"
       + "\"facing\":\(opt(facing)),\"tilt\":\(opt(tilt))}")
   }
-  print("{\"file\":\(json(file)),\"faces\":[\(out.joined(separator: ","))]}")
+  return "\"faces\":[\(out.joined(separator: ","))]"
+}
+
+// Hands, from Vision's hand pose: the joints' extent as a box, which hand it is, and the joints' mean confidence.
+func hands(_ cg: CGImage, _ file: String) -> String {
+  let req = VNDetectHumanHandPoseRequest()
+  req.maximumHandCount = 6
+  let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+  do { try handler.perform([req]) } catch { return "\"hands\":null,\"handsError\":\(json(String(describing: error)))" }
+  var out: [String] = []
+  for obs in req.results ?? [] {
+    guard let pts = try? obs.recognizedPoints(.all) else { continue }
+    let good = pts.values.filter { $0.confidence > 0.3 }
+    guard good.count >= 5 else { continue }
+    let xs = good.map { Double($0.location.x) }, ys = good.map { Double($0.location.y) }
+    let conf = good.reduce(0.0) { $0 + Double($1.confidence) } / Double(good.count)
+    var side = "unknown"
+    if #available(macOS 12.0, *) { side = obs.chirality == .left ? "left" : obs.chirality == .right ? "right" : "unknown" }
+    out.append("{\"box\":[\(num(xs.min()!)),\(num(1 - ys.max()!)),\(num(xs.max()!)),\(num(1 - ys.min()!))],\"chirality\":\(json(side)),\"confidence\":\(num(conf)),\"joints\":\(good.count)}")
+  }
+  return "\"hands\":[\(out.joined(separator: ","))]"
+}
+
+// A frame-sized mask (Float32 or 8-bit, one channel) to coverage, extent and, when asked, an 8-bit PNG.
+func maskStats(_ buffer: CVPixelBuffer, writeTo maskPath: String?) -> (coverage: Double, box: String, error: String?) {
+  CVPixelBufferLockBaseAddress(buffer, .readOnly); defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+  let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer), stride = CVPixelBufferGetBytesPerRow(buffer)
+  let isFloat = CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_OneComponent32Float
+  guard let base = CVPixelBufferGetBaseAddress(buffer) else { return (0, "null", "empty mask") }
+  var grey = [UInt8](repeating: 0, count: w * h)
+  var on = 0, x0 = w, y0 = h, x1 = -1, y1 = -1
+  for y in 0..<h {
+    for x in 0..<w {
+      let v: Float = isFloat ? base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)[x] : Float(base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)[x]) / 255
+      grey[y * w + x] = UInt8(max(0, min(255, v * 255)))
+      if v >= 0.5 { on += 1; if x < x0 { x0 = x }; if x > x1 { x1 = x }; if y < y0 { y0 = y }; if y > y1 { y1 = y } }
+    }
+  }
+  if let maskPath = maskPath {
+    let cs = CGColorSpaceCreateDeviceGray()
+    guard let ctx = CGContext(data: &grey, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue),
+          let out = ctx.makeImage(),
+          let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: maskPath) as CFURL, "public.png" as CFString, 1, nil) else { return (0, "null", "could not write mask") }
+    CGImageDestinationAddImage(dest, out, nil)
+    guard CGImageDestinationFinalize(dest) else { return (0, "null", "could not finalize mask") }
+  }
+  let coverage = Double(on) / Double(w * h)
+  let box = on > 0 ? "[\(num(Double(x0) / Double(w))),\(num(Double(y0) / Double(h))),\(num(Double(x1 + 1) / Double(w))),\(num(Double(y1 + 1) / Double(h)))]" : "null"
+  return (coverage, box, nil)
+}
+
+// People (clothes included), from Vision's person segmentation (macOS 12+).
+func person(_ cg: CGImage, _ file: String, writeMask: Bool) -> String {
+  guard #available(macOS 12.0, *) else { return "\"person\":null" }
+  let req = VNGeneratePersonSegmentationRequest()
+  req.qualityLevel = .balanced
+  req.outputPixelFormat = kCVPixelFormatType_OneComponent8
+  let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+  do { try handler.perform([req]) } catch { return "\"person\":null,\"personError\":\(json(String(describing: error)))" }
+  guard let obs = req.results?.first else { return "\"person\":null" }
+  let path = writeMask ? file + ".person.png" : nil
+  let r = maskStats(obs.pixelBuffer, writeTo: path)
+  if let e = r.error { return "\"person\":null,\"personError\":\(json(e))" }
+  return "\"person\":{\"mask\":\(path.map { json($0) } ?? "null"),\"coverage\":\(num(r.coverage)),\"box\":\(r.box)}"
 }
 
 // The foreground subject as a mask, from Vision's instance segmentation (macOS 14+). All instances are merged:
 // "the subject" for a grade is everything in front, and the panel measures pixels, not identities.
-func subject(_ cg: CGImage, _ file: String) {
-  guard #available(macOS 14.0, *) else { print("{\"file\":\(json(file)),\"error\":\"macOS 14 or later needed for subject masks\"}"); return }
+func subject(_ cg: CGImage, _ file: String, writeMask: Bool) -> String {
+  guard #available(macOS 14.0, *) else { return "\"subject\":null,\"subjectError\":\"macOS 14 or later needed for subject masks\"" }
   let req = VNGenerateForegroundInstanceMaskRequest()
   let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-  do { try handler.perform([req]) } catch {
-    print("{\"file\":\(json(file)),\"error\":\(json(String(describing: error)))}"); return
-  }
-  guard let obs = req.results?.first, !obs.allInstances.isEmpty else {
-    print("{\"file\":\(json(file)),\"mask\":null,\"coverage\":0}"); return
-  }
+  do { try handler.perform([req]) } catch { return "\"subject\":null,\"subjectError\":\(json(String(describing: error)))" }
+  guard let obs = req.results?.first, !obs.allInstances.isEmpty else { return "\"subject\":{\"mask\":null,\"coverage\":0,\"box\":null}" }
   let buffer: CVPixelBuffer
-  do { buffer = try obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) } catch {
-    print("{\"file\":\(json(file)),\"error\":\(json(String(describing: error)))}"); return
-  }
-  // The scaled mask is 32-bit float, one channel, frame-sized. Write it as 8-bit grey and read its extent.
-  CVPixelBufferLockBaseAddress(buffer, .readOnly); defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-  let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer), stride = CVPixelBufferGetBytesPerRow(buffer)
-  guard let base = CVPixelBufferGetBaseAddress(buffer) else { print("{\"file\":\(json(file)),\"error\":\"empty mask\"}"); return }
-  var grey = [UInt8](repeating: 0, count: w * h)
-  var on = 0, x0 = w, y0 = h, x1 = -1, y1 = -1
-  for y in 0..<h {
-    let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
-    for x in 0..<w {
-      let v = row[x]
-      let g = UInt8(max(0, min(255, v * 255)))
-      grey[y * w + x] = g
-      if v >= 0.5 { on += 1; if x < x0 { x0 = x }; if x > x1 { x1 = x }; if y < y0 { y0 = y }; if y > y1 { y1 = y } }
-    }
-  }
-  let maskPath = file + ".mask.png"
-  let cs = CGColorSpaceCreateDeviceGray()
-  guard let ctx = CGContext(data: &grey, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue),
-        let out = ctx.makeImage(),
-        let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: maskPath) as CFURL, "public.png" as CFString, 1, nil) else {
-    print("{\"file\":\(json(file)),\"error\":\"could not write mask\"}"); return
-  }
-  CGImageDestinationAddImage(dest, out, nil)
-  guard CGImageDestinationFinalize(dest) else { print("{\"file\":\(json(file)),\"error\":\"could not finalize mask\"}"); return }
-  let coverage = Double(on) / Double(w * h)
-  let box = on > 0 ? "[\(num(Double(x0) / Double(w))),\(num(Double(y0) / Double(h))),\(num(Double(x1 + 1) / Double(w))),\(num(Double(y1 + 1) / Double(h)))]" : "null"
-  print("{\"file\":\(json(file)),\"mask\":\(json(maskPath)),\"coverage\":\(num(coverage)),\"box\":\(box)}")
+  do { buffer = try obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) } catch { return "\"subject\":null,\"subjectError\":\(json(String(describing: error)))" }
+  let path = writeMask ? file + ".mask.png" : nil
+  let r = maskStats(buffer, writeTo: path)
+  if let e = r.error { return "\"subject\":null,\"subjectError\":\(json(e))" }
+  return "\"subject\":{\"mask\":\(path.map { json($0) } ?? "null"),\"coverage\":\(num(r.coverage)),\"box\":\(r.box)}"
 }
 
 import SoundAnalysis
@@ -161,29 +205,38 @@ func sounds(_ file: String) {
   analyzer.analyze()
 }
 
-var args = Array(CommandLine.arguments.dropFirst())
-let wantFaces = args.first == "--faces"
-if wantFaces { args = Array(args.dropFirst()) }
-let wantSubject = args.first == "--subject"
-if wantSubject { args = Array(args.dropFirst()) }
-if args.first == "--sounds" { for f in args.dropFirst() { sounds(f) }; exit(0) }
-
-for file in args {
-  guard let img = NSImage(contentsOfFile: file), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-    print("{\"file\":\(json(file)),\"error\":\"unreadable\"}"); continue
-  }
-  if wantFaces { faces(cg, file); continue }
-  if wantSubject { subject(cg, file); continue }
+func text(_ cg: CGImage, _ file: String) -> String {
   let req = VNRecognizeTextRequest()
   req.recognitionLevel = .accurate
   req.usesLanguageCorrection = false
   let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-  do { try handler.perform([req]) } catch { print("{\"file\":\(json(file)),\"error\":\(json(String(describing: error)))}"); continue }
+  do { try handler.perform([req]) } catch { return "\"items\":null,\"textError\":\(json(String(describing: error)))" }
   var items: [String] = []
   for obs in req.results ?? [] {
     guard let c = obs.topCandidates(1).first else { continue }
     let b = obs.boundingBox
     items.append("{\"text\":\(json(c.string)),\"conf\":\(c.confidence),\"box\":[\(b.minX),\(1 - b.maxY),\(b.maxX),\(1 - b.minY)]}")
   }
-  print("{\"file\":\(json(file)),\"items\":[\(items.joined(separator: ","))]}")
+  return "\"items\":[\(items.joined(separator: ","))]"
+}
+
+var args = Array(CommandLine.arguments.dropFirst())
+var mode = "all"
+if let f = args.first, f.hasPrefix("--") { mode = String(f.dropFirst(2)); args = Array(args.dropFirst()) }
+if mode == "sounds" { for f in args { sounds(f) }; exit(0) }
+
+for file in args {
+  guard let img = NSImage(contentsOfFile: file), let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+    print("{\"file\":\(json(file)),\"error\":\"unreadable\"}"); continue
+  }
+  var parts: [String] = []
+  switch mode {
+  case "faces": parts.append(faces(cg, file))
+  case "subject": parts.append(subject(cg, file, writeMask: true))
+  case "person": parts.append(person(cg, file, writeMask: true))
+  case "hands": parts.append(hands(cg, file))
+  case "text": parts.append(text(cg, file))
+  default: parts = [text(cg, file), faces(cg, file), hands(cg, file), subject(cg, file, writeMask: false), person(cg, file, writeMask: false)]
+  }
+  print("{\"file\":\(json(file)),\(parts.joined(separator: ","))}")
 }
