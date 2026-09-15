@@ -817,9 +817,10 @@ var PCX = (function () {
     }
 
     var p = null;
+    // Every property access crosses the ExtendScript bridge and Lumetri has 130: stop at the match.
     for (var j = 0; j < lum.properties.numItems; j++) {
       var pr = lum.properties[j];
-      if (String(pr.displayName) === String(name) && p === null) { p = pr; }
+      if (String(pr.displayName) === String(name)) { p = pr; break; }
     }
     if (!p) return "ERR:no Lumetri parameter named " + name;
     if (String(value) !== "") {

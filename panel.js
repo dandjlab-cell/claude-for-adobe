@@ -89,8 +89,15 @@ function evalScript(code) {
 
 // Call a PCX host function (host/premiere.jsx). Arguments are passed as strings.
 function host(fn, ...args) {
-  return evalScript("PCX." + fn + "(" + args.map((a) => JSON.stringify(String(a))).join(",") + ")");
+  const t0 = Date.now();
+  return evalScript("PCX." + fn + "(" + args.map((a) => JSON.stringify(String(a))).join(",") + ")").then((r) => {
+    const ms = Date.now() - t0;
+    hostTime.ms += ms; hostTime.calls++;
+    if (ms >= 400) log("host " + fn + " took " + ms + "ms"); // slow bridge calls are where a long tool run goes
+    return r;
+  });
 }
+const hostTime = { ms: 0, calls: 0 }; // running totals: a tool can diff them to say what its bridge calls cost
 
 async function loadHostScript() {
   const out = await evalScript(fs.readFileSync(path.join(extensionRoot, "host", "premiere.jsx"), "utf8"));
@@ -822,6 +829,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     if (cancelRequested) { stopped = true; break; }
     const at = Math.round(((c.start + c.end) / 2) * 1000) / 1000;
     const label = c.name + " @" + at + "s";
+    const clipT0 = Date.now(), host0 = { ...hostTime };
+    let renderMs = 0, readMs = 0;
+    const timed = async (fn, bucket) => { const s = Date.now(); try { return await fn(); } finally { if (bucket === "render") renderMs += Date.now() - s; else readMs += Date.now() - s; } };
 
     // Where the knobs are. A clip that already carries a balance (a temperature, a pad) is read from
     // Premiere's render, since its source pixels no longer describe it. A wheel read that fails means
@@ -837,9 +847,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // parade identical, median within 0.4) and fall back to a Premiere render only when that fails.
     try {
       if ((read === "source" || read === "auto") && !graded) {
-        try { m = await measureSourceAt(at, track, region, snap); readFrom = "source"; }
-        catch (error) { if (read === "source") throw error; m = await measureFrameAt(at, { region }); renders++; readFrom = "premiere"; }
-      } else { m = await measureFrameAt(at, { region }); renders++; readFrom = "premiere"; }
+        try { m = await timed(() => measureSourceAt(at, track, region, snap), "read"); readFrom = "source"; }
+        catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region }), "render"); renders++; readFrom = "premiere"; }
+      } else { m = await timed(() => measureFrameAt(at, { region }), "render"); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
     const f0 = m.frame || m;
@@ -874,7 +884,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    baseline it restores the sliders and confirms again - the clip's one correction. Otherwise
     //    the correction goes to the pads, if a cast is left and the real reading says how much.
     let state = afterBalance, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false;
-    const confirmMeasure = confirm ? () => measureFrameAt(at, { region, reuse }) : async () => afterBalance;
+    const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse }), "render") : async () => afterBalance;
     try {
       if (temp) await tw.set(temp.value);
       if (padMoves.length) await ww.write(applied);
@@ -917,7 +927,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const v = gradeVerdict(state, state.region || seen);
     balanced += confirm && v.balanced ? 1 : 0;
     const f1 = state.frame || state;
-    lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : ""));
+    const hostMs = hostTime.ms - host0.ms - renderMs, hostCalls = hostTime.calls - host0.calls;
+    const took = " [" + ((Date.now() - clipT0) / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " other host calls " + (hostMs / 1000).toFixed(1) + "]";
+    log("grade " + label + took);
+    lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
