@@ -66,7 +66,8 @@ const PARAMS = {
 const GUARD = { clipped: 0.5, crushed: 1.0 };
 const damage = (m) => {
   const f = m.frame || m; // measureRegion attaches the whole-frame numbers when a region was measured
-  return { clipped: Math.max(f.clipped.red, f.clipped.green, f.clipped.blue), crushed: f.crushed };
+  const floor = f.floor ? Math.max(f.floor.red, f.floor.green, f.floor.blue) : 0; // a channel at 0 is crushed too (C187, 21:26)
+  return { clipped: Math.max(f.clipped.red, f.clipped.green, f.clipped.blue), crushed: Math.max(f.crushed, floor) };
 };
 const unsafe = (d, guard) => d.clipped > guard.clipped || d.crushed > guard.crushed;
 // Damage the shot arrived with is not the grade's doing: a source that already clips 1.7% of a window

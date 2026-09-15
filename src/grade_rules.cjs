@@ -98,6 +98,12 @@ function levelsFor(m, current = null) {
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
+  // The darkest pixels a coloured surface (a red-orange object in shadow: B-R -20 and more) are not a
+  // black to be put at 4: a master curve cannot lower a luma that comes from one channel and only
+  // crushes the other two (C187, 21:26 - green and blue on the floor, red untouched, then the pad
+  // tinted the floor blue). Left alone; padsFor says why.
+  const cast = castAt(f, "shadows");
+  if (Math.hypot(cast[0], cast[1]) > COLOURED) return null;
   const target = BLACK_POINT[1] - 1;
   const anchor = Math.max(0.3, Math.min(0.6, f.luma.p50 / 100));
   const want = blackInFor(bp, target, anchor);

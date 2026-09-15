@@ -35,7 +35,7 @@ function measure(rgb) {
   // onto the floor they are not - the 2026-09-15 runs read a warm bottom getting warmer after a correct
   // pad. Pixels with any channel at 0 or 255 are left out: a clamped channel has no cast to read.
   const cBR = new Uint32Array(256 * 511), cGM = new Uint32Array(256 * 511), cN = new Uint32Array(256); // per luma code
-  let sr = 0, sg = 0, sb = 0, scb = 0, scr = 0, clipR = 0, clipG = 0, clipB = 0, zero = 0;
+  let sr = 0, sg = 0, sb = 0, scb = 0, scr = 0, clipR = 0, clipG = 0, clipB = 0, zero = 0, floorR = 0, floorG = 0, floorB = 0;
   for (let i = 0; i < n * 3; i += 3) {
     const r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
     const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -45,6 +45,7 @@ function measure(rgb) {
     hs[Math.min(150, Math.round(Math.hypot(cb, cr) / 127.5 * 100))]++; // pure red ~103, pure green ~119: not capped at 100
     sr += r; sg += g; sb += b; scb += cb; scr += cr;
     if (r === 255) clipR++; if (g === 255) clipG++; if (b === 255) clipB++;
+    if (r === 0) floorR++; if (g === 0) floorG++; if (b === 0) floorB++;
     if (r === 0 && g === 0 && b === 0) zero++;
   }
   // nearest rank, at least 1: p0 is the first OCCUPIED bin, so a flat grey frame has a grey minimum, not 0
@@ -74,6 +75,10 @@ function measure(rgb) {
       shadows: band(codesBetween(...LEVEL_BANDS.shadows)), midtones: band(codesBetween(...LEVEL_BANDS.midtones)), highlights: band(codesBetween(...LEVEL_BANDS.highlights)),
     },
     clipped: { red: share(clipR), green: share(clipG), blue: share(clipB) },
+    // A channel on the floor is the mirror of a channel at 255: a warm shadow whose blue is at 0 has
+    // no blue to read, and a curve that puts two channels of a coloured dark surface at 0 has crushed
+    // it even though its luma (from the third channel) has not moved - the 21:26 run's C187.
+    floor: { red: share(floorR), green: share(floorG), blue: share(floorB) },
     crushed: share(low), pureBlack: share(zero),
     saturation: { p50: pct(hs, 50), p99: pct(hs, 99) },
     cast: { cb: Math.round(scb / n / 127.5 * 500) / 10, cr: Math.round(scr / n / 127.5 * 500) / 10 },
@@ -98,7 +103,7 @@ function report(m, label) {
   return [
     (label ? label + ": " : "") + "luma 0-100: min " + m.luma.min + ", p1 " + m.luma.p1 + ", median " + m.luma.p50 + ", p99 " + m.luma.p99 + ", max " + m.luma.max,
     "parade means R " + m.red.mean + " G " + m.green.mean + " B " + m.blue.mean + "; p1-p99 R " + m.red.p1 + "-" + m.red.p99 + ", G " + m.green.p1 + "-" + m.green.p99 + ", B " + m.blue.p1 + "-" + m.blue.p99,
-    "clipped at 255: R " + m.clipped.red + "% G " + m.clipped.green + "% B " + m.clipped.blue + "%; at the luma floor " + m.crushed + "% (pure black " + m.pureBlack + "%)",
+    "clipped at 255: R " + m.clipped.red + "% G " + m.clipped.green + "% B " + m.clipped.blue + "%; at the luma floor " + m.crushed + "% (pure black " + m.pureBlack + "%); channel at 0: R " + m.floor.red + "% G " + m.floor.green + "% B " + m.floor.blue + "%",
     "vectorscope: saturation median " + m.saturation.p50 + ", p99 " + m.saturation.p99 + " (% of a 127.5 Cb/Cr radius: pure red is about 103, pure green about 119); mean Cb " + m.cast.cb + ", Cr " + m.cast.cr + " (-50..50)",
     "casts by luma band (median B-R / G-mid of paired pixels, 0-100; >0 blue / green, <0 warm / magenta): " + [["blacks", "darkest 3%"], ["shadows", "5-30"], ["midtones", "30-65"], ["highlights", "65-95"], ["whites", "brightest 3%"]].map(([k, label]) => { const b = m.bands && m.bands[k]; return k + " (" + label + ")" + (b && b.rb !== null ? " " + b.rb + " / " + b.g + " [" + b.share + "%]" : " none"); }).join("; "),
     "reads: " + readings(m).join("; "),

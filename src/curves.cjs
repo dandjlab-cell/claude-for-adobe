@@ -56,14 +56,17 @@ function isIdentity(curves) {
 // The Master curve as a levels move: black input at blackIn, white input at whiteIn (0..1). With an
 // `anchor` (0..1, a luma the picture should keep - the frame's median), the curve is PINNED there, so
 // only the toe below the anchor moves: a two-point line is a global stretch (the sweep's median went
-// 41.6 -> 36 at x 0.10), which is not how a colourist sets a black point. Three points; a highlights
-// pin is not added until a confirm shows the top drifting (Premiere's spline above the anchor is
-// unmeasured, and nothing unmeasured goes in).
+// 41.6 -> 36 at x 0.10), which is not how a colourist sets a black point. A second pin at 0.8 holds the
+// top: Premiere's spline through the anchor bows ABOVE the diagonal on its way to (1,1) - seen on the
+// 21:26 run's C187 curve, whites 91.4 -> 93.7 with nothing else touching them.
 function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
   const out = Object.assign({}, current || {});
   const x = Math.max(0, Math.min(0.5, blackIn)), w = Math.max(0.5, Math.min(1, whiteIn));
   const pts = [[x, 0]];
-  if (anchor !== null && anchor > x + 0.05 && anchor < w - 0.05) pts.push([anchor, anchor]);
+  if (anchor !== null && anchor > x + 0.05 && anchor < w - 0.05) {
+    pts.push([anchor, anchor]);
+    if (anchor < 0.7 && w > 0.9) pts.push([0.8, 0.8]);
+  }
   pts.push([w, 1]);
   out.Master = pts;
   return out;

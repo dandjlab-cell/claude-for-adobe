@@ -957,7 +957,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         let curve2 = null;
         if (lev) {
           const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
-          if (p1 > GRADE_ACCEPT.blackMax || p1 < 1) {
+          const p1Before = (afterBalance.frame || afterBalance).luma.p1, predictedMove = p1Before - lev.predicted.luma.p1, actualMove = p1Before - p1;
+          if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.5) {
+            // The black point did not follow the curve: the darkest pixels are not a black (a coloured
+            // surface keeps its luma in one channel while the curve crushes the other two). Pushing
+            // further only crushes more - C187 on the 21:26 run went to the cap for nothing.
+            notes.push("black point read " + round2(p1) + " after a curve predicted to reach " + round2(lev.predicted.luma.p1) + ": the darkest pixels do not respond to a levels move, left at " + lev.blackIn.toFixed(2));
+          } else if (p1 > GRADE_ACCEPT.blackMax || p1 < 1) {
             // Compose a second toe pull on the first, below the same anchor: the extra bottom point in
             // the post-curve domain is A (p1 - t) / (A - t); back through the first curve that is
             // x2 = x + xAdd * (a - x) / a.

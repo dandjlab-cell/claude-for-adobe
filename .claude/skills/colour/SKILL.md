@@ -105,7 +105,7 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 | highlight cast (what is left) | Highlights wheel pad | same, on the brightest 3% (the tops) |
 | white point | Whites, then Highlights | Whites clips past +50, an automatic pass stops there; Highlights (bright areas, never clipped in its sweep) finishes, capped at 60 |
 | contrast | Contrast | calibrated; capped at ±60 |
-| black point (lifted) | RGB Curves, Master bottom point | a toe pull pinned at the frame's median (three points; a highlights pin only if a confirm ever shows the top drifting): below the pin output = (in − x)·A/(A − x), above it nothing moves; solved exactly, capped at x 0.25; re-solved once from the confirm's real black point |
+| black point (lifted) | RGB Curves, Master bottom point | a toe pull pinned at the frame's median and at 0.8 (the 21:26 run's C187 curve bowed above the diagonal without the second pin: whites 91.4 → 93.7); not applied when the bottom band is more than 20 off neutral (a coloured surface, not a black): below the pin output = (in − x)·A/(A − x), above it nothing moves; solved exactly, capped at x 0.25; re-solved once from the confirm's real black point |
 | crushed blacks | Blacks | a toe control (Adobe: "black clipping"); lifts crushed blacks; lowering is not used automatically (12 → 1 on one clip, 12 → 10 on the next) |
 | lifted dark region (by hand) | Shadows | calibrated: -100 = p1 8.2 → 4.7 but the median 41.6 → 31; for `grade` / `grade_shot` on request |
 | a face's skin luma | Exposure | calibrated (±2 stops, highlight-protected); used for nothing else |

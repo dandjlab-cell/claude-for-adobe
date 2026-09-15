@@ -41,3 +41,11 @@ test("the green-magenta axis is read the same way", () => {
   assert.ok(m.bands.shadows.g > 3, "green shadows: " + m.bands.shadows.g);
   assert.equal(m.bands.shadows.rb, 0);
 });
+
+test("a channel on the floor is counted, so a curve that crushes two channels of a coloured surface is seen", () => {
+  const m = measure(frame([1000, 60, 0, 0], [1000, 120, 120, 120]));
+  assert.equal(m.crushed, 0, "luma is not at the floor: red carries it");
+  assert.ok(Math.abs(m.floor.green - 50) < 1 && Math.abs(m.floor.blue - 50) < 1 && m.floor.red === 0, JSON.stringify(m.floor));
+  const { damage } = require("../src/grade.cjs");
+  assert.ok(damage(m).crushed > 49, "and the guard treats it as crushed");
+});
