@@ -954,6 +954,22 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           if (n) { next[w] = { ...applied[w], hue: n.hue, sat: n.sat }; notes.push(w + " pad → " + round2(n.hue) + "°/" + round2(n.sat) + (n.capped ? " (cap)" : "")); }
           else notes.push(w + " pad is not the tool for what is left");
         }
+        // The white balance, from the real reading: the temperature model transfers a little strong on
+        // the -24..-37 moves (whites still blue by 3-5 on the 21:50 run). Same least-squares scale as
+        // the pads, t = -c0.d / d.d on the whites' cast, applied to the move; skipped when the pads'
+        // correction already touched the whites (two corrections on one end are a guess).
+        let temp2 = null;
+        if (temp && !next.highlights) {
+          const c0 = wheelCastAt(m.frame || m, "highlights"), c1 = wheelCastAt(fa, "highlights");
+          const d = [c1[0] - c0[0], c1[1] - c0[1]], dd = d[0] * d[0] + d[1] * d[1];
+          if (dd > 1e-6 && Math.hypot(c1[0], c1[1]) > 1.5) {
+            const t = -(c0[0] * d[0] + c0[1] * d[1]) / dd;
+            if (t > 0 && t < 3) {
+              const v = Math.round((tempFrom + t * (temp.value - tempFrom)) * 100) / 100;
+              if (Math.abs(v - temp.value) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(temp.value) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
+            }
+          }
+        }
         let curve2 = null;
         if (lev) {
           const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
@@ -972,7 +988,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             if (Math.abs(x2 - lev.blackIn) >= 0.005) { curve2 = x2; notes.push("curve black " + lev.blackIn.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
           }
         }
-        if (Object.keys(next).length || curve2 !== null) {
+        if (Object.keys(next).length || curve2 !== null || temp2 !== null) {
+          if (temp2 !== null) await tw.set(temp2);
           if (Object.keys(next).length) { applied = Object.assign({}, applied, next); await ww.write(applied); }
           if (curve2 !== null) await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor));
           state = await confirmMeasure(); renders++;

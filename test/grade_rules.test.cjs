@@ -154,6 +154,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");
+  assert.match(seqTool, /if \(temp && !next\.highlights\) \{/, "the correction scales the white balance from the real reading, unless the Highlights pad was already corrected");
   // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
   const loop = seqTool.slice(seqTool.indexOf("for (const c of clips)"));
   assert.doesNotMatch(loop, /\b(const|let) (balanced|touched|renders|lines|stopped)\b/, "no per-clip declaration shadows a tally the loop adds to");
