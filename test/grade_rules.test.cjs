@@ -46,11 +46,7 @@ test("a whole-shot plan skips a conditional goal the earlier knobs made unnecess
 
 test("the sliders compose: whites, contrast, then blacks last, solved on the predicted state", () => {
   const g = goalsFor(frame(14, 40, 65, [14, 14, 14], [65, 65, 65]), "frame"); // lifted, low, flat (spread 51)
-  assert.deepEqual([...g].map((x) => x.param), ["whites", "highlights", "contrast", "shadows", "blacks"]);
-  const b = g[4];
-  assert.equal(typeof b.solve, "function", "Blacks re-solves from where the knobs before it leave the black point");
-  assert.ok(b.solve(frame(12, 40, 90, [12, 12, 12], [90, 90, 90])) < b.solve(frame(8, 40, 90, [8, 8, 8], [90, 90, 90])), "a higher black point asks for more");
-  assert.equal(b.solve(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), 0, "already at the black point: no move");
+  assert.deepEqual([...g].map((x) => x.param), ["whites", "highlights", "contrast"], "the black point is the curve's, written before these are solved");
 });
 
 test("white balance is Temperature only for a cast the whole parade shares, capped at half the slider", () => {
@@ -65,23 +61,19 @@ test("white balance is Temperature only for a cast the whole parade shares, capp
   assert.equal(temperatureFor(bottomOnly), null, "temperature acts on the whites; a shadow cast alone is the Shadows wheel");
 });
 
-test("a lifted black point comes down with Blacks from the measured slope, never past -20, from where the knob is", () => {
+test("a lifted black point is the curve's job: the Master bottom point, solved exactly, no slider guesswork", () => {
+  const { levelsFor, LEVELS_CAP } = require("../src/grade_rules.cjs");
   const f = frame(10, 40, 90, [10, 10, 10], [90, 90, 90]);
-  const g = goalsFor(f, "frame");
-  const b = g.find((x) => x.param === "blacks");
-  assert.ok(b && Math.abs(b.solve(f) - (-(10 - 4) / 0.41)) < 0.5, "Blacks " + (b && b.solve(f)));
-  assert.ok(Math.abs(b.solve(f, -5) - (-5 - (10 - 4) / 0.41)) < 0.5, "a second pass moves from the knob's current value, not from zero");
-  assert.equal(g.needs.length, 0, "within reach: nothing else needed");
-  const lifted = frame(22, 40, 90, [22, 22, 22], [90, 90, 90]);
-  const far = goalsFor(lifted, "frame");
-  assert.equal(far.find((x) => x.param === "blacks").solve(lifted), -20, "Blacks is a toe control: -20 is as far as the calibration goes (-40 moved 22 -> 18 live)");
-  assert.deepEqual([...far].map((x) => x.param), ["shadows", "blacks"], "beyond Blacks' reach, the Shadows slider (dark areas) goes first, Blacks takes what is left");
-  const sh = far[0];
-  assert.equal(sh.cap, 60, "Shadows costs midtone density: capped");
-  assert.equal(sh.onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "skipped if the knobs before it already brought the black point down");
-  assert.equal(goalsFor(frame(10, 40, 90, [10, 10, 10], [90, 90, 90]), "frame").some((x) => x.param === "shadows"), false, "within Blacks' reach: Blacks alone");
+  assert.equal([...goalsFor(f, "frame")].some((x) => x.param === "blacks" || x.param === "shadows"), false, "no slider is asked to find a black point it may not reach (12 -> 1 on one clip, 12 -> 10 on the next)");
+  const lev = levelsFor(f);
+  assert.ok(lev && Math.abs(lev.blackIn - (10 - 4) / 96) < 0.001, "x = (p1 - 4) / 96: " + lev.blackIn.toFixed(3));
+  assert.ok(Math.abs(lev.predicted.luma.p1 - 4) < 0.01, "and the prediction lands on 4");
+  assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [1, 1]]);
+  const far = levelsFor(frame(40, 60, 90, [40, 40, 40], [90, 90, 90]));
+  assert.equal(far.blackIn, LEVELS_CAP, "a black point of 40 is a picture with no black: the automatic pass stops at the cap");
+  assert.equal(levelsFor(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), null, "already at the black point: no curve");
   const crushed = goalsFor(frame(0, 40, 90, [0, 0, 0], [90, 90, 90], { crushed: 4 }), "frame").find((x) => x.param === "blacks");
-  assert.ok(crushed && crushed.target > 0 && crushed.solve === undefined, "crushed blacks are lifted by the model");
+  assert.ok(crushed && crushed.target > 0, "crushed blacks are still lifted by Blacks");
 });
 
 test("the verdict checks what the footer promises: both cast axes and the spread, with the goals' thresholds", () => {
@@ -150,7 +142,9 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
-  assert.ok(seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)") > 0 && seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)") < seqTool.indexOf("gradeGoalsFor(afterBalance, seen)"), "balance on the frame as read, then the sliders on the predicted balanced frame");
+  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, currentCurves)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
+  assert.ok(iPads > 0 && iPads < iLev && iLev < iGoals, "balance on the frame as read, the curve's black point on the balanced state, the sliders on the state after both");
+  assert.match(seqTool, /if \(lev\) await cw\.write\(currentCurves \|\| \{\}\);/, "a rollback of the balance restores the curve too");
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");

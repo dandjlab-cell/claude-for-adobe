@@ -103,8 +103,9 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 | highlight cast (what is left) | Highlights wheel pad | same |
 | white point | Whites, then Highlights | Whites clips past +50, an automatic pass stops there; Highlights (bright areas, never clipped in its sweep) finishes, capped at 60 |
 | contrast | Contrast | calibrated; capped at ±60 |
-| lifted black point (beyond 12) | Shadows | a dark-areas control (Adobe): -100 = p1 8.2 → 4.7 but the median 41.6 → 31, so capped at 60 |
-| black point | Blacks, last | a toe control (Adobe: "black clipping"); calibrated to -20 only, takes what Shadows leaves |
+| black point (lifted) | RGB Curves, Master bottom point | a levels move, output = (in − x)/(1 − x), measured to the toe's softness; solved exactly, capped at x 0.25 |
+| crushed blacks | Blacks | a toe control (Adobe: "black clipping"); lifts crushed blacks; lowering is not used automatically (12 → 1 on one clip, 12 → 10 on the next) |
+| lifted dark region (by hand) | Shadows | calibrated: -100 = p1 8.2 → 4.7 but the median 41.6 → 31; for `grade` / `grade_shot` on request |
 | a face's skin luma | Exposure | calibrated (±2 stops, highlight-protected); used for nothing else |
 | skin hue / midtones | Midtones wheel | calibrated, not yet driven |
 | saturation | Saturation / Vibrance | writable, not calibrated |

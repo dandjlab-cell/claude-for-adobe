@@ -17,6 +17,7 @@
 const { STATISTICS } = require("./grade.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
 const { castAt, solveCast, MAX_SAT } = require("./wheels.cjs");
+const { levels, blackInFor, predictLevels } = require("./curves.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -77,6 +78,24 @@ function padsFor(m, current = null) {
   return { wheels, needs };
 }
 
+// The black point, set EXACTLY with the Master curve's bottom point - a levels move, output = (in - x)
+// / (1 - x), measured to within the toe's softness (src/curves.cjs). Solved on the balanced frame,
+// written before the sliders, which are then solved on the state it predicts. An automatic pass stops
+// at x = 0.25: a black point above ~28 is not a lifted black, it is a picture with no black in it.
+const LEVELS_CAP = 0.25;
+function levelsFor(m, current = null) {
+  const f = frameOf(m);
+  const bp = f.luma.p1;
+  if (!(bp > ACCEPT.blackMax)) return null;
+  const target = BLACK_POINT[1] - 1;
+  const want = blackInFor(bp, target);
+  const blackIn = Math.min(LEVELS_CAP, want);
+  return {
+    blackIn, curves: levels(blackIn, 1, current), predicted: predictLevels(m, blackIn, 1),
+    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + (want > blackIn ? " (capped at " + LEVELS_CAP + ")" : ""),
+  };
+}
+
 // The tonal sliders for one shot, on the balanced frame, plus the things it needs that the panel
 // cannot drive yet (`needs`). `region` is what was measured for the subject; the tonal ends always
 // read the frame. Each goal is solved on the state predicted after the goals before it (planShot).
@@ -110,20 +129,12 @@ function goalsFor(m, region = "frame") {
   const spread = STATISTICS.spread(f);
   if (spread < SPREAD.flat || spread > SPREAD.harsh) goals.push({ param: "contrast", statistic: "spread", target: SPREAD.target, cap: 60, why: "frame spread " + round(spread) + " is " + (spread < SPREAD.flat ? "flat" : "harsh") });
 
-  // 4. Black point: Shadows for a lifted one, then Blacks LAST for the toe. Blacks is the most local
-  //    knob and every knob above moves the black point too, so both are solved on the state predicted
-  //    after them, from where the knob is. A black point beyond Blacks' reach (a toe control,
-  //    calibrated to -20) is a lifted dark region, which is the Shadows slider's job (Adobe: "adjusts
-  //    dark areas"; -100 = p1 8.2 -> 4.7 with the median 41.6 -> 31, so it is capped at 60 - density
-  //    is not a look either). Blacks then takes what is left.
+  // 4. Black point: a LIFTED one is the curve's job (levelsFor, written before these sliders are
+  //    solved), not a slider's - Blacks is a toe control and Shadows a dark-areas control, and which
+  //    of them reaches a black point at 12 depends on what the darkest pixels are (the 20:05 run: the
+  //    same move took one clip 12 -> 1 and the next 12 -> 10). Crushed blacks are still lifted by Blacks.
   const bp = f.luma.p1;
-  if (bp > ACCEPT.blackMax) {
-    const target = BLACK_POINT[1] - 1;
-    const blackLifted = (state) => frameOf(state).luma.p1 > ACCEPT.blackMax;
-    if (bp - target > BLACKS_REACH * BLACKS_SLOPE) goals.push({ param: "shadows", statistic: "blackPoint", target, cap: 60, onlyIf: blackLifted, why: "black point " + round(bp) + " is beyond Blacks' reach: Shadows first" });
-    const solve = (state, from = 0) => { const p1 = frameOf(state).luma.p1; return p1 > ACCEPT.blackMax ? Math.max(-BLACKS_REACH, from - (p1 - target) / BLACKS_SLOPE) : from; };
-    goals.push({ param: "blacks", statistic: "blackPoint", target, solve, why: "black point " + round(bp) + " → " + target });
-  } else if (f.crushed > 1 || bp < BLACK_POINT[0]) {
+  if (f.crushed > 1 || bp < BLACK_POINT[0]) {
     goals.push({ param: "blacks", statistic: "blackPoint", target: BLACK_POINT[0] + 2, why: "blacks " + (f.crushed > 1 ? "crushed " + round(f.crushed) + "%" : "at " + round(bp)) + " → lifted to " + (BLACK_POINT[0] + 2) });
   }
   return Object.assign(goals, { needs, wheels: {} });
@@ -157,4 +168,4 @@ function verdict(after, region = "frame") {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { temperatureFor, padsFor, goalsFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, NEUTRAL };
+module.exports = { temperatureFor, padsFor, levelsFor, goalsFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };

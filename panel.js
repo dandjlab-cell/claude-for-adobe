@@ -16,7 +16,8 @@ const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
@@ -764,6 +765,18 @@ function wheelWriter(at, track) {
   return { read: () => call(""), write: (wheels) => call(formatWheels(wheels)) };
 }
 
+// The RGB Curves of the clip at one timeline position, through QE by name: read as { Master, Red, Green,
+// Blue } point lists; write the same shape (dot decimals). The Master end points are the levels tool.
+function curveWriter(at, track) {
+  const call = async (value) => {
+    const raw = await host("lumetriQE", String(at), String(track), "RGB Curves", value);
+    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+    const [, text, clipName] = raw.split(COL);
+    return { curves: parseCurves(text), text, clipName };
+  };
+  return { read: () => call(""), write: (curves) => call(formatCurves(curves)) };
+}
+
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
 // all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
 async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
@@ -836,11 +849,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Where the knobs are. A clip that already carries a balance (a temperature, a pad) is read from
     // Premiere's render, since its source pixels no longer describe it. A wheel read that fails means
     // the pads are left alone for this clip: writing "all neutral" over an unknown state is not a grade.
-    const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region);
-    let currentWheels = null, wheelsErr = null, tempFrom = 0;
+    const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), cw = curveWriter(at, track);
+    let currentWheels = null, wheelsErr = null, tempFrom = 0, currentCurves = null, curvesErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
     try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
-    const graded = tempFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005));
+    try { currentCurves = (await cw.read()).curves; } catch (error) { curvesErr = error.message; }
+    const graded = tempFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves));
 
     let m, readFrom = read;
     // auto: decode the clip's own file (parity with Premiere's render verified on BRAW, 2026-09-15:
@@ -867,12 +881,18 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
     const padMoves = Object.keys(pads.wheels);
     const afterBalance = padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
-    const goals = gradeGoalsFor(afterBalance, seen);
+    // The black point: the Master curve's bottom point, a levels move that lands where it is asked
+    // (src/curves.cjs); the sliders are then solved on the state it predicts.
+    const lev = curvesErr ? null : gradeLevelsFor(afterBalance, currentCurves);
+    if (curvesErr && (afterBalance.frame || afterBalance).luma.p1 > GRADE_ACCEPT.blackMax) needs.push("curves not read (" + curvesErr + "): the black point is left where it is");
+    const afterLevels = lev ? lev.predicted : afterBalance;
+    const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...goals.needs);
     if (temp) parts.push("temperature " + round2(temp.value) + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
+    if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
 
-    if (!temp && !padMoves.length && !goals.length) {
+    if (!temp && !padMoves.length && !lev && !goals.length) {
       const v = gradeVerdict(m, seen);
       balanced += confirm && v.balanced ? 1 : 0;
       lines.push(label + " [" + seen + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : ""));
@@ -883,24 +903,27 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    (with `measured` given it renders only after the writes); if that shows damage past the
     //    baseline it restores the sliders and confirms again - the clip's one correction. Otherwise
     //    the correction goes to the pads, if a cast is left and the real reading says how much.
-    let state = afterBalance, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false;
-    const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse }), "render") : async () => afterBalance;
+    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false;
+    const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse }), "render") : async () => afterLevels;
     try {
       if (temp) await tw.set(temp.value);
       if (padMoves.length) await ww.write(applied);
+      if (lev) await cw.write(lev.curves);
       if (goals.length) {
         const writers = {};
         for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
-        const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterBalance, baseline });
+        const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline });
         renders += confirm ? r.renders : 0; state = r.after; corrected = r.backedOff;
         parts.push(r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
       } else if (confirm) { state = await confirmMeasure(); renders++; }
+      else state = afterLevels;
       // Damage the balance writes caused (no sliders, or the sliders' rollback was not enough): the
       // balance goes back to where it was, confirmed once.
       if (confirm && gradeUnsafe(gradeDamage(state), gradeAllowance(baseline))) {
         const h = gradeDamage(state);
         if (temp) await tw.set(tempFrom);
         if (padMoves.length) { applied = Object.assign({}, currentWheels || {}); await ww.write(applied); }
+        if (lev) await cw.write(currentCurves || {});
         state = await confirmMeasure(); renders++; corrected = true;
         parts.push("balance restored: the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "% (source " + round2(baseline.clipped) + "% / " + round2(baseline.crushed) + "%)");
       }
@@ -2729,7 +2752,7 @@ const TOOL_DEFS = [
   { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `colour` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face", "subject"], description: "\"subject\" measures only Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" measures only the biggest face box (skin without hair and clothes, best for skin tone). Use one of them whenever the shot has a subject: the background drags whole-frame numbers away from it. Says so when nothing is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." }, source: { type: "boolean", description: "Decode the clip's own source file at the matching frame instead of rendering in Premiere: nothing renders, nothing moves. Camera pixels, not the grade - a read, never a confirm. Check it against a plain call once per footage type." }, track: { type: "number", description: "With source: which video track's clip, default 1." } }, required: ["seconds"] } },
   { name: "grade", description: "Load the `colour` skill before grading. Sets ONE Lumetri Color parameter on the clip at a timeline position so the scopes read what you asked, in one go: one render to read the scopes, the calibration model chooses the value, one render to confirm (one nudge from the two real readings if the confirm is off, then it stops and reports the residual). Never leaves the slider's range, never leaves the frame clipped or crushed. Give the number the statistic should reach, not the slider value. Defaults: temperature steers whitesRB (the parade's blue-minus-red whites; 0 = neutral whites), exposure steers brightness (luma median), contrast steers spread (luma p99-p1). For a whole shot use grade_shot instead: one render for all the knobs.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should read (0-100 scale; parade differences and cast are signed)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "blackPoint", "whitePoint", "spread", "whitesRB", "whitesG", "blacksRB", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by. \"subject\" = Vision's foreground subject; \"face\" = the biggest face box. Clipping is always judged on the whole frame." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
-  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically, on the working copy. Per clip: the scopes read from the clip's own file (subject region by default), then the colourist canon by rule - white balance (Temperature, only for a cast the whole parade shares) and each end's colour-wheel pad for what is left, one confirm and one nudge; then Whites to the white point with Highlights finishing what its cap leaves, Contrast only if the frame is flat or harsh, Shadows for a black point beyond Blacks' reach, Blacks to the black point last, Exposure only for a face's skin luma - knobs from the calibration model, written as one set and confirmed ONCE, then one correction (a rollback of what clipped or crushed the frame beyond what the source had, else a direction-aware pad nudge) and one confirm of that. Two renders a clip. Never leaves a slider's range; residuals are reported, never chased. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["auto", "premiere", "source"], description: "Where the first reading comes from. Default auto: decode each clip's own file (no render, nothing moves; verified identical to Premiere's render on BRAW), falling back to a Premiere render if the file cannot be decoded here." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." } } } },
+  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically, on the working copy. Per clip: the scopes read from the clip's own file (subject region by default), then the colourist canon by rule - white balance (Temperature, only for a cast the whole parade shares) and each end's colour-wheel pad for what is left, one confirm and one nudge; then the black point set exactly with the Master curve's bottom point (a levels move), Whites to the white point with Highlights finishing what its cap leaves, Contrast only if the frame is flat or harsh, Blacks only to lift crushed blacks, Exposure only for a face's skin luma - knobs from the calibration model, written as one set and confirmed ONCE, then one correction (a rollback of what clipped or crushed the frame beyond what the source had, else a direction-aware pad nudge) and one confirm of that. Two renders a clip. Never leaves a slider's range; residuals are reported, never chased. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["auto", "premiere", "source"], description: "Where the first reading comes from. Default auto: decode each clip's own file (no render, nothing moves; verified identical to Premiere's render on BRAW), falling back to a Premiere render if the file cannot be decoded here." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." } } } },
   { name: "grade_shot", description: "Grade a whole shot in ONE go: one render to read its scopes, the calibration model chooses every knob, all are written, one render confirms the lot. Two renders per shot. goals are applied in the order given - a colourist's order is white balance (temperature → whitesRB 0), then exposure (→ brightness), then contrast (→ spread). Each knob is solved on the state predicted after the ones before it. Reports, per knob: before, predicted, what the confirm actually read, the residual; and warns if the frame ended up clipped or crushed. Knobs without a calibration (anything but temperature, exposure, contrast) are skipped and named - set those with grade.",     inputSchema: { type: "object", properties: { goals: { type: "array", items: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "exposure", "contrast", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number" }, statistic: { type: "string" } }, required: ["parameter", "target"] }, description: "In the order to apply." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by; clipping is judged on the whole frame regardless." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit per knob, default 1." } }, required: ["goals", "seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
