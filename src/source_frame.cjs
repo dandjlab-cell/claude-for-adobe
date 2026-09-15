@@ -77,10 +77,14 @@ function frameSize(file, maxWidth = DEFAULT_MAX_WIDTH) {
 
 // Timeline seconds -> seconds inside the clip's source file. The panel already reads these three
 // numbers per clip: where it starts on the timeline, its in point in the source, and the media path.
-function sourceSeconds(timelineSeconds, clipStart, clipInPoint) {
+// A speed-changed clip: Premiere reports its in point in timeline-scaled units (C220 at 150%: "in 4.17s"
+// while the frame it renders at 0.5 s is source 7.01 s = (4.17 + 0.5) * 1.5, found 2026-09-16 01:05 by
+// scanning the file for the frame that matched the render), so both terms scale.
+function sourceSeconds(timelineSeconds, clipStart, clipInPoint, speed = 1) {
   const offset = Number(timelineSeconds) - Number(clipStart);
   if (!(offset >= 0)) throw new Error("timeline position is before the clip starts");
-  return Number(clipInPoint) + offset;
+  const s = Number(speed) > 0 ? Number(speed) : 1;
+  return (Number(clipInPoint) + offset) * s;
 }
 
 const base = (f) => String(f).replace(/^.*\//, "");

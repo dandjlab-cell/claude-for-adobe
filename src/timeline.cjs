@@ -3,14 +3,15 @@
 const TICKS = 254016000000;
 const COL = "", ROW = "";
 
-// Snapshot wire format (one row per clip): id|track|name|start|end|inPoint|mediaPath ; first row is the sequence header.
+// Snapshot wire format (one row per clip): id|track|name|start|end|inPoint|mediaPath|kind|speed ; first row is the sequence header.
 function parseSnapshot(raw) {
   const rows = String(raw || "").split(ROW).filter(Boolean);
   if (!rows.length || rows[0].indexOf("ERR:") === 0) return { error: rows[0] || "empty snapshot", clips: [] };
   const [name, id, width, height, endTicks] = rows[0].split(COL);
   const clips = rows.slice(1).map((r) => {
-    const [nodeId, track, clipName, start, end, inPoint, mediaPath, kind] = r.split(COL);
-    return { id: nodeId, track, name: clipName, start: Number(start) / TICKS, end: Number(end) / TICKS, inPoint: Number(inPoint) / TICKS, mediaPath, kind: kind || "" };
+    const [nodeId, track, clipName, start, end, inPoint, mediaPath, kind, speed] = r.split(COL);
+    const spd = Number(speed);
+    return { id: nodeId, track, name: clipName, start: Number(start) / TICKS, end: Number(end) / TICKS, inPoint: Number(inPoint) / TICKS, mediaPath, kind: kind || "", speed: spd > 0 ? spd : 1 };
   });
   return { name, id, width: Number(width), height: Number(height), duration: Number(endTicks) / TICKS, clips };
 }

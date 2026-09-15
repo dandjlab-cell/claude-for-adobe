@@ -57,7 +57,10 @@ var PCX = (function () {
           try { mp = cl.projectItem ? cl.projectItem.getMediaPath() : ""; } catch (e) {}
           // What the item is, so a multicam source sequence or a nested sequence is never mistaken for footage.
           try { var pi = cl.projectItem; if (pi && typeof pi.isMultiCamClip === "function" && pi.isMultiCamClip()) kind = "multicam"; else if (pi && typeof pi.isSequence === "function" && pi.isSequence()) kind = "sequence"; } catch (e2) {}
-          rows.push([cl.nodeId, prefix + (t + 1), cl.name, cl.start.ticks, cl.end.ticks, cl.inPoint.ticks, mp, kind].join(COL));
+          // Speed last: a speed-changed clip's in point comes back in timeline-scaled units, so the
+          // source frame at a timeline position is (inPoint + offset) * speed (C220 at 150%, 2026-09-16).
+          var spd = 1; try { spd = cl.getSpeed(); } catch (e3) { spd = 1; }
+          rows.push([cl.nodeId, prefix + (t + 1), cl.name, cl.start.ticks, cl.end.ticks, cl.inPoint.ticks, mp, kind, spd].join(COL));
           if (rows.length > 600) return;
         }
       }

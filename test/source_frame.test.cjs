@@ -65,3 +65,10 @@ test("timeline seconds map into the source through the clip's in point", () => {
 });
 
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+test("a speed-changed clip maps both the in point and the offset through its speed (C220 at 150%)", () => {
+  const { sourceSeconds } = require("../src/source_frame.cjs");
+  assert.ok(Math.abs(sourceSeconds(0.5, 0, 4.17, 1.5) - 7.005) < 0.001);
+  assert.equal(sourceSeconds(0.5, 0, 4.17), 4.67, "normal speed unchanged");
+  assert.equal(sourceSeconds(0.5, 0, 4.17, 0), 4.67, "a missing speed is 1");
+});
