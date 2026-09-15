@@ -29,16 +29,21 @@ const STATISTICS = {
 // three swept live on 2026-09-15 (BRAW, Premiere 26.x); the rest are reasoned from what the control is
 // for and must be confirmed by the same sweep before anything leans on them. Steering a parameter by a
 // statistic it does not move reads as "nothing is happening" - Contrast leaves the median where it was.
+// `lumetri` is the parameter's displayName. Several names repeat down the 130 properties (Temperature,
+// Tint, Contrast, Saturation and Sharpen all appear again under HSL Secondary), and the host takes the
+// FIRST match, which is always the Basic Correction one - that is what these entries mean. Reaching the
+// HSL Secondary copies needs an index, not a name: see .claude/skills/premiere-scripting/lumetri.md.
 const PARAMS = {
-  exposure: { steer: "brightness", step: 0.5, tested: true },   // luma median 20.8 -> 58.8 over -2..+2
-  contrast: { steer: "spread", step: 25, tested: true },        // p99-p1 59.6 -> 87.1 over -100..+100
-  temperature: { steer: "warmth", step: 25, tested: true },     // cast Cr -0.1 -> 13.8; R mean 37 -> 60.6
-  tint: { steer: "tintCast", step: 25, tested: false },
-  highlights: { steer: "highlights", step: 25, tested: false },
-  shadows: { steer: "shadows", step: 25, tested: false },
-  whites: { steer: "highlights", step: 25, tested: false },
-  blacks: { steer: "shadows", step: 25, tested: false },
-  saturation: { steer: "saturation", step: 20, tested: false }, // this one is a percentage: 100 is neutral
+  exposure: { lumetri: "Exposure", steer: "brightness", step: 0.5, tested: true }, // luma median 20.8 -> 58.8 over -2..+2
+  contrast: { lumetri: "Contrast", steer: "spread", step: 25, tested: true },      // p99-p1 59.6 -> 87.1 over -100..+100
+  temperature: { lumetri: "Temperature", steer: "warmth", step: 25, tested: true },// cast Cr -0.1 -> 13.8; R mean 37 -> 60.6
+  tint: { lumetri: "Tint", steer: "tintCast", step: 25, tested: false },
+  highlights: { lumetri: "Highlights", steer: "highlights", step: 25, tested: false },
+  shadows: { lumetri: "Shadows", steer: "shadows", step: 25, tested: false },
+  whites: { lumetri: "Whites", steer: "highlights", step: 25, tested: false },
+  blacks: { lumetri: "Blacks", steer: "shadows", step: 25, tested: false },
+  saturation: { lumetri: "Saturation", steer: "saturation", step: 20, tested: false }, // a percentage: 100 is neutral
+  vibrance: { lumetri: "Vibrance", steer: "saturation", step: 25, tested: false },
 };
 
 const MAX_MEASURES = 6;       // 6 x ~0.7 s is the most this should ever cost the editor

@@ -15,6 +15,7 @@ const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captio
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
+const { steer: steerGrade, PARAMS: GRADE_PARAMS } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
@@ -580,6 +581,62 @@ async function scopesTool({ seconds = [], solo_track } = {}) {
   card.done(texts(), true);
   setStatus("Thinking…");
   return { content };
+}
+
+// One frame measured the way `scopes` measures it, as numbers rather than a report: Premiere's own
+// render of the composite at that time. The grade loop calls this after every write.
+async function measureFrameAt(seconds) {
+  const base = path.join(os.tmpdir(), "claude-for-adobe-grade-" + Date.now().toString(36));
+  const raw = await host("frames", JSON.stringify([seconds]), base, "");
+  if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+  const rows = raw.split(ROW).filter((r) => r.indexOf("SOLO" + COL) !== 0);
+  const [b, ok] = String(rows[0] || "").split(COL);
+  const src = [b + ".png", b].find((f) => f && fs.existsSync(f));
+  if (!src) throw new Error("frame export failed at " + seconds + "s (" + ok + ")");
+  try { return measureScopes(decodeRgb(src)); }
+  finally { try { fs.rmSync(src, { force: true }); } catch (_) {} }
+}
+
+const round2 = (n) => (isFinite(n) ? Math.round(Number(n) * 100) / 100 : n);
+
+// Drive one Lumetri parameter until the picture measures what was asked for. The loop, the statistics
+// and the accuracy limits live in src/grade.cjs; this is the part that talks to Premiere.
+async function gradeTool({ parameter, target, statistic, seconds, track = 1, tolerance } = {}) {
+  const at = Number(seconds);
+  if (!(at >= 0)) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds required (the timeline position to grade by)", isError: true };
+  if (!GRADE_PARAMS[parameter]) return { text: "CLAUDE_FOR_ADOBE_ERROR:unknown parameter " + parameter + "; known: " + Object.keys(GRADE_PARAMS).join(", "), isError: true };
+  if (!isFinite(Number(target))) return { text: "CLAUDE_FOR_ADOBE_ERROR:target required (the number the statistic should reach)", isError: true };
+  const name = GRADE_PARAMS[parameter].lumetri;
+  const card = addTool("grade " + parameter + " to " + (statistic || GRADE_PARAMS[parameter].steer) + " " + target + " at " + at + "s", "");
+  setStatus("Grading " + parameter + "…");
+
+  let clip = "";
+  const set = async (value) => {
+    const raw = await host("lumetriParam", String(at), String(track), name, String(value));
+    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+    const [, readBack, clipName] = raw.split(COL);
+    clip = clipName;
+    return Number(readBack);
+  };
+
+  let result;
+  try {
+    result = await steerGrade({ set, measure: () => measureFrameAt(at), param: parameter, target: Number(target), statistic, tolerance });
+  } catch (error) { return err(card, error.message); }
+
+  const lines = [
+    (result.hit ? "CHECK PASS" : "CHECK MISS") + ": " + parameter + " = " + round2(result.value) + " on " + clip +
+      " — " + result.statistic + " measured " + round2(result.achieved) + ", asked for " + round2(Number(target)),
+    "readings: " + result.readings.map((r) => round2(r.value) + "→" + round2(r.stat)).join(", ") + " (" + result.measures + " renders)",
+  ];
+  if (result.problem) lines.push("stopped: " + result.problem);
+  if (!result.hit && !result.problem) lines.push("that is as close as this parameter gets; another parameter or statistic may be the one that moves it.");
+  if (result.hit && !result.reliable) lines.push("low confidence: the statistic barely moves over this range, so the value is approximate — check the picture.");
+  if (!result.tested) lines.push("NOTE: " + parameter + " has not been swept live, so its steering statistic is inferred. Trust the picture over the number.");
+  lines.push("Set on the clip; one Cmd+Z per write (" + result.measures + " here).");
+  card.done(lines.join("\n"), true);
+  setStatus("Thinking…");
+  return { text: lines.join("\n") };
 }
 
 // Audio clips of the active sequence overlapping [a,b], with their peak file when Premiere has one.
@@ -2350,7 +2407,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { scopes: scopesTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { scopes: scopesTool, grade: gradeTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -2369,6 +2426,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "scopes", description: "Lumetri Scopes as numbers for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
+  { name: "grade", description: "Set one Lumetri Color parameter on the clip at a timeline position until the picture MEASURES what you asked for. Adds Lumetri Color if the clip has none. Give the number you want the picture to reach, not the slider value: the panel brackets, writes and re-measures Premiere's own render (about 0.7 s each, at most 6), then reports every reading and whether it hit. Each parameter moves its own statistic and steering by the wrong one reads as nothing happening, so the default is the measured one: exposure -> brightness (luma median), contrast -> spread (luma p99-p1, the median barely moves), temperature -> warmth (cast Cr). Typical targets on the 0-100 scale: brightness 45-55 for a normally exposed face, spread 60-80, warmth 0 for neutral. Read the shot with `scopes` first, then set a target from what you saw. Exposure, contrast and temperature were swept live; the rest are inferred and say so in the result. Curves, colour wheels and HSL secondaries are not reachable this way - they are packed values, not numbers.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["exposure", "contrast", "temperature", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should measure, 0-100 (cast is -50..50)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "shadows", "highlights", "spread", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
   { name: "layer_frames", description: "One layer alone: every clip on a video track rendered with the other video tracks hidden, so that layer's own placement is judged for the shot alone. Reframe order: footage tracks in step 1 (picture), graphic tracks in step 3 (graphics). Fix with nudge_clip and the same track.",

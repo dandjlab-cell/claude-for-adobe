@@ -107,6 +107,30 @@ test("the three swept parameters are marked tested and the rest are not", () => 
   assert.equal(PARAMS.shadows.tested, false, "reasoned from the control's purpose, not measured yet");
 });
 
+test("the tool is wired, and its schema cannot drift from the parameters it can actually drive", () => {
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const host = fs.readFileSync(path.join(__dirname, "..", "host", "premiere.jsx"), "utf8");
+  assert.match(panel, /TOOLS = \{[^}]*grade: gradeTool/, "grade is in the tool registry");
+  assert.match(panel, /name: "grade", description:/, "grade has a definition the model can read");
+  assert.match(panel, /host\("lumetriParam"/, "the tool writes through the host function");
+  assert.match(host, /lumetriParam: lumetriParam/, "and that function is exported");
+
+  // The enum in the tool schema is what the model is allowed to ask for; PARAMS is what the loop can
+  // actually drive. A parameter added to one and not the other fails silently at the worst moment.
+  const enumMatch = /enum: \[([^\]]*)\] \}, target:/.exec(panel);
+  assert.ok(enumMatch, "found the parameter enum");
+  const declared = enumMatch[1].split(",").map((s) => s.trim().replace(/"/g, "")).filter(Boolean);
+  assert.deepEqual(declared.sort(), Object.keys(PARAMS).sort());
+});
+
+test("every parameter names a Lumetri property and a statistic that exists", () => {
+  const { STATISTICS } = require("../src/grade.cjs");
+  for (const [name, spec] of Object.entries(PARAMS)) {
+    assert.ok(spec.lumetri, name + " needs the Lumetri displayName to write through");
+    assert.ok(STATISTICS[spec.steer], name + " steers by an unknown statistic: " + spec.steer);
+  }
+});
+
 test("unknown parameters and statistics are refused", async () => {
   const host = premiereStandIn("exposure");
   await assert.rejects(() => steer({ set: host.set, measure: host.measure, param: "curves", target: 1 }), /unknown parameter/);

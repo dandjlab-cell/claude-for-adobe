@@ -771,6 +771,66 @@ var PCX = (function () {
     return null;
   }
 
+  function findLumetri(cl) {
+    for (var k = 0; k < cl.components.numItems; k++) {
+      var comp = cl.components[k];
+      if (comp.matchName === "AE.ADBE Lumetri" || String(comp.displayName).indexOf("Lumetri") >= 0) return comp;
+    }
+    return null;
+  }
+
+  // One Lumetri Color parameter on the clip under `seconds` of video track `track` (1-based).
+  // value === "" reads; anything else writes and then reads back. Adding Lumetri Color to a clip that
+  // has none needs QE, which is why that happens here rather than in a plain DOM call.
+  // Returns "OK<COL>value<COL>clipName" or "ERR:...". The read-back is what Premiere ACCEPTED, which is
+  // not always what was asked: a refused or clamped value comes back different, so the caller compares
+  // rather than assumes. Parameter names are in .claude/skills/premiere-scripting/lumetri.md.
+  function lumetriParam(seconds, track, name, value) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) {
+      var k = tr.clips[c];
+      if (at >= k.start.seconds && at < k.end.seconds) { cl = k; }
+    }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+
+    var lum = findLumetri(cl);
+    if (!lum) {
+      app.enableQE();
+      var q = qe.project.getActiveSequence();
+      if (!q) return "ERR:QE has no active sequence";
+      var qt = q.getVideoTrackAt(t), qi = null;
+      for (var i = 0; i < qt.numItems; i++) {
+        var item = qt.getItemAt(i), st = -1;
+        try { st = num(item.start.secs); } catch (e1) { st = -1; }
+        if (st >= 0 && Math.abs(st - cl.start.seconds) < 0.02) { qi = item; }
+      }
+      if (!qi) return "ERR:could not match the clip in QE to add Lumetri Color";
+      var fx = qe.project.getVideoEffectByName("Lumetri Color");
+      if (!fx) return "ERR:Lumetri Color effect not found";
+      qi.addVideoEffect(fx);
+      lum = findLumetri(cl);
+      if (!lum) return "ERR:Lumetri Color did not appear on " + cl.name;
+    }
+
+    var p = null;
+    for (var j = 0; j < lum.properties.numItems; j++) {
+      var pr = lum.properties[j];
+      if (String(pr.displayName) === String(name) && p === null) { p = pr; }
+    }
+    if (!p) return "ERR:no Lumetri parameter named " + name;
+    if (String(value) !== "") {
+      // A keyframed parameter would fight a single value: the grade would apply at one instant and
+      // drift everywhere else, which looks like the write silently failing.
+      if (p.isTimeVarying()) return "ERR:" + name + " is keyframed on " + cl.name + "; clear the keyframes or grade elsewhere";
+      p.setValue(num(value), 1);
+    }
+    return "OK" + COL + p.getValue() + COL + cl.name;
+  }
+
   // Every video clip's Motion Position and Scale, for the active sequence or one named. Read-only.
   // Rows: track|index|name|x|y|scale|graphic|startSec|endSec|srcW|srcH|opacity|mediaPath|alpha|crop(L/T/R/B %)|masked ; header: SEQ|name|w|h
   // alpha comes from Premiere's own Video Info column ("1920 x 1080 (1.0), Alpha"), so a still's transparency is Premiere's word, not a guess.
@@ -1552,7 +1612,7 @@ var PCX = (function () {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam
   };
 }());
 "PCX loaded";
