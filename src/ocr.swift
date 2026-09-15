@@ -4,6 +4,10 @@
 //                                303-class sound classifier (laughter, applause, cheering, sigh, gasp, speech, music, silence...)
 //   bin/ocr --faces <image...>   faces: {"file":"...","faces":[{"box":[..],"yaw":deg,"pitch":deg,"roll":deg,
 //                                        "quality":0..1,"eyes":ratio,"mouth":ratio,"facing":0..,"tilt":0..1}]}
+//   bin/ocr --subject <image...> subject: {"file":"...","mask":"<image>.mask.png","coverage":0..1,"box":[x0,y0,x1,y1]}
+//                                Vision's foreground-instance mask: whatever the subject is (a face, hands, a product),
+//                                as an 8-bit mask image the same size as the frame, white where the subject is. This
+//                                is what colour work measures - the subject, not the room - with no special-casing.
 // Boxes are fractions of the image, origin top-left. yaw/pitch are Vision's head pose in degrees: both near zero
 // means the head faces the lens. quality is Apple's own face capture quality (sharpness, lighting, expression).
 // eyes and mouth are opening ratios from the landmarks (height / width), so a blink and a closed mouth are visible.
@@ -87,6 +91,51 @@ func faces(_ cg: CGImage, _ file: String) {
   print("{\"file\":\(json(file)),\"faces\":[\(out.joined(separator: ","))]}")
 }
 
+// The foreground subject as a mask, from Vision's instance segmentation (macOS 14+). All instances are merged:
+// "the subject" for a grade is everything in front, and the panel measures pixels, not identities.
+func subject(_ cg: CGImage, _ file: String) {
+  guard #available(macOS 14.0, *) else { print("{\"file\":\(json(file)),\"error\":\"macOS 14 or later needed for subject masks\"}"); return }
+  let req = VNGenerateForegroundInstanceMaskRequest()
+  let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+  do { try handler.perform([req]) } catch {
+    print("{\"file\":\(json(file)),\"error\":\(json(String(describing: error)))}"); return
+  }
+  guard let obs = req.results?.first, !obs.allInstances.isEmpty else {
+    print("{\"file\":\(json(file)),\"mask\":null,\"coverage\":0}"); return
+  }
+  let buffer: CVPixelBuffer
+  do { buffer = try obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) } catch {
+    print("{\"file\":\(json(file)),\"error\":\(json(String(describing: error)))}"); return
+  }
+  // The scaled mask is 32-bit float, one channel, frame-sized. Write it as 8-bit grey and read its extent.
+  CVPixelBufferLockBaseAddress(buffer, .readOnly); defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+  let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer), stride = CVPixelBufferGetBytesPerRow(buffer)
+  guard let base = CVPixelBufferGetBaseAddress(buffer) else { print("{\"file\":\(json(file)),\"error\":\"empty mask\"}"); return }
+  var grey = [UInt8](repeating: 0, count: w * h)
+  var on = 0, x0 = w, y0 = h, x1 = -1, y1 = -1
+  for y in 0..<h {
+    let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
+    for x in 0..<w {
+      let v = row[x]
+      let g = UInt8(max(0, min(255, v * 255)))
+      grey[y * w + x] = g
+      if v >= 0.5 { on += 1; if x < x0 { x0 = x }; if x > x1 { x1 = x }; if y < y0 { y0 = y }; if y > y1 { y1 = y } }
+    }
+  }
+  let maskPath = file + ".mask.png"
+  let cs = CGColorSpaceCreateDeviceGray()
+  guard let ctx = CGContext(data: &grey, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue),
+        let out = ctx.makeImage(),
+        let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: maskPath) as CFURL, "public.png" as CFString, 1, nil) else {
+    print("{\"file\":\(json(file)),\"error\":\"could not write mask\"}"); return
+  }
+  CGImageDestinationAddImage(dest, out, nil)
+  guard CGImageDestinationFinalize(dest) else { print("{\"file\":\(json(file)),\"error\":\"could not finalize mask\"}"); return }
+  let coverage = Double(on) / Double(w * h)
+  let box = on > 0 ? "[\(num(Double(x0) / Double(w))),\(num(Double(y0) / Double(h))),\(num(Double(x1 + 1) / Double(w))),\(num(Double(y1 + 1) / Double(h)))]" : "null"
+  print("{\"file\":\(json(file)),\"mask\":\(json(maskPath)),\"coverage\":\(num(coverage)),\"box\":\(box)}")
+}
+
 import SoundAnalysis
 
 // Apple's built-in sound classifier over an audio file, one JSON line per one-second window (half-second hop),
@@ -115,6 +164,8 @@ func sounds(_ file: String) {
 var args = Array(CommandLine.arguments.dropFirst())
 let wantFaces = args.first == "--faces"
 if wantFaces { args = Array(args.dropFirst()) }
+let wantSubject = args.first == "--subject"
+if wantSubject { args = Array(args.dropFirst()) }
 if args.first == "--sounds" { for f in args.dropFirst() { sounds(f) }; exit(0) }
 
 for file in args {
@@ -122,6 +173,7 @@ for file in args {
     print("{\"file\":\(json(file)),\"error\":\"unreadable\"}"); continue
   }
   if wantFaces { faces(cg, file); continue }
+  if wantSubject { subject(cg, file); continue }
   let req = VNRecognizeTextRequest()
   req.recognitionLevel = .accurate
   req.usesLanguageCorrection = false

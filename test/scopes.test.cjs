@@ -48,3 +48,39 @@ test("a real PNG goes through ffmpeg: decoded at full size, measured, and drawn 
   assert.ok(fs.statSync(jpg).size > 1000);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- measuring a region rather than the whole frame -------------------------------------------------------
+const { maskRgb, decodeRgb, decodeGray } = require("../src/scopes.cjs");
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const { FFMPEG } = require("../src/media.cjs");
+
+test("a mask keeps only the pixels it marks, and refuses to keep none", () => {
+  const rgb = frame(4, (i) => [i * 10, 0, 0]);          // four pixels, red 0/10/20/30
+  const keep = Buffer.from([0, 255, 255, 0]);           // keep the middle two
+  const m = measure(maskRgb(rgb, keep));
+  assert.equal(m.pixels, 2);
+  assert.equal(Math.round(m.red.mean * 2.55), 15, "mean of red 10 and 20");
+  assert.throws(() => maskRgb(rgb, Buffer.from([0, 0, 0, 0])), /keeps no pixels/);
+  assert.throws(() => maskRgb(rgb, Buffer.from([255, 255])), /mask is 2 pixels, frame is 4/);
+});
+
+test("bin/ocr --subject finds a subject and its mask lines up with the frame", { skip: process.platform !== "darwin" ? "macOS Vision only" : false }, () => {
+  const bin = path.join(__dirname, "..", "bin", "ocr");
+  if (!fs.existsSync(bin)) return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subject-"));
+  const png = path.join(dir, "frame.png");
+  // A red square on grey: Vision's foreground segmentation picks the square out.
+  spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=640x360", "-vf", "drawbox=x=220:y=80:w=200:h=200:color=red:t=fill", "-frames:v", "1", png]);
+  const out = spawnSync(bin, ["--subject", png], { encoding: "utf8" });
+  const entry = JSON.parse(out.stdout.trim().split("\n").pop());
+  assert.ok(entry.mask && fs.existsSync(entry.mask), "a mask file was written");
+  assert.ok(Math.abs(entry.coverage - 0.174) < 0.02, "covers about the square's 17.4% of the frame, got " + entry.coverage);
+  // The extent is reported top-left origin, as fractions: the square sits at x 220-420 of 640, y 80-280 of 360.
+  assert.ok(Math.abs(entry.box[0] - 220 / 640) < 0.02 && Math.abs(entry.box[1] - 80 / 360) < 0.02, "box origin " + entry.box);
+  const subject = measure(maskRgb(decodeRgb(png), decodeGray(entry.mask)));
+  const whole = measure(decodeRgb(png));
+  assert.ok(subject.red.mean > 95 && subject.green.mean < 3, "the subject measures as pure red, not the grey mix (" + subject.red.mean + "/" + subject.green.mean + ")");
+  assert.ok(whole.red.mean < 70, "the whole frame is the mix");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

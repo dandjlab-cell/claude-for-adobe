@@ -11,14 +11,21 @@ judgement below is a number you can measure and a number you can drive.
 
 ## Measure the subject, not the frame
 
-If a person is in shot, grade the **face**: `scopes` and `grade` both take `region: "face"`, which
-measures Vision's biggest face box instead of the whole picture. This is not a detail. A warm wall,
-a sunset window or a red jacket drags the frame's average cast far from the skin, and "neutralising
-the frame" then drains the face grey. Whole-frame numbers are right for landscapes, graphics and
-matching two shots of the same scene; face numbers are right for anything with a person in it.
+`scopes` and `grade` both take a `region`:
 
-The panel says which one it measured. If it fell back to the frame because no face was found, treat
-the cast reading with suspicion.
+- `subject` — Vision's foreground mask: whatever the subject is (a face, hands, a product, a dog),
+  measured to the pixel. **The default for any shot that has a subject.**
+- `face` — the biggest face box only: skin without hair and clothes. The right region for skin
+  tone and white balance when a face is in shot.
+- `frame` — the whole picture. Right for landscapes, graphics, and matching two shots of the
+  same scene.
+
+This is not a detail. A warm wall, a sunset window or a red jacket drags the frame's average cast
+far from the subject, and "neutralising the frame" then drains the skin grey. Hands are skin too:
+on how-to footage, `subject` puts the numbers on the hands.
+
+The panel says which region it actually measured and the share of the frame it covered. If it
+fell back to the whole frame because nothing was found, treat the cast reading with suspicion.
 
 ## The scale
 
@@ -64,8 +71,8 @@ This is most of real grading, and it needs no theory at all: measure the shot yo
 the other one to those numbers.
 
 ```
-scopes at the reference time, region face
-scopes at the target time, region face
+scopes at the reference time, region subject (or face)
+scopes at the target time, the same region
 grade exposure   → the reference's brightness
 grade contrast   → the reference's spread
 grade temperature→ the reference's warmth

@@ -85,6 +85,29 @@ function decodeRgb(png, box) {
   return r.stdout;
 }
 
+// A mask image (8-bit grey, same size as the frame, white = keep) as one byte per pixel.
+function decodeGray(png) {
+  const r = spawnSync(FFMPEG, ["-v", "error", "-i", png, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], { maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0 || !r.stdout || !r.stdout.length) throw new Error("ffmpeg could not decode the mask: " + String(r.stderr || "").trim().slice(0, 200));
+  return r.stdout;
+}
+
+// Only the pixels the mask keeps, packed back into RGB24 for measure(). Vision's subject mask is the
+// general answer to "measure the subject, not the room": it does not care whether the subject is a
+// face, hands or a product. A frame and its mask must be the same size, or the pixels do not line up.
+function maskRgb(rgb, gray, threshold = 128) {
+  const n = Math.floor(rgb.length / 3);
+  if (gray.length !== n) throw new Error("mask is " + gray.length + " pixels, frame is " + n);
+  const out = Buffer.alloc(rgb.length);
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    if (gray[i] < threshold) continue;
+    out[k] = rgb[i * 3]; out[k + 1] = rgb[i * 3 + 1]; out[k + 2] = rgb[i * 3 + 2]; k += 3;
+  }
+  if (!k) throw new Error("the mask keeps no pixels");
+  return out.subarray(0, k);
+}
+
 // One picture, laid out like Lumetri Scopes: luma waveform and vectorscope on top, RGB parade below. The conversion is
 // explicit: ffmpeg's implicit RGB->YUV is limited-range BT.601 (pure red plotted at 81 against Rec.709's 54, probed
 // 2026-09-14), so the picture disagreed with the numbers. ffmpeg's waveform graticule and vectorscope targets assume
@@ -107,4 +130,4 @@ function renderScopes(png, jpg) {
   return jpg;
 }
 
-module.exports = { measure, readings, report, decodeRgb, renderScopes, CRUSH_PCT, CLIP_PCT, FLAT_RANGE, CAST };
+module.exports = { measure, readings, report, decodeRgb, decodeGray, maskRgb, renderScopes, CRUSH_PCT, CLIP_PCT, FLAT_RANGE, CAST };
