@@ -12,7 +12,7 @@
 // cast; a shadow cast is reported as needing the wheel, never faked with a slider.
 "use strict";
 const { STATISTICS } = require("./grade.cjs");
-const { castAt, solveCast, solveLuma } = require("./wheels.cjs");
+const { castAt, solveCast } = require("./wheels.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -29,52 +29,35 @@ const frameOf = (m) => m.frame || m;
 function goalsFor(m, region = "frame", current = null) {
   const goals = [], needs = [];
   const f = frameOf(m);
-  // The wheels: the canon's tools for the black point (Shadows luma = lift), the white point
-  // (Highlights luma = gain) and the casts at each end (the Shadows and Highlights pads). Each is a
-  // one-shot solve from the wheel calibration. `current` is where the wheels are now, so a second
-  // pass adds to the last move instead of restarting from neutral.
   const now = current || {};
-  const wheels = {};
-  const want = (w) => (wheels[w] = wheels[w] || { ...(now[w] || { hue: 0, sat: 0, luma: 0.5 }), why: [] });
 
-  // 1. Black point (lift): Shadows wheel luma.
+  // 1. Black point (lift): the Blacks slider. Raising is calibrated and gentle; lowering is steep and
+  //    the sweep floors at -20, so lowering uses the measured -20..0 slope (0.41 per unit) and never
+  //    goes past -40 in an automatic pass - the confirm reports what it actually did.
   const bp = f.luma.p1;
-  if (bp > BLACK_POINT[1] + 1 || bp < BLACK_POINT[0]) {
-    const target = bp > BLACK_POINT[1] ? BLACK_POINT[1] - 1 : BLACK_POINT[0] + 1;
-    const r = solveLuma("shadows", "p1", target - bp, (now.shadows || {}).luma);
-    if (r) { const w = want("shadows"); w.luma = r.luma; w.why.push("black point " + round(bp) + " → " + target + (r.capped ? " (luma at its end)" : "")); }
+  if (bp > BLACK_POINT[1] + 1) {
+    const value = Math.max(-40, -(bp - (BLACK_POINT[1] - 1)) / 0.41);
+    goals.push({ param: "blacks", statistic: "blackPoint", target: BLACK_POINT[1] - 1, value, why: "black point " + round(bp) + " → " + (BLACK_POINT[1] - 1) });
+  } else if (f.crushed > 1 || bp < BLACK_POINT[0]) {
+    goals.push({ param: "blacks", statistic: "blackPoint", target: BLACK_POINT[0] + 2, why: "blacks " + (f.crushed > 1 ? "crushed " + round(f.crushed) + "%" : "at " + round(bp)) + " → lifted to " + (BLACK_POINT[0] + 2) });
   }
-  if (f.crushed > 1) { const w = want("shadows"); const r = solveLuma("shadows", "p1", 3, w.luma); if (r) { w.luma = r.luma; w.why.push("blacks crushed " + round(f.crushed) + "%: lifted"); } }
 
-  // 2. White point (gain): Highlights wheel luma. Never above 95.
+  // 2. White point: a big deficit is Exposure's job first (a gain in stops, highlight-protected),
+  //    then Whites finishes - solved on the state predicted after exposure. A small deficit, or too
+  //    high, is Whites alone. Whites clips past about +50, so an automatic pass caps it there.
   const wp = f.luma.p99;
-  if (wp < WHITE_POINT[0] - 3 || wp > WHITE_POINT[1]) {
-    const target = wp < WHITE_POINT[0] ? 92 : 93;
-    const r = solveLuma("highlights", "p99", target - wp, (now.highlights || {}).luma);
-    if (r) { const w = want("highlights"); w.luma = r.luma; w.why.push("white point " + round(wp) + " → " + target + (r.capped ? " (luma at its end)" : "")); }
+  if (wp < WHITE_POINT[0] - 3) {
+    if (WHITE_POINT[0] - wp > 8) goals.push({ param: "exposure", statistic: "whitePoint", target: 92, why: "white point " + round(wp) + " → 92 (exposure first: " + round(92 - wp) + " points short)" });
+    goals.push({ param: "whites", statistic: "whitePoint", target: 92, cap: 50, why: "white point → 92 (Whites finishes)" });
+  } else if (wp > WHITE_POINT[1]) {
+    goals.push({ param: "whites", statistic: "whitePoint", target: 93, cap: 50, why: "white point " + round(wp) + " → 93" });
   }
 
-  // 3. Neutralise on the parade: cancel the cast at each end with that end's wheel pad.
-  for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
-    const cast = castAt(f, wheel);
-    if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
-    const r = solveCast(wheel, [-cast[0], -cast[1]]);
-    if (!r) continue;
-    const w = want(wheel);
-    // Compose with the pad's current offset: vectors add.
-    const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
-    const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
-    w.sat = Math.min(0.3, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
-    w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped)" : ""));
-  }
-
-  // 4. Contrast, on the FRAME's spread, and only when it is flat or harsh. An automatic pass never
-  //    goes past +-60: that is a look, not a balance.
+  // 3. Contrast, on the FRAME's spread, only when flat or harsh, never past +-60.
   const spread = STATISTICS.spread(f);
   if (spread < SPREAD.flat || spread > SPREAD.harsh) goals.push({ param: "contrast", statistic: "spread", target: SPREAD.target, cap: 60, why: "frame spread " + round(spread) + " is " + (spread < SPREAD.flat ? "flat" : "harsh") });
 
-  // 5. Skin, on the face only. Luma into its band with exposure if the white point allows; hue and
-  //    saturation are Midtones-wheel work and are reported.
+  // 4. Skin luma, on the face: exposure, if the white point allows.
   if (region === "face") {
     const luma = STATISTICS.brightness(m);
     if (luma < SKIN_LUMA[0] || luma > SKIN_LUMA[1]) goals.push({ param: "exposure", statistic: "brightness", target: luma < SKIN_LUMA[0] ? SKIN_LUMA[0] + 5 : SKIN_LUMA[1] - 5, why: "face luma " + round(luma) + " (40-70)" });
@@ -82,7 +65,28 @@ function goalsFor(m, region = "frame", current = null) {
     if (hue < SKIN_HUE[0] || hue > SKIN_HUE[1]) needs.push("skin hue " + round(hue) + "° off the skin line (116-126): Midtones wheel");
     if (sat < SKIN_SAT[0] || sat > SKIN_SAT[1]) needs.push("skin saturation " + round(sat) + "% (20-50): Saturation");
   }
-  return Object.assign(goals, { needs, wheels });
+  return Object.assign(goals, { needs, wheels: {} });
+}
+
+// The casts, after the tonal sliders have landed: each end of the parade neutralised with that end's
+// wheel PAD (Shadows for the blacks, Highlights for the whites), solved by inverting the wheel's
+// calibrated response. The wheels' luma sliders stay where they are - the tonal work is the sliders'
+// job, and a wheel luma pinned at its end is the wrong tool showing. `current` is where the pads are.
+function padsFor(m, current = null) {
+  const f = frameOf(m), now = current || {}, wheels = {}, needs = [];
+  for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
+    const cast = castAt(f, wheel);
+    if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
+    const r = solveCast(wheel, [-cast[0], -cast[1]]);
+    if (!r) continue;
+    const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
+    const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
+    const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
+    w.sat = Math.min(0.5, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
+    w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped)" : ""));
+    wheels[wheel] = w;
+  }
+  return { wheels, needs };
 }
 
 // After the confirm: balanced, or what is still off - in the canon's words.
@@ -108,4 +112,4 @@ function verdict(after, region = "frame") {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { goalsFor, verdict, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD };
+module.exports = { goalsFor, padsFor, verdict, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD };

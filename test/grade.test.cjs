@@ -126,8 +126,8 @@ test("every reading taken is returned, so the panel can show its work", async ()
   for (const reading of r.readings) assert.ok(isFinite(reading.value) && isFinite(reading.stat));
 });
 
-test("the three swept parameters are marked tested and the rest are not", () => {
-  assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["contrast", "exposure", "temperature"]);
+test("the five swept parameters are marked tested and the rest are not", () => {
+  assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["blacks", "contrast", "exposure", "temperature", "whites"]);
 });
 
 test("the tool is wired, and its schema cannot drift from the parameters it can actually drive", () => {

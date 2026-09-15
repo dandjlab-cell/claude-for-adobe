@@ -48,8 +48,8 @@ const PARAMS = {
   contrast: { lumetri: "Contrast", steer: "spread", range: [-100, 100], step: 25, tested: true },
   highlights: { lumetri: "Highlights", steer: "whitePoint", range: [-100, 100], step: 25, tested: false },
   shadows: { lumetri: "Shadows", steer: "blackPoint", range: [-100, 100], step: 25, tested: false },
-  whites: { lumetri: "Whites", steer: "whitePoint", range: [-100, 100], step: 25, tested: false },
-  blacks: { lumetri: "Blacks", steer: "blackPoint", range: [-100, 100], step: 25, tested: false },
+  whites: { lumetri: "Whites", steer: "whitePoint", range: [-100, 100], step: 25, tested: true },   // p99 56.5 -> 99.6; clips past +50
+  blacks: { lumetri: "Blacks", steer: "blackPoint", range: [-100, 100], step: 25, tested: true },   // p1 0 -> 20.4; crushes below -20
   saturation: { lumetri: "Saturation", steer: "saturation", range: [0, 200], step: 20, tested: false, neutral: 100 },
   vibrance: { lumetri: "Vibrance", steer: "saturation", range: [-100, 100], step: 25, tested: false },
 };
@@ -169,7 +169,9 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     // starting point, not zero. Assuming neutral would compound on top of whatever is already set.
     const from = current ? Number(await current(g.param)) : (spec.neutral || 0);
     const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), from };
-    const s = SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null;
+    const s = g.value !== undefined
+      ? { value: g.value, bracketed: true, partial: false, helps: true } // solved by the caller from a measured slope
+      : (SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null);
     if (!s) { plan.push({ ...entry, skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
     if (s.partial && !s.helps) { plan.push({ ...entry, skipped: "beyond the knob's range and the range end does not help" }); continue; }
     const limit = g.cap ? [Math.max(spec.range[0], -g.cap), Math.min(spec.range[1], g.cap)] : spec.range;

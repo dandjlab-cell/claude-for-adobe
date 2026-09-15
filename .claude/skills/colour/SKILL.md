@@ -89,19 +89,21 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 
 ## What the panel drives today, against that list
 
-| Step | The tool | Driven by |
+| Step | The tool | Status |
 |---|---|---|
-| black point | Shadows wheel luma (lift) | `grade_sequence`, one-shot from the wheel calibration |
-| white point | Highlights wheel luma (gain) | same |
-| shadow cast | Shadows wheel pad | same - solved from the parade's blacks |
-| highlight cast | Highlights wheel pad | same - solved from the parade's whites |
-| midtones / skin | Midtones wheel, exposure | exposure calibrated; the Midtones pad not yet driven |
-| contrast | Contrast | calibrated; an automatic pass caps it at ±60 |
+| big exposure deficit | Exposure | calibrated (±2 stops, highlight-protected) |
+| white point | Whites | calibrated; clips past +50, an automatic pass stops there |
+| black point | Blacks | calibrated for lifting; lowering uses the measured slope, capped at -40 |
+| shadow cast | Shadows wheel pad | calibrated 2x2 model, one write + one nudge |
+| highlight cast | Highlights wheel pad | same |
+| contrast | Contrast | calibrated; capped at ±60 |
+| skin hue / midtones | Midtones wheel | calibrated, not yet driven |
 | saturation | Saturation / Vibrance | writable, not calibrated |
 
-The wheels are written live through QE by name (`Color Wheels & Match`, dot decimals) - the same
-door reads and writes `RGB Curves` and `HSL Secondary`, which are next. Temperature is no longer
-used for balance: it moves the white point only and cannot touch a shadow cast.
+The wheels' luma sliders stay centred - the tonal work is the sliders' job, and a wheel luma pinned
+at its end is the wrong tool showing. Wheels are written live through QE by name (dot decimals); the
+same door reads and writes `RGB Curves` and `HSL Secondary`, which are next. Temperature is not a
+balancing tool.
 
 ## Matching two shots
 

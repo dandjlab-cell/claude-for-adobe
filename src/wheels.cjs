@@ -72,7 +72,7 @@ function castMatrix(wheel) {
 
 // The pad offset that changes the cast by `delta` (a 2-vector), as {hue, sat}. Capped: a balance is
 // a small move, and the model is linear only near the centre.
-function solveCast(wheel, delta, maxSat = 0.3) {
+function solveCast(wheel, delta, maxSat = 0.5) {
   const [[a, b], [c, d]] = castMatrix(wheel);
   const det = a * d - b * c;
   if (Math.abs(det) < 1e-9) return null;
@@ -82,21 +82,48 @@ function solveCast(wheel, delta, maxSat = 0.3) {
   return { hue, sat: Math.min(maxSat, sat), capped: sat > maxSat };
 }
 
-// Luma slider: how much a tonal statistic moves per unit of luma, from the sweep's four luma points.
+// Luma slider. The canon's names are exact: Shadows luma is a LIFT (it adds - the sweep's black point
+// moves 2 -> 17.3 across 0.3..0.7, a straight line), Highlights luma is a GAIN (it multiplies - the
+// white point reads x0.90 at 0.3 and x1.10 at 0.7 of its neutral value, so a dark shot gets less lift
+// from the same luma), Midtones is a gamma and is treated as a gain on the median. Getting this wrong
+// was the first live run's "white point 80, low" on every dark shot.
+const GAIN = { shadows: false, midtones: true, highlights: true };
 function lumaSlope(wheel, key) {
   const rows = SWEEPS[wheel].filter((p) => p.sat === 0);
-  const xs = rows.map((p) => p.luma), ys = rows.map((p) => p[key]);
+  const base = SWEEPS.neutral[key];
+  const xs = rows.map((p) => p.luma), ys = rows.map((p) => (GAIN[wheel] ? p[key] / base : p[key]));
   const mx = xs.reduce((s, v) => s + v, 0) / xs.length, my = ys.reduce((s, v) => s + v, 0) / ys.length;
   let num = 0, den = 0;
   for (let i = 0; i < xs.length; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) * (xs[i] - mx); }
-  return num / den;
+  return num / den; // units: statistic per luma (lift) or ratio per luma (gain)
 }
-// The luma value that moves `key` (p1 / p50 / p99) by `delta`, from `from` (default centred).
-function solveLuma(wheel, key, delta, from = 0.5) {
+// The luma value that takes `key` (p1 / p50 / p99) from `current` to `target`, starting at `from`.
+function solveLuma(wheel, key, current, target, from = 0.5) {
   const s = lumaSlope(wheel, key);
-  if (!(Math.abs(s) > 1e-9)) return null;
-  const luma = clamp(from + delta / s, 0, 1);
-  return { luma, capped: from + delta / s !== luma, slope: s };
+  if (!(Math.abs(s) > 1e-9) || !(current > 0)) return null;
+  const want = GAIN[wheel] ? (target / current - 1) / s : (target - current) / s; // luma delta from centre
+  const raw = from + want;
+  const luma = clamp(raw, 0, 1);
+  return { luma, capped: raw !== luma, slope: s, gain: GAIN[wheel] };
+}
+// After a confirm: correct a luma move from what it actually did. Two real readings give the true
+// local response of THIS shot; one more write lands it.
+function nudgeLuma(wheel, key, before, after, target, fromLuma, appliedLuma) {
+  const moved = GAIN[wheel] ? after / before - 1 : after - before;
+  const per = moved / (appliedLuma - fromLuma);
+  if (!isFinite(per) || Math.abs(per) < 1e-6) return null;
+  const want = GAIN[wheel] ? (target / after - 1) / per : (target - after) / per;
+  const raw = appliedLuma + want;
+  return { luma: clamp(raw, 0, 1), capped: raw !== clamp(raw, 0, 1) };
+}
+// After a confirm: rescale a pad move by the share of the cast it actually removed.
+function nudgePad(pad, castBefore, castAfter, maxSat = 0.5) {
+  const b = Math.hypot(castBefore[0], castBefore[1]), a = Math.hypot(castAfter[0], castAfter[1]);
+  if (!(b > 0)) return pad;
+  const removed = 1 - a / b;                    // 1 = all of it, 0 = nothing, < 0 = made it worse
+  if (removed <= 0.05) return null;             // the pad is not the tool here: stop, do not chase
+  const scale = 1 / removed;                    // what would have cancelled it
+  return { hue: pad.hue, sat: Math.min(maxSat, pad.sat * scale), capped: pad.sat * scale > maxSat };
 }
 
-module.exports = { WHEELS, NAME, NEUTRAL, parse, format, castAt, castMatrix, solveCast, lumaSlope, solveLuma };
+module.exports = { WHEELS, NAME, NEUTRAL, GAIN, parse, format, castAt, castMatrix, solveCast, lumaSlope, solveLuma, nudgeLuma, nudgePad };
