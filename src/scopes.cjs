@@ -55,15 +55,17 @@ function measure(rgb) {
   const luma = { min: to100(pct(hy, 0)), p1: to100(pct(hy, 1)), p50: to100(pct(hy, 50)), p99: to100(pct(hy, 99)), max: to100(pct(hy, 100)) };
   const chan = (h, s) => ({ mean: to100(s / n), p1: to100(pct(h, 1)), p99: to100(pct(h, 99)) });
   // A band is a set of luma codes; its cast is the median over the paired-pixel histograms of those codes.
+  // codes: [[code, weight], ...]; a weight under 1 takes that share of the code's pixels (the boundary
+  // code of a rank band, so a large surface one code past the mark is not swallowed whole).
   const band = (codes) => {
-    let total = 0; for (const c of codes) total += cN[c];
-    if (!total) return { share: 0, rb: null, g: null };
-    const med = (h) => { const want = Math.ceil(total / 2); let acc = 0; for (let v = 0; v < 511; v++) { for (const c of codes) acc += h[c * 511 + v]; if (acc >= want) return to100(v - 255); } return null; };
+    let total = 0; for (const [c, w] of codes) total += w * cN[c];
+    if (!(total >= 1)) return { share: 0, rb: null, g: null };
+    const med = (h) => { const want = total / 2; let acc = 0; for (let v = 0; v < 511; v++) { for (const [c, w] of codes) acc += w * h[c * 511 + v]; if (acc >= want) return to100(v - 255); } return null; };
     return { share: share(total), rb: med(cBR), g: med(cGM) };
   };
-  const codesBetween = (lo, hi) => { const out = []; for (let c = Math.round(lo * 2.55); c < Math.round(hi * 2.55); c++) out.push(c); return out; };
-  // By rank: the darkest / brightest RANK_SHARE of ALL pixels (luma histogram), then those codes' unclamped pixels.
-  const rankCodes = (fromDark) => { const want = Math.max(1, Math.ceil(RANK_SHARE * n)); const out = []; let acc = 0; for (let i = 0; i < 256 && acc < want; i++) { const c = fromDark ? i : 255 - i; acc += hy[c]; out.push(c); } return out; };
+  const codesBetween = (lo, hi) => { const out = []; for (let c = Math.round(lo * 2.55); c < Math.round(hi * 2.55); c++) out.push([c, 1]); return out; };
+  // By rank: the darkest / brightest RANK_SHARE of ALL pixels (luma histogram), the boundary code weighted.
+  const rankCodes = (fromDark) => { const want = Math.max(1, RANK_SHARE * n); const out = []; let acc = 0; for (let i = 0; i < 256 && acc < want; i++) { const c = fromDark ? i : 255 - i; if (!hy[c]) continue; const w = Math.min(1, (want - acc) / hy[c]); out.push([c, w]); acc += hy[c]; } return out; };
   return {
     pixels: n, luma,
     red: chan(hr, sr), green: chan(hg, sg), blue: chan(hb, sb),
