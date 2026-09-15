@@ -853,6 +853,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   if (!clips.length) return err(card, "no footage on V" + track);
   const lines = [], t0 = Date.now();
   let renders = 0, balanced = 0, touched = 0, stopped = false;
+  // The source decode is only a read of the timeline while it decodes the way Premiere does. On BRAW
+  // that is the clip's own settings (Decode Using: Clip, the embedded LUT applied) - and the LUT is a
+  // tick box (the owner, 2026-09-16 00:33). One render on the first clip read from source checks it;
+  // a mismatch switches the run to Premiere reads and says so.
+  let parity = null;
+  const PARITY_MAX = 1.5; // verified 2026-09-15: parade identical, median within 0.4
   // The playhead follows the clip being graded and goes back to where the editor had it when the run
   // ends - not to the clip and back on every render, which read as a bug.
   let playheadBefore = null;
@@ -885,6 +891,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       if ((read === "source" || read === "auto") && !graded) {
         try { m = await timed(() => measureSourceAt(at, track, region, snap), "read"); readFrom = "source"; }
         catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
+        if (readFrom === "source" && read === "auto" && parity === null) {
+          const p = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++;
+          const a = m.frame || m, b = p.frame || p;
+          const off = Math.max(Math.abs(a.luma.p50 - b.luma.p50), ...["red", "green", "blue"].map((ch) => Math.abs(a[ch].mean - b[ch].mean)));
+          parity = { off: Math.round(off * 10) / 10, clip: c.name };
+          if (off > PARITY_MAX) { read = "premiere"; m = p; readFrom = "premiere"; }
+        }
       } else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
@@ -1075,7 +1088,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
-  lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
+  lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + "."
+    + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
   lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
   card.done(lines.join("\n"), true);
