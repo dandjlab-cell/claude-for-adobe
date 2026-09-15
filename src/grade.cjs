@@ -19,9 +19,13 @@ const { predict, solveKnob, SWEEPS } = require("./grade_model.cjs");
 // is - a tomato does not fool the parade the way it fools a frame-average cast.
 const STATISTICS = {
   brightness: (m) => m.luma.p50,
-  blackPoint: (m) => m.luma.p1,
-  whitePoint: (m) => m.luma.p99,
-  spread: (m) => m.luma.p99 - m.luma.p1,
+  // The tonal ends are the FRAME's, like the parade whites below: the canon's black point is the
+  // darkest thing in the shot and the white point the brightest, not a subject's own extremes. The run
+  // of 2026-09-15 18:03 set goals from the frame but solved and judged on the subject - "black point
+  // 25 → 63" was a hand's, and Blacks was pulled against a number it could never reach.
+  blackPoint: (m) => (m.frame || m).luma.p1,
+  whitePoint: (m) => (m.frame || m).luma.p99,
+  spread: (m) => { const f = m.frame || m; return f.luma.p99 - f.luma.p1; },
   // The parade-whites statistics read the WHOLE FRAME even when a subject was measured (`frame` is
   // attached by the panel): a red product's brightest pixels are red, which is its colour, not the
   // light. White surfaces and specular hits anywhere in the room are what line up when it is neutral.
@@ -169,8 +173,11 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     // starting point, not zero. Assuming neutral would compound on top of whatever is already set.
     const from = current ? Number(await current(g.param)) : (spec.neutral || 0);
     const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), from };
-    const s = g.value !== undefined
-      ? { value: g.value, bracketed: true, partial: false, helps: true } // solved by the caller from a measured slope
+    // A caller may bring its own solve (from a measured slope the sweep cannot give, like lowering
+    // Blacks): a function gets the state predicted after the knobs before it, a value is taken as is.
+    const own = g.solve ? g.solve(state) : g.value;
+    const s = own !== undefined
+      ? { value: own, bracketed: true, partial: false, helps: true }
       : (SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null);
     if (!s) { plan.push({ ...entry, skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
     if (s.partial && !s.helps) { plan.push({ ...entry, skipped: "beyond the knob's range and the range end does not help" }); continue; }
@@ -192,10 +199,18 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
   let after = await measure();
   const judge = (m) => { for (const p of plan) if (p.value !== undefined) { p.achieved = round(STATISTICS[p.statistic](m)); p.residual = round(p.achieved - p.target); p.hit = Math.abs(p.achieved - p.target) <= tolerance; } };
   judge(after);
+  // Damage the shot arrived with is not the grade's doing: a source that already clips 1.7% of a window
+  // is allowed to keep clipping 1.7% (plus a little, for the read's resampling), never more.
+  const base = damage(before);
+  const allow = { clipped: Math.max(guard.clipped, base.clipped + 0.1), crushed: Math.max(guard.crushed, base.crushed + 0.2) };
   let harm = damage(after), backedOff = false;
-  if (unsafe(harm, guard)) {
-    // Never leave damage: the brightness knobs go back to neutral, the confirm is repeated.
-    for (const p of plan) if (p.value !== undefined && BRIGHTNESS_KNOBS.has(p.param)) {
+  if (unsafe(harm, allow)) {
+    // Never leave damage: the knobs that push the offending end go back to neutral, the confirm is
+    // repeated. Clipping is the top's knobs; crushing is the bottom's; contrast and exposure are both.
+    const culprits = new Set();
+    if (harm.clipped > allow.clipped) for (const k of ["exposure", "contrast", "highlights", "whites"]) culprits.add(k);
+    if (harm.crushed > allow.crushed) for (const k of ["exposure", "contrast", "shadows", "blacks"]) culprits.add(k);
+    for (const p of plan) if (p.value !== undefined && culprits.has(p.param)) {
       const spec = PARAMS[p.param];
       p.readBack = Number(await set(spec.neutral || 0, p.param)); p.value = spec.neutral || 0;
       p.note = "backed off: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
@@ -203,7 +218,7 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     after = await measure(); renders++;
     judge(after); harm = damage(after); backedOff = true;
   }
-  return { before, after, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, guard), backedOff };
+  return { before, after, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, allow), backedOff };
 }
 
 const round = (n) => Math.round(Number(n) * 100) / 100;

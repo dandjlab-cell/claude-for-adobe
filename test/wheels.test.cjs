@@ -66,12 +66,13 @@ test("castAt reads the parade end for the wheel, from the frame when a subject w
   assert.ok(Math.abs(castAt(m, "highlights")[0] - 7.8) < 0.01, "whites: B-R");
 });
 
-test("grade_sequence writes the wheel pads through QE by name, after the sliders, on the confirmed frame", () => {
+test("grade_sequence writes the wheel pads through QE by name, on the frame as read, before the sliders", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const host = fs.readFileSync(path.join(__dirname, "..", "host", "premiere.jsx"), "utf8");
   assert.match(panel, /host\("lumetriQE", String\(at\), String\(track\), "Color Wheels & Match", value\)/);
   assert.match(host, /lumetriQE: lumetriQE/);
   assert.match(host, /setParamValue\(String\(name\), String\(value\)\)/);
-  assert.match(panel, /The casts, on the confirmed frame: each end's wheel pad, one QE write, one confirm, one nudge/);
+  assert.match(panel, /then each end's wheel pad for what is left, solved on the state predicted after temperature/);
+  assert.match(panel, /before the tonal sliders, because a bottom pulled to the floor cannot be read/);
 });

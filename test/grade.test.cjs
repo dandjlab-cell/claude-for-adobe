@@ -190,12 +190,13 @@ test("a target beyond the knob's range is flagged partial, not applied at the ra
 });
 
 test("a whole-shot plan backs the brightness knobs off when the confirm shows the frame clipped", async () => {
-  // Stand-in whose confirm always reports the frame clipped: the plan must not leave that on the clip.
+  // Stand-in whose confirm reports the frame clipped once the knob has moved: the plan must not leave
+  // that on the clip.
   const base = premiereStandIn("exposure");
   let writes = [];
   const host = {
     set: (v) => { writes.push(v); return base.set(v); },
-    measure: () => Object.assign(base.measure(), { clipped: { red: 40, green: 0, blue: 0 } }),
+    measure: () => Object.assign(base.measure(), { clipped: { red: base.counts.current > 0 ? 40 : 0, green: 0, blue: 0 } }),
   };
   const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "exposure", target: 45 }] });
   assert.equal(r.backedOff, true);
@@ -203,4 +204,33 @@ test("a whole-shot plan backs the brightness knobs off when the confirm shows th
   assert.match(r.plan[0].note, /backed off/);
   assert.equal(r.renders, 3, "safety spent the third render");
   assert.equal(writes[writes.length - 1], 0, "the last thing written is the safe value");
+});
+
+test("damage the shot arrived with is allowed to stay: a source clipping 1.7% is not backed off for clipping 1.7%", async () => {
+  // C227 of the 18:03 run: a heavily clipped window in the source, and every slider went to zero for it.
+  const base = premiereStandIn("exposure");
+  const host = { set: base.set, measure: () => Object.assign(base.measure(), { clipped: { red: 1.7, green: 0, blue: 0 } }) };
+  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "exposure", target: 45 }] });
+  assert.equal(r.backedOff, false);
+  assert.ok(r.plan[0].value > 0, "the knob stayed where the model put it");
+  assert.equal(r.unsafe, false);
+});
+
+test("only the knobs that push the offending end are backed off: a crushed bottom leaves Whites alone", async () => {
+  const base = premiereStandIn("exposure");
+  let n = 0;
+  const host = { set: base.set, measure: () => Object.assign(base.measure(), { crushed: ++n > 1 ? 5 : 0 }) };
+  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "whites", target: 92 }, { param: "blacks", value: -30, target: 4 }] });
+  assert.equal(r.backedOff, true);
+  assert.equal(r.plan.find((p) => p.param === "blacks").value, 0, "Blacks crushed it: back to neutral");
+  assert.notEqual(r.plan.find((p) => p.param === "whites").value, 0, "Whites did not: left where it was");
+});
+
+test("the tonal ends are the frame's even when a subject was measured", () => {
+  const { STATISTICS } = require("../src/grade.cjs");
+  const subject = { luma: { p1: 25, p50: 40, p99: 63 }, frame: { luma: { p1: 10, p50: 35, p99: 88 } } };
+  assert.equal(STATISTICS.blackPoint(subject), 10);
+  assert.equal(STATISTICS.whitePoint(subject), 88);
+  assert.equal(STATISTICS.spread(subject), 78);
+  assert.equal(STATISTICS.brightness(subject), 40, "brightness is the subject's: that is what a face is exposed by");
 });

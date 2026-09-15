@@ -11,15 +11,15 @@ judgement below is a number you can measure and a number you can drive.
 
 ## "Grade this video" / "balance everything"
 
-One call: `grade_sequence`. It does the whole job deterministically - every footage clip on V1, read
-once, goals by rule (white balance first, then exposure into the band for what the subject is, then
-contrast only if flat or harsh), knobs from the calibration model, one confirm render per clip. The read is
-decoded from the clip's own file (verified identical to Premiere's render on BRAW: parade to the
-decimal, median within 0.4), so only the confirm renders - about 0.7 s a clip, well under a minute
-for twenty; `confirm: false` makes it render-free at the price of taking the model's word. You
-decide nothing per shot; say the one-line plan, call
-it, then relay its table and the undo line (the grade is on the working copy; Discard copy removes
-all of it). Stop ends it after the current clip.
+One call: `grade_sequence`. It does the whole job deterministically, on the working copy - every
+footage clip on V1, read once, the canon by rule: white balance (Temperature, only when the whole
+parade shares a cast) and each end's wheel pad for what is left, then Whites to the white point,
+Contrast only if flat or harsh, Blacks to the black point last, Exposure only for a face's skin.
+Knobs from the calibration model, about three confirm renders a clip. The read is decoded from the
+clip's own file (verified identical to Premiere's render on BRAW: parade to the decimal, median
+within 0.4), so only the confirms render; `confirm: false` makes it render-free at the price of
+taking the model's word. You decide nothing per shot; say the one-line plan, call it, then relay its
+table and the undo line (Discard copy removes all of it). Stop ends it after the current clip.
 
 Then taste, if the editor asks for it, on top of the balanced base: `grade_shot` for a shot,
 `grade` for one knob - "warmer", "more contrast on the interview", "match these two" (measure the one
@@ -68,17 +68,22 @@ broadcast conventions the scopes were built around:
 - **Black point** at 0-5, not crushed flat. **White point** 90-95 when nothing in shot is true
   white, never clipped. Peak white just under 100 gains nothing past that: it only greys the whites.
 - **Neutral means the parade lines up**: the three bottoms equal (blacks), the three tops equal
-  (whites). Blacks are balanced with the **Shadows wheel**, whites with the **Highlights wheel**.
-  Temperature/tint act on the white point only - large effect in highlights, almost none in shadows -
-  so they cannot fix a shadow cast, and a shadow cast is what the eye is most sensitive to.
+  (whites). A cast the whole parade shares is the white balance: **Temperature** first, solved to
+  line the whites up. What is left at each end is that end's wheel: blacks with the **Shadows
+  wheel**, whites with the **Highlights wheel**. Temperature is a gain, large at the top and small at
+  the bottom, so on its own it cannot fix a shadow cast, and a shadow cast is what the eye is most
+  sensitive to.
 - **Skin**: hue on the vectorscope skin line - the I-line, ~123° (116-126° across the industry),
   the same line for every complexion because hue comes from blood and melanin sets brightness.
   Luma **40-70**: light skin 60-70, dark skin 40-60; a lit face is at its most alive around 60-65
   and loses it under 50. Saturation **20-50%**, ~30% reads natural on a calibrated Rec.709 display.
-- **Order** - each move changes the next, so: black point → white point → midtones → neutralise
-  the casts on the parade (shadows wheel, highlights wheel) → saturation → skin onto the line →
-  match shots (waveform first, then parade, then vectorscope) → only then the look. Balance every
-  shot to neutral before any look, even when the look is meant to be warm.
+- **Order** - each move changes the next, so: white balance → black point → white point → midtones →
+  neutralise what is left on the parade (shadows wheel, highlights wheel) → saturation → skin onto
+  the line → match shots (waveform first, then parade, then vectorscope) → only then the look.
+  Balance every shot to neutral before any look, even when the look is meant to be warm.
+  The panel cancels the casts BEFORE it moves the black point: the pad model reads the parade's
+  bottoms, and once Blacks has put the black point at 4 a warm bottom's blue channel is on the floor
+  and nothing reads linearly there. Blacks, Whites and Contrast do not tint, so the balance holds.
 - Everything above is judged on the **whole frame** except skin, which is judged on the **face**.
   A subject's own spread says nothing about contrast - a bottle is naturally flat.
 
@@ -91,19 +96,21 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 
 | Step | The tool | Status |
 |---|---|---|
-| big exposure deficit | Exposure | calibrated (±2 stops, highlight-protected) |
+| white balance (whole-parade cast) | Temperature | calibrated; solved on the whites, capped at ±50 |
+| shadow cast (what is left) | Shadows wheel pad | calibrated 2x2 model, one write + one nudge |
+| highlight cast (what is left) | Highlights wheel pad | same |
 | white point | Whites | calibrated; clips past +50, an automatic pass stops there |
-| black point | Blacks | calibrated for lifting; lowering uses the measured slope, capped at -40 |
-| shadow cast | Shadows wheel pad | calibrated 2x2 model, one write + one nudge |
-| highlight cast | Highlights wheel pad | same |
 | contrast | Contrast | calibrated; capped at ±60 |
+| black point | Blacks, last | calibrated for lifting; lowering uses the measured slope, capped at -40 |
+| a face's skin luma | Exposure | calibrated (±2 stops, highlight-protected); used for nothing else |
 | skin hue / midtones | Midtones wheel | calibrated, not yet driven |
 | saturation | Saturation / Vibrance | writable, not calibrated |
 
-The wheels' luma sliders stay centred - the tonal work is the sliders' job, and a wheel luma pinned
-at its end is the wrong tool showing. Wheels are written live through QE by name (dot decimals); the
-same door reads and writes `RGB Curves` and `HSL Secondary`, which are next. Temperature is not a
-balancing tool.
+Exposure never sets a white point: a frame whose brightest thing is a mid-grey wall has no white to
+put at 92, and two stops of gain to force one lifts the blacks with it. The wheels' luma sliders
+stay centred - the tonal work is the sliders' job, and a wheel luma pinned at its end is the wrong
+tool showing. Wheels are written live through QE by name (dot decimals); the same door reads and
+writes `RGB Curves` and `HSL Secondary`, which are next.
 
 ## Matching two shots
 

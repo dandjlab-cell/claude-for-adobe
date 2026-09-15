@@ -16,7 +16,7 @@ const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS } = require(path.join(extensionRoot, "src", "grade.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, verdict: gradeVerdict } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, verdict: gradeVerdict } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
@@ -707,6 +707,8 @@ async function gradeTool({ parameter, target, statistic, seconds, track = 1, tol
   if (!isFinite(Number(target))) return { text: "CLAUDE_FOR_ADOBE_ERROR:target required (the number the statistic should reach)", isError: true };
   const card = addTool("grade " + parameter + " → " + (statistic || GRADE_PARAMS[parameter].steer) + " " + target + " at " + at + "s", "");
   setStatus("Grading " + parameter + "…");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
   const { set, clipName, regionSeen } = lumetriWriter(at, track, GRADE_PARAMS[parameter].lumetri, region);
   let result;
   try { result = await steerGrade({ set, measure: regionSeen.measure, param: parameter, target: Number(target), statistic, tolerance }); }
@@ -724,7 +726,7 @@ async function gradeTool({ parameter, target, statistic, seconds, track = 1, tol
   lines.push("Set on the clip; Cmd+Z per write.");
   card.done(lines.join("\n"), true);
   setStatus("Thinking…");
-  return { text: lines.join("\n") };
+  return { text: copyNote + lines.join("\n") };
 }
 
 // The Premiere side of a grade at one timeline position: a writer for one Lumetri parameter, a
@@ -768,6 +770,8 @@ async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame",
   }
   const card = addTool("grade shot at " + at + "s: " + goals.map((g) => g.parameter + "→" + g.target).join(", "), "");
   setStatus("Grading shot…");
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
   let clip = "", seen = region, fell = null;
   const writers = {};
   for (const g of goals) writers[g.parameter] = lumetriWriter(at, track, GRADE_PARAMS[g.parameter].lumetri, region);
@@ -789,13 +793,17 @@ async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame",
   lines.push("Set on the clip; Cmd+Z per knob.");
   card.done(lines.join("\n"), true);
   setStatus("Thinking…");
-  return { text: lines.join("\n") };
+  return { text: copyNote + lines.join("\n") };
 }
 // The whole job, deterministically: every footage clip on the track, read once, goals from the rules,
 // knobs from the model, one confirm. The agent calls this once and reports; it decides nothing per shot.
 async function gradeSequenceTool({ track = 1, region = "subject", tolerance, read = "auto", confirm = true } = {}) {
   const card = addTool("grade sequence V" + track + " (" + region + ")", "");
   setStatus("Grading sequence…");
+  // The copy first, then the clips are read from it: the run of 2026-09-15 18:03 skipped this and
+  // graded the original while its footer promised a working copy.
+  let copyNote = "";
+  try { copyNote = await ensureWorkingCopy(); } catch (error) { return err(card, "Could not duplicate the sequence before editing: " + error.message); }
   let tf; try { tf = await readTransforms(); } catch (error) { return err(card, error.message); }
   const clips = tf.rows.filter((c) => c.track === "V" + track && !c.graphic).sort((a, b) => a.start - b.start);
   if (!clips.length) return err(card, "no footage on V" + track);
@@ -816,44 +824,35 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       } else { m = await measureFrameAt(at, { region }); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
-    const goals = gradeGoalsFor(m, seen);
     const f0 = m.frame || m;
     const before = "black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(m)) + " / whites " + round2(GRADE_STATS.whitesRB(m)) + " / spread " + round2(GRADE_STATS.spread(f0)) + (seen === "face" ? " / face " + round2(GRADE_STATS.brightness(m)) + " @" + round2(GRADE_STATS.skinHue(m)) + "°" : "");
     const reuse = m.region !== "frame" && m.box ? { box: m.box } : null;
     const parts = [];
     let state = m, clipTouched = false, unsafeNote = "";
 
-    // 1. The tonal sliders, in canon order (blacks, exposure, whites, contrast), one write each and one
-    //    confirm for the lot - every knob solved on the state predicted after the ones before it.
-    if (goals.length) {
-      const writers = {};
-      for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
-      let r;
-      try {
-        const confirmMeasure = confirm ? () => measureFrameAt(at, { region, reuse }) : async () => m;
-        r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: m });
-        renders += confirm ? r.renders : 0;
-      } catch (error) { lines.push(label + ": " + error.message); continue; }
-      clipTouched = true; state = r.after;
-      parts.push(r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
-      if (r.unsafe) unsafeNote = " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off";
-    }
-
-    // 2. The casts, on the confirmed frame: each end's wheel pad, one QE write, one confirm, one nudge.
+    // 1. Balance, on the frame as read: white balance (Temperature) for a cast the whole parade shares,
+    //    then each end's wheel pad for what is left, solved on the state predicted after temperature.
+    //    One write each, one confirm for the lot, one pad nudge from the real reading. The casts are
+    //    read here, before the tonal sliders, because a bottom pulled to the floor cannot be read.
     const ww = wheelWriter(at, track);
-    let currentWheels = null;
+    const tw = lumetriWriter(at, track, "Temperature", region);
+    let currentWheels = null, tempFrom = 0;
     try { currentWheels = (await ww.read()).wheels; } catch (_) { currentWheels = null; }
-    const pads = gradePadsFor(state, currentWheels);
+    try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
+    const temp = gradeTemperatureFor(m, tempFrom);
+    const balanced = temp ? temp.predicted : m;
+    const pads = gradePadsFor(balanced, currentWheels);
     const padMoves = Object.keys(pads.wheels);
-    if (padMoves.length) {
+    if (temp || padMoves.length) {
       try {
+        const moves = [];
+        if (temp) { await tw.set(temp.value); clipTouched = true; moves.push("temperature " + round2(temp.value) + " (" + temp.why + ")"); }
         let applied = Object.assign({}, currentWheels || {}, pads.wheels);
-        await ww.write(applied); clipTouched = true;
-        let line = padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; ");
+        if (padMoves.length) { await ww.write(applied); clipTouched = true; }
+        let line = moves.concat(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")")).join("; ");
         if (confirm) {
-          const beforePads = state;
           state = await measureFrameAt(at, { region, reuse }); renders++;
-          const fb = beforePads.frame || beforePads, fa = state.frame || state, next = {}, notes = [];
+          const fb = balanced.frame || balanced, fa = state.frame || state, next = {}, notes = [];
           for (const w of padMoves) {
             const g = pads.wheels[w], after = wheelCastAt(fa, w), beforeCast = wheelCastAt(fb, w);
             if (Math.hypot(after[0], after[1]) <= 1.5) continue;
@@ -867,9 +866,27 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             state = await measureFrameAt(at, { region, reuse }); renders++;
             line += "; nudged: " + notes.join(", ");
           } else if (notes.length) line += "; " + notes.join(", ");
-        }
+        } else state = balanced;
         parts.push(line);
-      } catch (error) { lines.push(label + ": wheel write failed (" + error.message + ")"); continue; }
+      } catch (error) { lines.push(label + ": balance write failed (" + error.message + ")"); continue; }
+    }
+
+    // 2. The tonal sliders on the balanced frame, in the order that composes (whites, contrast, blacks
+    //    last; exposure only for a face), one write each and one confirm for the lot - every knob
+    //    solved on the state predicted after the ones before it.
+    const goals = gradeGoalsFor(state, seen);
+    if (goals.length) {
+      const writers = {};
+      for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
+      let r;
+      try {
+        const confirmMeasure = confirm ? () => measureFrameAt(at, { region, reuse }) : async () => state;
+        r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: state });
+        renders += confirm ? r.renders : 0; // with `measured` given, planShot counts the confirm only
+      } catch (error) { lines.push(label + ": " + error.message); continue; }
+      clipTouched = true; state = r.after;
+      parts.push(r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
+      if (r.unsafe) unsafeNote = " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off";
     }
 
     if (!clipTouched) {
@@ -887,10 +904,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + balanced + " balanced, " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured. Run scopes on a couple of clips, or rerun with confirm on, before trusting 'balanced'.");
-  lines.push("Every change is on the working copy; Discard copy removes all of it. Balanced means: whites aligned, subject in its brightness band, spread neither flat nor harsh, nothing clipped or crushed.");
+  lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means: parade ends aligned, black point 0-5, white point 88-95, spread neither flat nor harsh, nothing clipped or crushed.");
   card.done(lines.join("\n"), true);
   setStatus("Thinking…");
-  return { text: lines.join("\n") };
+  return { text: copyNote + lines.join("\n") };
 }
 
 // Audio clips of the active sequence overlapping [a,b], with their peak file when Premiere has one.
@@ -2681,7 +2698,7 @@ const TOOL_DEFS = [
   { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `colour` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face", "subject"], description: "\"subject\" measures only Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" measures only the biggest face box (skin without hair and clothes, best for skin tone). Use one of them whenever the shot has a subject: the background drags whole-frame numbers away from it. Says so when nothing is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." }, source: { type: "boolean", description: "Decode the clip's own source file at the matching frame instead of rendering in Premiere: nothing renders, nothing moves. Camera pixels, not the grade - a read, never a confirm. Check it against a plain call once per footage type." }, track: { type: "number", description: "With source: which video track's clip, default 1." } }, required: ["seconds"] } },
   { name: "grade", description: "Load the `colour` skill before grading. Sets ONE Lumetri Color parameter on the clip at a timeline position so the scopes read what you asked, in one go: one render to read the scopes, the calibration model chooses the value, one render to confirm (one nudge from the two real readings if the confirm is off, then it stops and reports the residual). Never leaves the slider's range, never leaves the frame clipped or crushed. Give the number the statistic should reach, not the slider value. Defaults: temperature steers whitesRB (the parade's blue-minus-red whites; 0 = neutral whites), exposure steers brightness (luma median), contrast steers spread (luma p99-p1). For a whole shot use grade_shot instead: one render for all the knobs.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should read (0-100 scale; parade differences and cast are signed)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "blackPoint", "whitePoint", "spread", "whitesRB", "whitesG", "blacksRB", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by. \"subject\" = Vision's foreground subject; \"face\" = the biggest face box. Clipping is always judged on the whole frame." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
-  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically. Per clip: one render to read the scopes (subject region by default), goals by rule - white balance first (align the frame's parade whites with temperature), then exposure only if the subject is outside the band for what it is (face 53-66, anything else 40-55), then contrast only if the spread is flat or harsh - knobs from the calibration model, all written, one confirm render. Two renders a clip, about 1.5 s. Never leaves a slider's range; clipping is judged on the whole frame. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["auto", "premiere", "source"], description: "Where the first reading comes from. Default auto: decode each clip's own file (no render, nothing moves; verified identical to Premiere's render on BRAW), falling back to a Premiere render if the file cannot be decoded here." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." } } } },
+  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically, on the working copy. Per clip: the scopes read from the clip's own file (subject region by default), then the colourist canon by rule - white balance (Temperature, only for a cast the whole parade shares) and each end's colour-wheel pad for what is left, one confirm and one nudge; then Whites to the white point, Contrast only if the frame is flat or harsh, Blacks to the black point last, Exposure only for a face's skin luma - knobs from the calibration model, one confirm. About three renders a clip. Never leaves a slider's range; a knob that clips or crushes more than the source did is backed off; residuals are reported, never chased. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["auto", "premiere", "source"], description: "Where the first reading comes from. Default auto: decode each clip's own file (no render, nothing moves; verified identical to Premiere's render on BRAW), falling back to a Premiere render if the file cannot be decoded here." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." } } } },
   { name: "grade_shot", description: "Grade a whole shot in ONE go: one render to read its scopes, the calibration model chooses every knob, all are written, one render confirms the lot. Two renders per shot. goals are applied in the order given - a colourist's order is white balance (temperature → whitesRB 0), then exposure (→ brightness), then contrast (→ spread). Each knob is solved on the state predicted after the ones before it. Reports, per knob: before, predicted, what the confirm actually read, the residual; and warns if the frame ended up clipped or crushed. Knobs without a calibration (anything but temperature, exposure, contrast) are skipped and named - set those with grade.",     inputSchema: { type: "object", properties: { goals: { type: "array", items: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "exposure", "contrast", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number" }, statistic: { type: "string" } }, required: ["parameter", "target"] }, description: "In the order to apply." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by; clipping is judged on the whole frame regardless." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit per knob, default 1." } }, required: ["goals", "seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
