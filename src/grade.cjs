@@ -22,9 +22,12 @@ const STATISTICS = {
   blackPoint: (m) => m.luma.p1,
   whitePoint: (m) => m.luma.p99,
   spread: (m) => m.luma.p99 - m.luma.p1,
-  whitesRB: (m) => m.blue.p99 - m.red.p99,                       // > 0 whites are blue, < 0 warm
-  whitesG: (m) => m.green.p99 - (m.red.p99 + m.blue.p99) / 2,   // > 0 whites are green, < 0 magenta
-  blacksRB: (m) => m.blue.p1 - m.red.p1,
+  // The parade-whites statistics read the WHOLE FRAME even when a subject was measured (`frame` is
+  // attached by the panel): a red product's brightest pixels are red, which is its colour, not the
+  // light. White surfaces and specular hits anywhere in the room are what line up when it is neutral.
+  whitesRB: (m) => { const f = m.frame || m; return f.blue.p99 - f.red.p99; },        // > 0 blue, < 0 warm
+  whitesG: (m) => { const f = m.frame || m; return f.green.p99 - (f.red.p99 + f.blue.p99) / 2; },
+  blacksRB: (m) => { const f = m.frame || m; return f.blue.p1 - f.red.p1; },
   red: (m) => m.red.mean, green: (m) => m.green.mean, blue: (m) => m.blue.mean,
   warmth: (m) => m.cast.cr, tintCast: (m) => m.cast.cb,
   saturation: (m) => m.saturation.p50,
@@ -140,8 +143,8 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 // ONE confirm render for the lot. goals: [{ param, target, statistic? }] in the order a colourist works
 // (white balance, then exposure, then contrast). Each knob is solved on the state predicted after the
 // knobs before it, so their interaction is accounted for as far as the model can.
-async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0 }) {
-  const before = await measure();
+async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null }) {
+  const before = measured || await measure(); // a caller that has just read the scopes passes the reading
   let state = before;
   const plan = [];
   for (const g of goals) {
@@ -166,7 +169,7 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0 })
     p.hit = Math.abs(p.achieved - p.target) <= tolerance;
   }
   const harm = damage(after);
-  return { before, after, plan, renders: 2, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, guard) };
+  return { before, after, plan, renders: measured ? 1 : 2, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, guard) };
 }
 
 const round = (n) => Math.round(Number(n) * 100) / 100;

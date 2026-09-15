@@ -9,40 +9,18 @@ You cannot see. `preview_frames` gives you a small JPEG and you will misjudge co
 picture is for composition and framing, not for grade decisions. **The scopes are your eyes.** Every
 judgement below is a number you can measure and a number you can drive.
 
-## "Grade this video"
+## "Grade this video" / "balance everything"
 
-Balance every shot from its own scopes, in one go each. Say the plan in three lines, then do it; do
-not ask which shot to start from unless the editor named one.
+One call: `grade_sequence`. It does the whole job deterministically - every footage clip on V1, read
+once, goals by rule (white balance first, then exposure into the band for what the subject is, then
+contrast only if flat or harsh), knobs from the calibration model, one confirm render per clip. Two
+renders a clip, under a minute for twenty. You decide nothing per shot; say the one-line plan, call
+it, then relay its table and the undo line (the grade is on the working copy; Discard copy removes
+all of it). Stop ends it after the current clip.
 
-1. `sequence_overview` — the clips. Grade the footage on V1 at each clip's midpoint; graphics, titles
-   and generated layers are not footage and are left alone. Do not solo tracks to find out what
-   renders: measure the composite.
-2. **Read every shot once**: `scopes` at each midpoint, `region: "subject"` (and `face` where a face
-   is the subject). One render per shot.
-3. **Set goals per shot from what its parade and waveform say** — a colourist's order, white balance
-   first:
-   - **White balance** — the parade's three whites must line up. `whitesRB` (blue minus red at the
-     whites) → **0** with `temperature`. Read it off the parade: R p99 56 / B p99 64 is blue whites,
-     and the fix is a modest warm move, not a hunt. (`tint` → `whitesG` 0 once it is calibrated; until
-     then leave tint alone unless the whites are clearly green or magenta.)
-   - **Exposure** — put the subject where it belongs: a face at brightness **53-66**; hands or a
-     product **40-55**. Do NOT force every shot's subject to one number - a dark bottle and a bright
-     hand are different things, and matching them is what produced +3 stops. A shot already inside
-     its band is left alone.
-   - **Contrast** — only if the spread is flat (< 55) or harsh (> 85); target **65-75**. Otherwise
-     leave it.
-   - Keep the white point (`luma p99`) at or under **92** and the black point (`luma p1`) at or over
-     **4**; if a goal would push past those, lower the goal, do not fight the guard.
-4. **One `grade_shot` per clip** with those goals in that order (temperature, exposure, contrast).
-   Two renders per shot: one to read, one to confirm. Its report shows before → predicted → confirmed
-   per knob; the residual is stated, not chased.
-5. **Report** one table — clip, region, whitesRB / brightness / spread before → after, knobs set,
-   anything skipped or that backed off — and one line on undo (the grade is on the working copy;
-   Discard copy removes all of it). Then, only for shots of the same kind (two faces, two shots of the
-   same table) that still differ by more than 3 in brightness, one `grade exposure` to match them.
-
-Cost: two renders per shot, about 1.5 s; a 20-clip sequence is under a minute. Say so once and keep
-going; do not stop between clips.
+Then taste, if the editor asks for it, on top of the balanced base: `grade_shot` for a shot,
+`grade` for one knob - "warmer", "more contrast on the interview", "match these two" (measure the one
+they like, drive the other to its numbers; same-kind shots only).
 
 ## Measure the subject, not the frame
 
