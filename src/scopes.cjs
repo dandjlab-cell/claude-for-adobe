@@ -14,10 +14,15 @@ const CRUSH_PCT = 1.0;   // share of pixels with luma at the floor (code 0-1) th
 const CLIP_PCT = 0.5;    // share of pixels with a channel at 255 that reads as clipped highlights
 const FLAT_RANGE = 60;   // p1..p99 luma spread (0-100) under this reads as low contrast
 const CAST = 2.5;        // mean Cb or Cr beyond this (-50..50 scale) reads as a colour cast
-// Luma bands (0-100 scale, as 0-255 codes) the per-band casts are read in: the ranges the Shadows,
-// Midtones and Highlights wheels act on, off the floor and under the ceiling. Engineering ranges,
-// not canon numbers; the wheel calibration is re-swept against them before they steer anything.
-const BANDS = { shadows: [5 * 2.55, 30 * 2.55], highlights: [65 * 2.55, 95 * 2.55] };
+// Casts by luma band, read from PAIRED pixels: the same pixel's B-R and G-(R+B)/2, accumulated per luma
+// code, so any band can be read after one pass. Two kinds of band: by RANK (the darkest / brightest
+// share of pixels - the parade's bottoms and tops, which is what the canon lines up, because the
+// darkest and brightest things in a shot are the ones most likely meant to be neutral) and by LEVEL
+// (fixed luma ranges, roughly what each wheel acts on). The 2026-09-15 20:43 sweep showed why the
+// distinction matters: a 5-30 level band read the shadows warm by 18 on a warm-toned scene under
+// neutral light (highlights +2) - scene colour, not a cast - where the bottoms were nearly aligned.
+const RANK_SHARE = 0.03; // darkest / brightest 3% of pixels
+const LEVEL_BANDS = { shadows: [5, 30], midtones: [30, 65], highlights: [65, 95] }; // 0-100
 
 // rgb: Uint8Array/Buffer of packed RGB24. Returns every number the report prints.
 function measure(rgb) {
@@ -29,16 +34,14 @@ function measure(rgb) {
   // percentiles (red p1, blue p1) need not be the same pixels, and once a tonal knob pulls one channel
   // onto the floor they are not - the 2026-09-15 runs read a warm bottom getting warmer after a correct
   // pad. Pixels with any channel at 0 or 255 are left out: a clamped channel has no cast to read.
-  const bandOf = (y) => (y < BANDS.shadows[0] ? -1 : y < BANDS.shadows[1] ? 0 : y < BANDS.highlights[0] ? 1 : y < BANDS.highlights[1] ? 2 : -1);
-  const hBR = [new Uint32Array(511), new Uint32Array(511), new Uint32Array(511)], hGM = [new Uint32Array(511), new Uint32Array(511), new Uint32Array(511)], bandN = [0, 0, 0];
+  const cBR = new Uint32Array(256 * 511), cGM = new Uint32Array(256 * 511), cN = new Uint32Array(256); // per luma code
   let sr = 0, sg = 0, sb = 0, scb = 0, scr = 0, clipR = 0, clipG = 0, clipB = 0, zero = 0;
   for (let i = 0; i < n * 3; i += 3) {
     const r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
     const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const cb = (b - y) / 1.8556, cr = (r - y) / 1.5748; // Rec.709, -127.5..127.5
     hy[Math.min(255, Math.round(y))]++; hr[r]++; hg[g]++; hb[b]++;
-    const band = bandOf(y);
-    if (band >= 0 && r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) { hBR[band][b - r + 255]++; hGM[band][Math.round(g - (r + b) / 2) + 255]++; bandN[band]++; }
+    if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) { const yc = Math.min(255, Math.round(y)); cBR[yc * 511 + b - r + 255]++; cGM[yc * 511 + Math.round(g - (r + b) / 2) + 255]++; cN[yc]++; }
     hs[Math.min(150, Math.round(Math.hypot(cb, cr) / 127.5 * 100))]++; // pure red ~103, pure green ~119: not capped at 100
     sr += r; sg += g; sb += b; scb += cb; scr += cr;
     if (r === 255) clipR++; if (g === 255) clipG++; if (b === 255) clipB++;
@@ -51,12 +54,23 @@ function measure(rgb) {
   const low = hy[0] + hy[1]; // at the floor, the mirror of a channel at 255: dark is fine, clipped is not
   const luma = { min: to100(pct(hy, 0)), p1: to100(pct(hy, 1)), p50: to100(pct(hy, 50)), p99: to100(pct(hy, 99)), max: to100(pct(hy, 100)) };
   const chan = (h, s) => ({ mean: to100(s / n), p1: to100(pct(h, 1)), p99: to100(pct(h, 99)) });
-  const bandMedian = (h, k) => { if (!bandN[k]) return null; const want = Math.ceil(bandN[k] / 2); let acc = 0; for (let v = 0; v < 511; v++) { acc += h[v]; if (acc >= want) return to100(v - 255); } return null; };
-  const band = (k) => ({ share: share(bandN[k]), rb: bandMedian(hBR[k], k), g: bandMedian(hGM[k], k) });
+  // A band is a set of luma codes; its cast is the median over the paired-pixel histograms of those codes.
+  const band = (codes) => {
+    let total = 0; for (const c of codes) total += cN[c];
+    if (!total) return { share: 0, rb: null, g: null };
+    const med = (h) => { const want = Math.ceil(total / 2); let acc = 0; for (let v = 0; v < 511; v++) { for (const c of codes) acc += h[c * 511 + v]; if (acc >= want) return to100(v - 255); } return null; };
+    return { share: share(total), rb: med(cBR), g: med(cGM) };
+  };
+  const codesBetween = (lo, hi) => { const out = []; for (let c = Math.round(lo * 2.55); c < Math.round(hi * 2.55); c++) out.push(c); return out; };
+  // By rank: the darkest / brightest RANK_SHARE of ALL pixels (luma histogram), then those codes' unclamped pixels.
+  const rankCodes = (fromDark) => { const want = Math.max(1, Math.ceil(RANK_SHARE * n)); const out = []; let acc = 0; for (let i = 0; i < 256 && acc < want; i++) { const c = fromDark ? i : 255 - i; acc += hy[c]; out.push(c); } return out; };
   return {
     pixels: n, luma,
     red: chan(hr, sr), green: chan(hg, sg), blue: chan(hb, sb),
-    bands: { shadows: band(0), midtones: band(1), highlights: band(2) },
+    bands: {
+      blacks: band(rankCodes(true)), whites: band(rankCodes(false)),
+      shadows: band(codesBetween(...LEVEL_BANDS.shadows)), midtones: band(codesBetween(...LEVEL_BANDS.midtones)), highlights: band(codesBetween(...LEVEL_BANDS.highlights)),
+    },
     clipped: { red: share(clipR), green: share(clipG), blue: share(clipB) },
     crushed: share(low), pureBlack: share(zero),
     saturation: { p50: pct(hs, 50), p99: pct(hs, 99) },
@@ -84,7 +98,7 @@ function report(m, label) {
     "parade means R " + m.red.mean + " G " + m.green.mean + " B " + m.blue.mean + "; p1-p99 R " + m.red.p1 + "-" + m.red.p99 + ", G " + m.green.p1 + "-" + m.green.p99 + ", B " + m.blue.p1 + "-" + m.blue.p99,
     "clipped at 255: R " + m.clipped.red + "% G " + m.clipped.green + "% B " + m.clipped.blue + "%; at the luma floor " + m.crushed + "% (pure black " + m.pureBlack + "%)",
     "vectorscope: saturation median " + m.saturation.p50 + ", p99 " + m.saturation.p99 + " (% of a 127.5 Cb/Cr radius: pure red is about 103, pure green about 119); mean Cb " + m.cast.cb + ", Cr " + m.cast.cr + " (-50..50)",
-    "casts by luma band (median B-R / G-mid of paired pixels, 0-100; >0 blue / green, <0 warm / magenta): " + ["shadows", "midtones", "highlights"].map((k) => { const b = m.bands && m.bands[k]; return k + (b && b.rb !== null ? " " + b.rb + " / " + b.g + " (" + b.share + "% of pixels)" : " none"); }).join("; "),
+    "casts by luma band (median B-R / G-mid of paired pixels, 0-100; >0 blue / green, <0 warm / magenta): " + [["blacks", "darkest 3%"], ["shadows", "5-30"], ["midtones", "30-65"], ["highlights", "65-95"], ["whites", "brightest 3%"]].map(([k, label]) => { const b = m.bands && m.bands[k]; return k + " (" + label + ")" + (b && b.rb !== null ? " " + b.rb + " / " + b.g + " [" + b.share + "%]" : " none"); }).join("; "),
     "reads: " + readings(m).join("; "),
   ].join("\n");
 }

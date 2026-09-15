@@ -26,6 +26,16 @@ test("pixels with a channel on the floor or at the ceiling carry no cast and are
   assert.equal(withCeiling.bands.highlights.rb, 0);
 });
 
+test("rank bands read the parade's bottoms and tops: the darkest and brightest few percent as pixels", () => {
+  // Mostly a warm mid-dark surface, with a small truly dark region that is neutral: the LEVEL band says
+  // warm (scene colour), the RANK band says neutral (the blacks are black) - the canon reads the latter.
+  const m = measure(frame([3000, 60, 45, 35], [100, 6, 6, 6], [1000, 200, 200, 200]));
+  assert.ok(m.bands.shadows.rb < -5, "the 5-30 band is the warm surface: " + m.bands.shadows.rb);
+  assert.equal(m.bands.blacks.rb, 0, "the darkest 3% are the neutral blacks");
+  assert.equal(m.bands.whites.rb, 0);
+  assert.ok(m.bands.blacks.share > 2 && m.bands.blacks.share < 4, "about 3% of the pixels: " + m.bands.blacks.share);
+});
+
 test("the green-magenta axis is read the same way", () => {
   const m = measure(frame([1000, 40, 50, 40]));
   assert.ok(m.bands.shadows.g > 3, "green shadows: " + m.bands.shadows.g);
