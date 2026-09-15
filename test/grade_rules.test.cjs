@@ -37,7 +37,7 @@ test("the sliders compose: whites, contrast, then blacks last, solved on the pre
   assert.deepEqual([...g].map((x) => x.param), ["whites", "contrast", "blacks"]);
   const b = g[2];
   assert.equal(typeof b.solve, "function", "Blacks re-solves from where the knobs before it leave the black point");
-  assert.ok(b.solve(frame(20, 40, 90, [20, 20, 20], [90, 90, 90])) < b.solve(frame(8, 40, 90, [8, 8, 8], [90, 90, 90])), "a higher black point asks for more");
+  assert.ok(b.solve(frame(12, 40, 90, [12, 12, 12], [90, 90, 90])) < b.solve(frame(8, 40, 90, [8, 8, 8], [90, 90, 90])), "a higher black point asks for more");
   assert.equal(b.solve(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), 0, "already at the black point: no move");
 });
 
@@ -53,14 +53,28 @@ test("white balance is Temperature only for a cast the whole parade shares, capp
   assert.equal(temperatureFor(bottomOnly), null, "temperature acts on the whites; a shadow cast alone is the Shadows wheel");
 });
 
-test("a lifted black point comes down with the Blacks slider from the measured slope, capped at -40", () => {
-  const g = goalsFor(frame(14.1, 40, 90, [14, 14, 14], [90, 90, 90]), "frame");
+test("a lifted black point comes down with Blacks from the measured slope, never past -20, from where the knob is", () => {
+  const f = frame(10, 40, 90, [10, 10, 10], [90, 90, 90]);
+  const g = goalsFor(f, "frame");
   const b = g.find((x) => x.param === "blacks");
-  assert.ok(b && Math.abs(b.value - (-(14.1 - 4) / 0.41)) < 0.5, "Blacks " + (b && b.value));
-  const far = goalsFor(frame(40, 60, 90, [40, 40, 40], [90, 90, 90]), "frame").find((x) => x.param === "blacks");
-  assert.equal(far.value, -40, "never past -40 automatically");
+  assert.ok(b && Math.abs(b.solve(f) - (-(10 - 4) / 0.41)) < 0.5, "Blacks " + (b && b.solve(f)));
+  assert.ok(Math.abs(b.solve(f, -5) - (-5 - (10 - 4) / 0.41)) < 0.5, "a second pass moves from the knob's current value, not from zero");
+  assert.equal(g.needs.length, 0, "within reach: nothing else needed");
+  const lifted = frame(22, 40, 90, [22, 22, 22], [90, 90, 90]);
+  const far = goalsFor(lifted, "frame");
+  assert.equal(far.find((x) => x.param === "blacks").solve(lifted), -20, "Blacks is a toe control: -20 is as far as the calibration goes (-40 moved 22 -> 18 live)");
+  assert.ok(far.needs.some((n) => /beyond Blacks' reach/.test(n)), "and the rest is said out loud: " + far.needs);
   const crushed = goalsFor(frame(0, 40, 90, [0, 0, 0], [90, 90, 90], { crushed: 4 }), "frame").find((x) => x.param === "blacks");
-  assert.ok(crushed && crushed.target > 0 && crushed.value === undefined, "crushed blacks are lifted by the model");
+  assert.ok(crushed && crushed.target > 0 && crushed.solve === undefined, "crushed blacks are lifted by the model");
+});
+
+test("the verdict checks what the footer promises: both cast axes and the spread, with the goals' thresholds", () => {
+  const { ACCEPT } = require("../src/grade_rules.cjs");
+  const green = verdict(frame(4, 40, 90, [4, 8, 4], [90, 90, 90]), "frame"); // blacks green by 4, B-R neutral
+  assert.ok(green.notes.some((n) => /blacks green/.test(n)), "the green-magenta axis is judged too: " + green.notes);
+  const flat = verdict(frame(4, 30, 50, [4, 4, 4], [50, 50, 50]), "frame");
+  assert.ok(flat.notes.some((n) => /spread .* flat/.test(n)), flat.notes.join(" | "));
+  assert.equal(verdict(frame(ACCEPT.blackMax, 40, ACCEPT.whiteMin, [6, 6, 6], [85, 85, 85]), "frame").balanced, true, "the accepted band is the printed one");
 });
 
 test("a subject's own narrow spread is NOT a contrast goal; the frame's is", () => {
@@ -120,7 +134,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
-  assert.ok(seqTool.indexOf("gradePadsFor(afterBalance, currentWheels)") > 0 && seqTool.indexOf("gradePadsFor(afterBalance, currentWheels)") < seqTool.indexOf("gradeGoalsFor(state, seen)"), "balance on the frame as read, then the sliders on the balanced frame");
+  assert.ok(seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)") > 0 && seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)") < seqTool.indexOf("gradeGoalsFor(afterBalance, seen)"), "balance on the frame as read, then the sliders on the predicted balanced frame");
+  assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
+  assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
+  assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");
   // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
   const loop = seqTool.slice(seqTool.indexOf("for (const c of clips)"));
   assert.doesNotMatch(loop, /\b(const|let) (balanced|touched|renders|lines|stopped)\b/, "no per-clip declaration shadows a tally the loop adds to");

@@ -24,18 +24,42 @@ test("the sweep's hue convention holds: red at 0 raises R at the wheel's end, cy
 test("a blue cast at the blacks is cancelled by a warm pad on the Shadows wheel, capped for a huge cast", () => {
   const r = solveCast("shadows", [-17.3, 0]); // blacks blue by 17.3 -> cancel
   assert.ok(r.hue > 0 && r.hue < 60, "warm (orange) side, got " + r.hue.toFixed(1));
-  assert.ok(r.sat > 0.3 && r.sat <= 0.5 && !r.capped, "a large cast is a large pad, inside the 0.5 cap: " + r.sat.toFixed(3));
+  assert.ok(r.sat > 0.2 && r.sat <= 0.3, "a large cast is a large pad, inside the 0.3 cap: " + r.sat.toFixed(3));
   const huge = solveCast("shadows", [-40, 0]);
-  assert.equal(huge.capped, true, "40 points of cast is more than the pad has: say so");
-  assert.equal(huge.sat, 0.5);
+  assert.equal(huge.capped, true, "40 points of cast is more than the pad model covers: say so");
+  assert.equal(huge.sat, 0.3, "the cap is twice the sampled radius, not 3.3x (0.5 was the 18:03 run)");
   const small = solveCast("shadows", [-3, 0]);
   assert.ok(small.sat > 0.03 && small.sat < 0.15, "a small cast is a small move: sat " + small.sat.toFixed(3));
 });
 
-test("a pad nudge rescales by the share of the cast it removed, and gives up when it made things worse", () => {
-  const r = nudgePad({ hue: 222.9, sat: 0.25 }, [-10.2, 0], [0.8, 0]); // removed nearly all of it
-  assert.ok(Math.abs(r.sat - 0.27) < 0.02, "a touch more: " + r.sat.toFixed(3));
-  assert.equal(nudgePad({ hue: 217, sat: 0.3 }, [-23.2, 0], [-25.9, 0]), null, "worse after the move: not the tool");
+test("a pad nudge rescales the move by what it actually did, direction included", () => {
+  const none = { hue: 0, sat: 0 };
+  // Fell short: -10.2 -> -3 removed 70%, so the move scales by 1/0.7.
+  const short = nudgePad(none, { hue: 222.9, sat: 0.2 }, [-10.2, 0], [-3, 0]);
+  assert.ok(Math.abs(short.sat - 0.2 / 0.7) < 0.01, "a bit more: " + short.sat.toFixed(3));
+  assert.ok(Math.abs(short.hue - 222.9) < 0.01, "same direction");
+  // CROSSED neutral: -10 -> +5 means two thirds of the move was enough. The 18:03 nudge read this as
+  // "half removed" and doubled the pad - warm blacks came back blue by 13.
+  const over = nudgePad(none, { hue: 220, sat: 0.2 }, [-10, 0], [5, 0]);
+  assert.ok(Math.abs(over.sat - 0.2 * 2 / 3) < 0.01, "an overshoot pulls the pad BACK: " + over.sat.toFixed(3));
+  // Went the wrong way: not the tool.
+  assert.equal(nudgePad(none, { hue: 217, sat: 0.3 }, [-23.2, 0], [-25.9, 0]), null);
+  // Rounds to the same write: nothing to send.
+  assert.equal(nudgePad(none, { hue: 220, sat: 0.2 }, [-10, 0], [-0.05, 0]), null);
+  // A second pass scales the DELTA from where the pad started, not the whole pad.
+  const from = { hue: 220, sat: 0.1 };
+  const again = nudgePad(from, { hue: 220, sat: 0.2 }, [-10, 0], [-5, 0]);
+  assert.ok(Math.abs(again.sat - 0.3) < 0.01, "0.1 + 2 x 0.1: " + again.sat.toFixed(3));
+});
+
+test("the pads' predicted effect on the parade ends follows the same model the solve inverts", () => {
+  const { predictPads } = require("../src/wheels.cjs");
+  const m = { luma: { p1: 5, p50: 40, p99: 90 }, red: { p1: 14.5, p99: 90 }, green: { p1: 23.5, p99: 90 }, blue: { p1: 31.8, p99: 90 } }; // blacks blue by 17.3
+  const pad = solveCast("shadows", [-17.3, -(23.5 - (14.5 + 31.8) / 2)]);
+  const after = predictPads(m, { shadows: pad });
+  assert.ok(Math.abs(after.blue.p1 - after.red.p1) < Math.abs(m.blue.p1 - m.red.p1) / 3, "the cast is mostly gone in the prediction: " + (after.blue.p1 - after.red.p1).toFixed(2));
+  assert.equal(after.luma.p1, 5, "luma is not moved by a pad in this model");
+  assert.equal(after.red.p99, 90, "the whites are the Highlights wheel's, untouched by a Shadows pad");
 });
 
 test("a warm cast is cancelled by a cool pad, opposite direction", () => {
@@ -73,6 +97,6 @@ test("grade_sequence writes the wheel pads through QE by name, on the frame as r
   assert.match(panel, /host\("lumetriQE", String\(at\), String\(track\), "Color Wheels & Match", value\)/);
   assert.match(host, /lumetriQE: lumetriQE/);
   assert.match(host, /setParamValue\(String\(name\), String\(value\)\)/);
-  assert.match(panel, /then each end's wheel pad for what is left, solved on the state predicted after temperature/);
-  assert.match(panel, /before the tonal sliders, because a bottom pulled to the floor cannot be read/);
+  assert.match(panel, /then each end's wheel pad for what is left, solved on the state predicted after/);
+  assert.match(panel, /before the tonal sliders, because a bottom pulled to the/);
 });

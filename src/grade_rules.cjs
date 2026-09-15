@@ -9,23 +9,32 @@
 //
 // Why the balance is solved BEFORE the tonal sliders here, when a colourist sets the black point first:
 // the pad model reads the parade's bottoms, and once Blacks has put the black point at 4 a warm
-// bottom's blue channel is on the floor - the pad's response is then clamped, not linear, and the run
-// of 2026-09-15 18:03 chased that into blue blacks on eight clips. Read the casts where there is room
-// (the frame as shot), cancel them, then move the neutral ends with the neutral knobs: Blacks, Whites
-// and Contrast do not tint.
+// bottom's blue channel is on the floor - the pad's response is then clamped, not linear. Read the casts
+// where there is room (the frame as shot), cancel them, then move the ends with the tonal sliders,
+// which are equal-channel operations. Equal-channel is not "cannot tint" - three independently taken
+// percentiles need not be the same pixels - which is why the confirm reads the casts again.
 "use strict";
 const { STATISTICS } = require("./grade.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
-const { castAt, solveCast } = require("./wheels.cjs");
+const { castAt, solveCast, MAX_SAT } = require("./wheels.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
+// What the panel ACCEPTS as balanced - the canon's bands with the tolerance one render's reading has.
+// One predicate for the goals, the verdict and the printed footer, so they cannot disagree.
+const ACCEPT = { blackMax: BLACK_POINT[1] + 1, whiteMin: WHITE_POINT[0] - 3, whiteMax: WHITE_POINT[1] };
 const SKIN_LUMA = [40, 70];      // a face: light skin 60-70, dark skin 40-60; alive around 60-65
 const SKIN_HUE = [116, 126];     // the vectorscope skin line, 123 at centre
 const SKIN_SAT = [20, 50];       // percent of the vectorscope radius; ~30 reads natural on Rec.709
 const SPREAD = { flat: 55, harsh: 85, target: 70 };
 const NEUTRAL = 1.5;             // parade ends within this of each other are neutral
 const TEMPERATURE_CAP = 50;      // a balance is not a look: half the slider
+// Blacks is a toe control ("black clipping", Adobe), not a lift: the sweep's p1 sits at 0 from -20 down,
+// so nothing below -20 is calibrated and nothing above the toe is reached by it. The -20..0 slope (0.41
+// per unit) is a lower bound taken on a clipped sample; an automatic pass never goes past -20 and says
+// when the black point is beyond what that can do (the run of 18:03: -40 moved 22 -> 18).
+const BLACKS_REACH = 20;
+const BLACKS_SLOPE = 0.41;
 
 const frameOf = (m) => m.frame || m;
 
@@ -60,8 +69,9 @@ function padsFor(m, current = null) {
     const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
     const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
     const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
-    w.sat = Math.min(0.5, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
-    w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped)" : ""));
+    w.sat = Math.min(MAX_SAT, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
+    w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped at " + MAX_SAT + ")" : ""));
+    if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased");
     wheels[wheel] = w;
   }
   return { wheels, needs };
@@ -88,37 +98,44 @@ function goalsFor(m, region = "frame") {
   // 2. White point: Whites. It clips past about +50, so an automatic pass caps it there and reports
   //    what is left; a shot that needs more is a taste call (grade_shot), not a balance.
   const wp = f.luma.p99;
-  if (wp < WHITE_POINT[0] - 3) goals.push({ param: "whites", statistic: "whitePoint", target: 92, cap: 50, why: "white point " + round(wp) + " → 92" });
-  else if (wp > WHITE_POINT[1]) goals.push({ param: "whites", statistic: "whitePoint", target: 93, cap: 50, why: "white point " + round(wp) + " → 93" });
+  if (wp < ACCEPT.whiteMin) goals.push({ param: "whites", statistic: "whitePoint", target: 92, cap: 50, why: "white point " + round(wp) + " → 92" });
+  else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, cap: 50, why: "white point " + round(wp) + " → 93" });
 
   // 3. Contrast, on the FRAME's spread, only when flat or harsh, never past +-60.
   const spread = STATISTICS.spread(f);
   if (spread < SPREAD.flat || spread > SPREAD.harsh) goals.push({ param: "contrast", statistic: "spread", target: SPREAD.target, cap: 60, why: "frame spread " + round(spread) + " is " + (spread < SPREAD.flat ? "flat" : "harsh") });
 
-  // 4. Black point (lift): the Blacks slider, LAST - it is the most local knob and every knob above
-  //    moves the black point too, so it is solved on the state predicted after them. Raising is
-  //    calibrated and gentle; lowering is steep and the sweep floors at -20, so lowering uses the
-  //    measured -20..0 slope (0.41 per unit) and never goes past -40 in an automatic pass.
+  // 4. Black point: the Blacks slider, LAST - it is the most local knob and every knob above moves the
+  //    black point too, so it is solved on the state predicted after them, from where the knob is.
+  //    Lowering is the calibrated slope down to -20 and no further; a black point beyond that reach is
+  //    a lifted shadow region, which is another tool's job (Shadows slider, a curve), said out loud.
   const bp = f.luma.p1;
-  if (bp > BLACK_POINT[1] + 1) {
-    const solve = (state) => { const p1 = frameOf(state).luma.p1; return p1 > BLACK_POINT[1] + 1 ? Math.max(-40, -(p1 - (BLACK_POINT[1] - 1)) / 0.41) : 0; };
-    goals.push({ param: "blacks", statistic: "blackPoint", target: BLACK_POINT[1] - 1, solve, value: solve(m), why: "black point " + round(bp) + " → " + (BLACK_POINT[1] - 1) });
+  if (bp > ACCEPT.blackMax) {
+    const target = BLACK_POINT[1] - 1;
+    const solve = (state, from = 0) => { const p1 = frameOf(state).luma.p1; return p1 > ACCEPT.blackMax ? Math.max(-BLACKS_REACH, from - (p1 - target) / BLACKS_SLOPE) : from; };
+    goals.push({ param: "blacks", statistic: "blackPoint", target, solve, why: "black point " + round(bp) + " → " + target });
+    if (bp - target > BLACKS_REACH * BLACKS_SLOPE) needs.push("black point " + round(bp) + " is beyond Blacks' reach (a toe control; -" + BLACKS_REACH + " at most): Shadows slider or a curve for the rest");
   } else if (f.crushed > 1 || bp < BLACK_POINT[0]) {
     goals.push({ param: "blacks", statistic: "blackPoint", target: BLACK_POINT[0] + 2, why: "blacks " + (f.crushed > 1 ? "crushed " + round(f.crushed) + "%" : "at " + round(bp)) + " → lifted to " + (BLACK_POINT[0] + 2) });
   }
   return Object.assign(goals, { needs, wheels: {} });
 }
 
-// After the confirm: balanced, or what is still off - in the canon's words.
+// After the confirm: balanced, or what is still off - in the canon's words. The same thresholds the
+// goals use (ACCEPT), both cast axes the pads solve, and the spread the footer promises.
 function verdict(after, region = "frame") {
   const notes = [];
   const f = frameOf(after);
-  if (f.luma.p1 > BLACK_POINT[1] + 1) notes.push("black point " + round(f.luma.p1) + " lifted");
-  if (f.luma.p99 < WHITE_POINT[0] - 3) notes.push("white point " + round(f.luma.p99) + " low");
-  if (f.luma.p99 > WHITE_POINT[1]) notes.push("white point " + round(f.luma.p99) + " near clipping");
-  const blacks = STATISTICS.blacksRB(f), whites = STATISTICS.whitesRB(f);
-  if (Math.abs(blacks) > NEUTRAL) notes.push("blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(blacks) + " (Shadows wheel)");
-  if (Math.abs(whites) > NEUTRAL) notes.push("whites " + (whites > 0 ? "blue" : "warm") + " by " + round(whites));
+  if (f.luma.p1 > ACCEPT.blackMax) notes.push("black point " + round(f.luma.p1) + " lifted");
+  if (f.luma.p99 < ACCEPT.whiteMin) notes.push("white point " + round(f.luma.p99) + " low");
+  if (f.luma.p99 > ACCEPT.whiteMax) notes.push("white point " + round(f.luma.p99) + " near clipping");
+  for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
+    const [rb, g] = castAt(f, wheel);
+    if (Math.abs(rb) > NEUTRAL) notes.push(label + " " + (rb > 0 ? "blue" : "warm") + " by " + round(rb) + (wheel === "shadows" ? " (Shadows wheel)" : ""));
+    if (Math.abs(g) > NEUTRAL) notes.push(label + " " + (g > 0 ? "green" : "magenta") + " by " + round(Math.abs(g)));
+  }
+  const spread = STATISTICS.spread(f);
+  if (spread < SPREAD.flat || spread > SPREAD.harsh) notes.push("spread " + round(spread) + " " + (spread < SPREAD.flat ? "flat" : "harsh"));
   const clipped = Math.max(f.clipped.red, f.clipped.green, f.clipped.blue);
   if (clipped > 0.5) notes.push("clipped " + round(clipped) + "%");
   if (f.crushed > 1) notes.push("crushed " + round(f.crushed) + "%");
@@ -132,4 +149,4 @@ function verdict(after, region = "frame") {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { temperatureFor, padsFor, goalsFor, verdict, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP };
+module.exports = { temperatureFor, padsFor, goalsFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, NEUTRAL };

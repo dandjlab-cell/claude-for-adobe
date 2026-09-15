@@ -16,6 +16,10 @@ const SWEEPS = require("./lumetri_sweeps.json").wheels;
 const WHEELS = ["shadows", "midtones", "highlights"];
 const NAME = { shadows: "Shadows", midtones: "Midtones", highlights: "Highlights" };
 const NEUTRAL = { hue: 0, sat: 0, luma: 0.5 };
+// The pad model was fitted at sat 0.15 and is off by ~1.3 points there already on its own shadow rows;
+// 0.3 is twice the sampled radius and the most an automatic pass extrapolates (0.5 was 3.3x, and the
+// run of 2026-09-15 18:03 showed what that does). More cast than this is reported, not chased.
+const MAX_SAT = 0.3;
 
 // "Shadows:227,00,0,10,0,40;..." -> { shadows: {hue, sat, luma}, ... }. Tolerates dots too.
 function parse(text) {
@@ -72,7 +76,7 @@ function castMatrix(wheel) {
 
 // The pad offset that changes the cast by `delta` (a 2-vector), as {hue, sat}. Capped: a balance is
 // a small move, and the model is linear only near the centre.
-function solveCast(wheel, delta, maxSat = 0.5) {
+function solveCast(wheel, delta, maxSat = MAX_SAT) {
   const [[a, b], [c, d]] = castMatrix(wheel);
   const det = a * d - b * c;
   if (Math.abs(det) < 1e-9) return null;
@@ -116,14 +120,50 @@ function nudgeLuma(wheel, key, before, after, target, fromLuma, appliedLuma) {
   const raw = appliedLuma + want;
   return { luma: clamp(raw, 0, 1), capped: raw !== clamp(raw, 0, 1) };
 }
-// After a confirm: rescale a pad move by the share of the cast it actually removed.
-function nudgePad(pad, castBefore, castAfter, maxSat = 0.5) {
-  const b = Math.hypot(castBefore[0], castBefore[1]), a = Math.hypot(castAfter[0], castAfter[1]);
-  if (!(b > 0)) return pad;
-  const removed = 1 - a / b;                    // 1 = all of it, 0 = nothing, < 0 = made it worse
-  if (removed <= 0.05) return null;             // the pad is not the tool here: stop, do not chase
-  const scale = 1 / removed;                    // what would have cancelled it
-  return { hue: pad.hue, sat: Math.min(maxSat, pad.sat * scale), capped: pad.sat * scale > maxSat };
+// After a confirm: correct a pad move from what it actually did, DIRECTION included. `before` is the
+// pad the move started from, `applied` the pad written; c0 the cast the move was solved against, c1 the
+// cast after it, so d = c1 - c0 is the move's observed effect. The share of the move that would have
+// landed on neutral is t = -(c0 . d) / (d . d), least squares along the observed response: t < 1 means
+// it overshot, t > 1 it fell short. The previous version compared magnitudes only, so a cast that
+// CROSSED neutral (-10 -> +5) read as "half removed" and the pad was doubled - the warm-to-blue flip
+// on eight clips of the 2026-09-15 18:03 run. Scales the delta the move made, not the whole pad.
+// null = leave it: the move did nothing measurable, went the wrong way, or rounds to the same write.
+function nudgePad(before, applied, c0, c1, maxSat = MAX_SAT) {
+  const d = [c1[0] - c0[0], c1[1] - c0[1]];
+  const dd = d[0] * d[0] + d[1] * d[1];
+  if (dd < 1e-6) return null;
+  const t = -(c0[0] * d[0] + c0[1] * d[1]) / dd;
+  if (!(t > 0) || t > 3) return null;
+  const b = vec(before), a = vec(applied);
+  const next = [b[0] + t * (a[0] - b[0]), b[1] + t * (a[1] - b[1])];
+  const sat = Math.hypot(next[0], next[1]);
+  let hue = Math.atan2(next[1], next[0]) * 180 / Math.PI; if (hue < 0) hue += 360;
+  const out = { hue, sat: Math.min(maxSat, sat), capped: sat > maxSat, t };
+  return same(out, applied) ? null : out;
+}
+const vec = (p) => [(p.sat || 0) * Math.cos((p.hue || 0) * Math.PI / 180), (p.sat || 0) * Math.sin((p.hue || 0) * Math.PI / 180)];
+const same = (p, q) => { const a = vec(p), b = vec(q); return Math.abs(a[0] - b[0]) < 0.005 && Math.abs(a[1] - b[1]) < 0.005; }; // QE takes two decimals
+
+// What the pads are expected to do to the parade's ends, by the same linear model the solve inverts:
+// the per-channel p1 (Shadows) and p99 (Highlights) move so that B-R and G-(R+B)/2 change by matrix x
+// pad delta, luma untouched. Enough to solve the tonal sliders on the state after the pads without a
+// render in between; the confirm is what says whether it held.
+function predictPads(m, wheels, current = null) {
+  const out = JSON.parse(JSON.stringify(m));
+  const apply = (f) => {
+    for (const wheel of Object.keys(wheels)) {
+      if (wheel === "midtones") continue;
+      const k = wheel === "shadows" ? "p1" : "p99";
+      const from = vec((current && current[wheel]) || NEUTRAL), to = vec(wheels[wheel]);
+      const [[a, b], [c, d]] = castMatrix(wheel);
+      const dx = to[0] - from[0], dy = to[1] - from[1];
+      const dBR = a * dx + b * dy, dG = c * dx + d * dy;
+      f.blue[k] += dBR / 2; f.red[k] -= dBR / 2; f.green[k] += dG;
+    }
+  };
+  apply(out);
+  if (out.frame) apply(out.frame);
+  return out;
 }
 
-module.exports = { WHEELS, NAME, NEUTRAL, GAIN, parse, format, castAt, castMatrix, solveCast, lumaSlope, solveLuma, nudgeLuma, nudgePad };
+module.exports = { WHEELS, NAME, NEUTRAL, GAIN, MAX_SAT, parse, format, castAt, castMatrix, solveCast, lumaSlope, solveLuma, nudgeLuma, nudgePad, predictPads };

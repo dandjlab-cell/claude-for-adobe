@@ -67,6 +67,9 @@ const damage = (m) => {
   return { clipped: Math.max(f.clipped.red, f.clipped.green, f.clipped.blue), crushed: f.crushed };
 };
 const unsafe = (d, guard) => d.clipped > guard.clipped || d.crushed > guard.crushed;
+// Damage the shot arrived with is not the grade's doing: a source that already clips 1.7% of a window
+// is allowed to keep clipping 1.7% (plus a little, for the read's resampling), never more.
+const allowance = (base, guard = GUARD) => ({ clipped: Math.max(guard.clipped, base.clipped + 0.1), crushed: Math.max(guard.crushed, base.crushed + 0.2) });
 const clampTo = ([lo, hi], v) => Math.max(lo, Math.min(hi, v));
 const MAX_RENDERS = 3;
 
@@ -157,7 +160,9 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 // to neutral and confirmed once more - safety spends the third render, not a nudge.
 const WHITE_CEILING = 95; // the sweep clipped nothing until p99 reached 99.6; 92 blocked moves that were safe
 const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites", "shadows", "blacks"]);
-async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null }) {
+// `baseline` is the damage the shot ARRIVED with (clipped/crushed of the untouched read); without it
+// the reading passed in is taken as the baseline, which is wrong once colour writes precede the plan.
+async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null }) {
   const before = measured || await measure(); // a caller that has just read the scopes passes the reading
   let renders = measured ? 1 : 2;
   let state = before;
@@ -175,7 +180,7 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), from };
     // A caller may bring its own solve (from a measured slope the sweep cannot give, like lowering
     // Blacks): a function gets the state predicted after the knobs before it, a value is taken as is.
-    const own = g.solve ? g.solve(state) : g.value;
+    const own = g.solve ? g.solve(state, from) : g.value;
     const s = own !== undefined
       ? { value: own, bracketed: true, partial: false, helps: true }
       : (SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null);
@@ -201,18 +206,17 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
   judge(after);
   // Damage the shot arrived with is not the grade's doing: a source that already clips 1.7% of a window
   // is allowed to keep clipping 1.7% (plus a little, for the read's resampling), never more.
-  const base = damage(before);
-  const allow = { clipped: Math.max(guard.clipped, base.clipped + 0.1), crushed: Math.max(guard.crushed, base.crushed + 0.2) };
+  const allow = allowance(baseline || damage(before), guard);
   let harm = damage(after), backedOff = false;
   if (unsafe(harm, allow)) {
-    // Never leave damage: the knobs that push the offending end go back to neutral, the confirm is
-    // repeated. Clipping is the top's knobs; crushing is the bottom's; contrast and exposure are both.
+    // Never leave damage: the knobs that push the offending end go back to where they WERE (an editor's
+    // own setting, not zero), the confirm is repeated. Clipping is the top's knobs; crushing is the
+    // bottom's; contrast and exposure are both.
     const culprits = new Set();
     if (harm.clipped > allow.clipped) for (const k of ["exposure", "contrast", "highlights", "whites"]) culprits.add(k);
     if (harm.crushed > allow.crushed) for (const k of ["exposure", "contrast", "shadows", "blacks"]) culprits.add(k);
     for (const p of plan) if (p.value !== undefined && culprits.has(p.param)) {
-      const spec = PARAMS[p.param];
-      p.readBack = Number(await set(spec.neutral || 0, p.param)); p.value = spec.neutral || 0;
+      p.readBack = Number(await set(p.from, p.param)); p.value = p.from;
       p.note = "backed off: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
     }
     after = await measure(); renders++;
@@ -223,4 +227,4 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
 
 const round = (n) => Math.round(Number(n) * 100) / 100;
 
-module.exports = { steer, planShot, STATISTICS, PARAMS, GUARD, MAX_RENDERS };
+module.exports = { steer, planShot, STATISTICS, PARAMS, GUARD, MAX_RENDERS, damage, allowance, unsafe };

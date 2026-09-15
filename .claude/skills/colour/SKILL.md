@@ -15,10 +15,12 @@ One call: `grade_sequence`. It does the whole job deterministically, on the work
 footage clip on V1, read once, the canon by rule: white balance (Temperature, only when the whole
 parade shares a cast) and each end's wheel pad for what is left, then Whites to the white point,
 Contrast only if flat or harsh, Blacks to the black point last, Exposure only for a face's skin.
-Knobs from the calibration model, about three confirm renders a clip. The read is decoded from the
-clip's own file (verified identical to Premiere's render on BRAW: parade to the decimal, median
-within 0.4), so only the confirms render; `confirm: false` makes it render-free at the price of
-taking the model's word. You decide nothing per shot; say the one-line plan, call it, then relay its
+Knobs from the calibration model, written as one set and confirmed once; then one correction (a
+rollback of what damaged the frame beyond what the source had, else a direction-aware pad nudge)
+and one confirm of that - two renders a clip. The read is decoded from the clip's own file
+(verified identical to Premiere's render on BRAW: parade to the decimal, median within 0.4), so
+only the confirms render; `confirm: false` makes it render-free at the price of taking the model's
+word, and it then withholds the balanced count. You decide nothing per shot; say the one-line plan, call it, then relay its
 table and the undo line (Discard copy removes all of it). Stop ends it after the current clip.
 
 Then taste, if the editor asks for it, on top of the balanced base: `grade_shot` for a shot,
@@ -97,11 +99,11 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 | Step | The tool | Status |
 |---|---|---|
 | white balance (whole-parade cast) | Temperature | calibrated; solved on the whites, capped at ±50 |
-| shadow cast (what is left) | Shadows wheel pad | calibrated 2x2 model, one write + one nudge |
+| shadow cast (what is left) | Shadows wheel pad | 2x2 model fitted at sat 0.15; pad ≤ 0.3, one direction-aware nudge |
 | highlight cast (what is left) | Highlights wheel pad | same |
 | white point | Whites | calibrated; clips past +50, an automatic pass stops there |
 | contrast | Contrast | calibrated; capped at ±60 |
-| black point | Blacks, last | calibrated for lifting; lowering uses the measured slope, capped at -40 |
+| black point | Blacks, last | a toe control (Adobe: "black clipping"); calibrated to -20 only, the rest is reported as a Shadows/curve job |
 | a face's skin luma | Exposure | calibrated (±2 stops, highlight-protected); used for nothing else |
 | skin hue / midtones | Midtones wheel | calibrated, not yet driven |
 | saturation | Saturation / Vibrance | writable, not calibrated |
