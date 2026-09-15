@@ -29,8 +29,8 @@ test("a low white point is Whites, never Exposure and never a subject brightness
   const g = goalsFor(withSubject(f, frame(7, 21, 51, [7, 7, 6], [57, 50, 51])), "subject");
   assert.deepEqual([...g].map((x) => x.param), ["whites", "highlights"], "Whites, then Highlights finishes what the +50 cap leaves");
   assert.ok([...g].every((x) => x.statistic !== "brightness"), "no invented subject band");
-  assert.equal(g[0].cap, 50, "Whites clips past +50: an automatic pass stops there");
-  assert.equal(g[1].cap, 60);
+  assert.equal(g[0].cap, undefined, "no fixed cap: the slider runs to 100, the model's ceiling check and the clip guard decide (22:50)");
+  assert.equal(g[1].cap, undefined);
   assert.equal(g[1].onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "Highlights is skipped once the white point is in the band");
   assert.equal(g[1].onlyIf(frame(5, 40, 80, [5, 5, 5], [80, 80, 80])), true);
 });
@@ -53,7 +53,7 @@ test("white balance is Temperature only for a cast the whole parade shares, capp
   const warmAll = frame(5, 40, 90, [12, 8, 4], [95, 90, 85]); // blacks warm -8, whites warm -10
   const t = temperatureFor(warmAll);
   assert.ok(t && t.value < 0, "warm both ends: cooler, got " + JSON.stringify(t && t.value));
-  assert.ok(Math.abs(t.value) <= TEMPERATURE_CAP);
+  assert.ok(Math.abs(t.value) <= 100);
   assert.ok(Math.abs(t.predicted.blue.p99 - t.predicted.red.p99) < 10, "the prediction moves the whites toward neutral");
   const split = frame(5, 40, 90, [12, 8, 4], [85, 90, 95]); // warm bottom under blue tops: two lights
   assert.equal(temperatureFor(split), null, "not a white balance: the pads' job");
@@ -193,7 +193,7 @@ test("the white balance has two axes: Temperature on blue-red, Tint on green-mag
   const greenTop = frame(5, 40, 90, [5, 5, 5], [86, 92, 86]); // whites green by 6, B-R neutral
   const t = temperatureFor(greenTop);
   assert.ok(t && t.value === 0 && t.tint !== null && t.tint > 0, "green whites: positive Tint (toward magenta), no temperature: " + JSON.stringify(t && { value: t.value, tint: t.tint }));
-  assert.ok(Math.abs(t.tint) <= TEMPERATURE_CAP);
+  assert.ok(Math.abs(t.tint) <= 100);
   assert.ok(Math.abs(t.predicted.green.p99 - (t.predicted.red.p99 + t.predicted.blue.p99) / 2) < 3, "the prediction lines the green up: " + t.predicted.green.p99);
   const both = frame(5, 40, 90, [12, 8, 4], [96, 92, 84]); // warm at both ends and green on top
   const b = temperatureFor(both);

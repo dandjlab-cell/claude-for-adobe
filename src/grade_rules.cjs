@@ -55,13 +55,19 @@ const FLOOR_MIN = 1.5;
 const channelFloor = (m) => { const f = frameOf(m); return Math.min(f.red.p1, f.green.p1, f.blue.p1); };
 // One axis of the white balance: the knob value that lines the whites up on `stat`, capped at half the
 // slider, scaled back until the predicted channel bottoms stay off the floor. null = no move.
+// No fixed cap either: the slider runs to 100; the move is scaled back while the predicted channel
+// bottoms would reach the floor or the predicted tops the ceiling (both sweeps clip past +50 on the
+// calibration frame, which is what the old +-50 stood for).
+const channelTop = (m) => { const f = frameOf(m); return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
+const TOP_MAX = 98.5;
 function balanceAxis(m, param, from, stat) {
   const s = solveKnob(m, param, from, stat, 0);
   if (!s || !s.helps) return null;
-  let value = Math.max(-TEMPERATURE_CAP, Math.min(TEMPERATURE_CAP, s.value)), predicted = predict(m, param, from, value), floored = false;
-  while (channelFloor(predicted) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); floored = true; }
+  let value = s.value, predicted = predict(m, param, from, value), held = null;
+  const unsafe = (p) => (channelFloor(p) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN) || (channelTop(p) > TOP_MAX && channelTop(m) <= TOP_MAX);
+  while (unsafe(predicted) && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); held = channelFloor(predicted) < FLOOR_MIN ? "floor" : "ceiling"; }
   if (Math.abs(value - from) <= 2) return null;
-  return { value, predicted, note: Math.abs(value) < Math.abs(s.value) - 1e-6 ? (floored ? " (held back: further would put a channel on the floor)" : " (capped at ±" + TEMPERATURE_CAP + ")") : "" };
+  return { value, predicted, note: held ? " (held back: further would put a channel on the " + held + ")" : "" };
 }
 // Temperature on blue-red, then Tint on green-magenta, solved on the state temperature predicts. Both
 // are gains on the top, both clip past +50 (their sweeps), both are the white balance. `tint` is null
@@ -172,12 +178,16 @@ function goalsFor(m, region = "frame") {
   //    an automatic pass caps it there; Highlights (a bright-areas control that never clipped in its
   //    sweep, +100 = p99 75.7 -> 87.8) finishes, capped at 60 - a shot that needs more is a taste
   //    call (grade_shot), not a balance.
+  // No fixed caps on Whites and Highlights (the owner, 22:50: "why are knobs reaching their cap?"): the
+  // sliders run to 100, the model predicts the frame's white point and planShot stops a move at the
+  // ceiling, and the guard backs off real clipping. A cap of 50 taken from one frame left C231 and
+  // C233 at a white point of 80-85 with nothing clipping.
   const wp = f.luma.p99;
   const whiteLow = (state) => frameOf(state).luma.p99 < ACCEPT.whiteMin;
   if (wp < ACCEPT.whiteMin) {
-    goals.push({ param: "whites", statistic: "whitePoint", target: 92, cap: 50, why: "white point " + round(wp) + " → 92" });
-    goals.push({ param: "highlights", statistic: "whitePoint", target: 92, cap: 60, onlyIf: whiteLow, why: "Highlights finishes what Whites leaves" });
-  } else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, cap: 50, why: "white point " + round(wp) + " → 93" });
+    goals.push({ param: "whites", statistic: "whitePoint", target: 92, why: "white point " + round(wp) + " → 92" });
+    goals.push({ param: "highlights", statistic: "whitePoint", target: 92, onlyIf: whiteLow, why: "Highlights finishes what Whites leaves" });
+  } else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, why: "white point " + round(wp) + " → 93" });
 
   // 3. Contrast, on the FRAME's spread, only when flat or harsh, never past +-60.
   const spread = STATISTICS.spread(f);

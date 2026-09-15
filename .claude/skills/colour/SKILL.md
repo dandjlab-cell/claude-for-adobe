@@ -100,10 +100,10 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 
 | Step | The tool | Status |
 |---|---|---|
-| white balance (whole-parade cast) | Temperature, then Tint | both calibrated; Temperature on the whites' blue-red, Tint on their green-magenta, each capped at ±50 and held back before a channel reaches the floor; rescaled from the real reading in the correction |
+| white balance (whole-parade cast) | Temperature, then Tint | both calibrated; Temperature on the whites' blue-red, Tint on their green-magenta, referenced on the brightest 1% (a specular reflects the light); no fixed cap - held back before a predicted channel reaches the floor or the ceiling; rescaled from the real reading in the correction |
 | shadow cast (what is left) | Shadows wheel pad | read on the darkest 3% of pixels as pixels (the parade's bottoms); 2x2 fitted at sat 0.15 on that statistic, within 0.8 of every sweep row; pad ≤ 0.3, one direction-aware nudge; held back before it puts a channel on the floor; a bottom more than 20 off neutral is a coloured surface and gets no pad |
 | highlight cast (what is left) | Highlights wheel pad | same, on the brightest 3% (the tops) |
-| white point | Whites, then Highlights | Whites clips past +50, an automatic pass stops there; Highlights (bright areas, never clipped in its sweep) finishes, capped at 60 |
+| white point | Whites, then Highlights | no fixed caps (the sliders run to 100); the model stops a move where the frame's white point would pass 95, and the guard backs a clipping move off to half |
 | contrast | Contrast | calibrated; capped at ±60 |
 | black point (lifted) | RGB Curves, Master bottom point | a toe pull pinned at the frame's median and at 0.8 (the 21:26 run's C187 curve bowed above the diagonal without the second pin: whites 91.4 → 93.7); not applied when the bottom band is more than 20 off neutral (a coloured surface, not a black): below the pin output = (in − x)·A/(A − x), above it nothing moves; solved exactly, capped at x 0.25; re-solved once from the confirm's real black point |
 | crushed blacks | Blacks | a toe control (Adobe: "black clipping"); lifts crushed blacks; lowering is not used automatically (12 → 1 on one clip, 12 → 10 on the next) |
