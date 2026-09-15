@@ -641,15 +641,16 @@ function measureRegion(src, region, reuse = null) {
   if (reuse && reuse.box && region !== "frame") return Object.assign(measureScopes(decodeRgb(src, reuse.box)), { region, box: reuse.box, reused: true, frame });
   // A region reading always carries the whole-frame numbers too (`frame`): clipping and crushing are
   // judged on the frame, because pushing a small subject up blows the room behind it.
+  const vision = region === "frame" ? null : visionAll(src);
   if (region === "face") {
     const box = biggestFaceBox(src);
-    if (!box) return Object.assign(frame, { region: "frame", fellBack: "no face found" });
-    return Object.assign(measureScopes(decodeRgb(src, box)), { region: "face", box, frame });
+    if (!box) return Object.assign(frame, { region: "frame", fellBack: "no face found", vision });
+    return Object.assign(measureScopes(decodeRgb(src, box)), { region: "face", box, frame, vision });
   }
   if (region === "subject") {
     const found = subjectMask(src);
-    if (!found) return Object.assign(frame, { region: "frame", fellBack: "no subject found" });
-    try { return Object.assign(measureScopes(maskRgb(decodeRgb(src), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box, frame }); }
+    if (!found) return Object.assign(frame, { region: "frame", fellBack: "no subject found", vision });
+    try { return Object.assign(measureScopes(maskRgb(decodeRgb(src), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box, frame, vision }); }
     finally { try { fs.rmSync(found.mask, { force: true }); } catch (_) {} }
   }
   return Object.assign(frame, { region: "frame" });
@@ -657,6 +658,17 @@ function measureRegion(src, region, reuse = null) {
 
 // Vision's foreground-instance mask for a rendered frame (bin/ocr --subject): the mask file, how much of
 // the frame it covers, and its extent. null when Vision sees no subject.
+// Everything Vision sees in a frame, one call: faces, hands, the subject's and the person's extent, text.
+// Attached to every region read as `vision`, so a row can say what was in the frame and the skin work can
+// key inside the hands (the owner, 2026-09-16 01:50: "why are we limiting Apple Vision at all").
+function visionAll(file) {
+  if (!fs.existsSync(OCR_BIN)) return null;
+  try {
+    const out = require("node:child_process").execFileSync(OCR_BIN, [file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const v = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
+    return v && !v.error ? v : null;
+  } catch (_) { return null; }
+}
 function subjectMask(file) {
   let entry = null;
   try {
@@ -945,6 +957,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       } else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
+    const sawV = m.vision ? [m.vision.faces && m.vision.faces.length ? m.vision.faces.length + " face" + (m.vision.faces.length > 1 ? "s" : "") : "", m.vision.hands && m.vision.hands.length ? m.vision.hands.length + " hand" + (m.vision.hands.length > 1 ? "s" : "") : ""].filter(Boolean).join(", ") : "";
     const f0 = m.frame || m;
     const baseline = gradeDamage(m); // what the shot arrived with: the guard for every write on this clip
     const before = "black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(m)) + " / whites " + round2(GRADE_STATS.whitesRB(m)) + " / spread " + round2(GRADE_STATS.spread(f0)) + (seen === "face" ? " / face " + round2(GRADE_STATS.brightness(m)) + " @" + round2(GRADE_STATS.skinHue(m)) + "°" : "") + (readFrom === "premiere" && graded ? " (read from Premiere: the clip already carries a balance)" : "");
@@ -981,7 +994,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         const v = gradeVerdict(state, state.region || seen), f1 = state.frame || state;
         balanced += confirm && v.balanced ? 1 : 0;
         const took = tookOf(); log("grade " + label + took);
-        lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + took);
+        lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + took);
       } catch (error) { lines.push(label + ": " + error.message); }
       continue;
     }
@@ -1019,7 +1032,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     if (!temp && !padMoves.length && !lev && !goals.length) {
       const v = gradeVerdict(m, seen);
       balanced += confirm && v.balanced ? 1 : 0;
-      lines.push(label + " [" + seen + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : ""));
+      lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : ""));
       continue;
     }
 
@@ -1187,7 +1200,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (_) {}
     const took = tookOf();
     log("grade " + label + took);
-    lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
+    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;

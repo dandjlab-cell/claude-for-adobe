@@ -220,6 +220,13 @@ func text(_ cg: CGImage, _ file: String) -> String {
   return "\"items\":[\(items.joined(separator: ","))]"
 }
 
+// "subject":{...} -> the object's own fields; "subject":null,"subjectError":... -> "error":...
+func flat(_ fragment: String, _ key: String) -> String {
+  if fragment.hasPrefix("\"\(key)\":{") { return String(fragment.dropFirst(key.count + 4).dropLast()) }
+  if let r = fragment.range(of: "\"\(key)Error\":") { return "\"error\":" + fragment[r.upperBound...] }
+  return "\"mask\":null,\"coverage\":0"
+}
+
 var args = Array(CommandLine.arguments.dropFirst())
 var mode = "all"
 if let f = args.first, f.hasPrefix("--") { mode = String(f.dropFirst(2)); args = Array(args.dropFirst()) }
@@ -232,8 +239,9 @@ for file in args {
   var parts: [String] = []
   switch mode {
   case "faces": parts.append(faces(cg, file))
-  case "subject": parts.append(subject(cg, file, writeMask: true))
-  case "person": parts.append(person(cg, file, writeMask: true))
+  // The mask modes keep their flat shape ({"file","mask","coverage","box"}): the panel's subject reads parse it.
+  case "subject": let f = subject(cg, file, writeMask: true); print("{\"file\":\(json(file)),\(flat(f, "subject"))}"); continue
+  case "person": let f = person(cg, file, writeMask: true); print("{\"file\":\(json(file)),\(flat(f, "person"))}"); continue
   case "hands": parts.append(hands(cg, file))
   case "text": parts.append(text(cg, file))
   default: parts = [text(cg, file), faces(cg, file), hands(cg, file), subject(cg, file, writeMask: false), person(cg, file, writeMask: false)]
