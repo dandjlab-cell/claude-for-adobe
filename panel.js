@@ -1002,7 +1002,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const afterLevels = lev ? lev.predicted : afterBalance;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...goals.needs);
-    if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
+    if (temp && temp.sceneColour) parts.push("no white balance (" + temp.why + ")");
+    else if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
     // The colourists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs

@@ -229,3 +229,11 @@ test("mixed light beyond the pads' reach: temperature splits the difference, the
   const after = t.predicted, w = after.blue.p99 - after.red.p99, b = after.blue.p1 - after.red.p1;
   assert.ok(Math.abs(w + b) < 6, "the two ends end on opposite sides of neutral, about equally: whites " + w.toFixed(1) + ", blacks " + b.toFixed(1));
 });
+
+test("a frame warm at both ends by more than 20 is the scene's colour: no white balance, said out loud", () => {
+  // C227 @4.44, 2026-09-16: an oak table and hands, whites -25 / blacks -27; -83 drained it.
+  const f = frame(20, 45, 68, [31, 15, 4], [80, 66, 55]);
+  const t = temperatureFor(f);
+  assert.ok(t && t.sceneColour && t.value === 0 && t.tint === null, JSON.stringify(t && { v: t.value, s: t.sceneColour }));
+  assert.match(t.why, /scene's own colour/);
+});

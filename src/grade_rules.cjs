@@ -86,10 +86,14 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   // zero), the pads take the opposite residuals, each now inside their reach.
   const mixed = Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) > PAD_REACH;
   const meanRB = (x) => (STATISTICS.whitesRB(x) + STATISTICS.blacksRB(x)) / 2;
-  if (Math.abs(whites) > NEUTRAL && !twoLights) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
+  // Both ends the same way by more than COLOURED is the scene, not the light (an oak table and hands,
+  // C227 @4.44, 2026-09-16 01:33: whites -25, blacks -27; a -83 temperature made the wood grey-beige
+  // and the skin pale). The C187 rule, applied to the white balance as well: left alone, said out loud.
+  const sceneColour = Math.sign(whites) === Math.sign(blacks) && Math.abs(whites) > COLOURED && Math.abs(blacks) > COLOURED;
+  if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColour) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
   const afterTemp = temp ? temp.predicted : m;
   const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
-  if (!temp && !tint) return null;
+  if (!temp && !tint) return sceneColour ? { value: from, tint: null, predicted: m, why: "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own colour, not the light - no white balance (neutralising it would drain the objects)", sceneColour: true } : null;
   const why = [];
   if (temp) why.push(mixed ? "mixed light (whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + ", blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(Math.abs(blacks)) + "): temperature " + round(temp.value) + " splits the difference, the pads take each end" + temp.note
     : "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
