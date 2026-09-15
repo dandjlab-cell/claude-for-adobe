@@ -17,6 +17,8 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resiz
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { goalsFor: gradeGoalsFor, verdict: gradeVerdict } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
+const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
 const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
@@ -546,7 +548,24 @@ async function previewFrames({ seconds = [], max_px = 512, solo_track, labels = 
 
 // Lumetri Scopes as numbers, from Premiere's own full-resolution render of the frame (grade included), plus one scope
 // picture. Added 2026-09-14 after the panel had no way to answer "is this exposed right" but eyeballing a thumbnail.
-async function scopesTool({ seconds = [], solo_track, region = "frame" } = {}) {
+async function scopesTool({ seconds = [], solo_track, region = "frame", source = false, track = 1 } = {}) {
+  if (source) {
+    const secs = [].concat(seconds).map(Number).filter((n) => n >= 0).slice(0, 3);
+    if (!secs.length) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds[] required", isError: true };
+    const card = addTool("scopes from SOURCE at " + secs.map((n) => n + "s").join(", "), "");
+    setStatus("Decoding " + secs.length + " source frame(s)…");
+    const texts = [];
+    for (const t of secs) {
+      try {
+        const m = await measureSourceAt(t, track, region);
+        texts.push(scopeReport(m, "timeline " + t + "s from the SOURCE FILE (" + m.clip + " at " + round2(m.sourceSeconds) + "s, " + m.decoded + ")" + (m.region !== "frame" ? " — " + m.region.toUpperCase() + " only" : "") + (m.fellBack ? " (" + m.fellBack + ")" : "")));
+      } catch (error) { texts.push("at " + t + "s: " + error.message); }
+    }
+    texts.push("Decoded from the camera file, NOT Premiere's render: no Lumetri, no sequence colour management. Compare with a plain scopes call at the same time once per footage type before trusting it for reads; never use it to confirm a grade.");
+    card.done(texts.join("\n"), true);
+    setStatus("Thinking…");
+    return { text: texts.join("\n") };
+  }
   const secs = [].concat(seconds).map(Number).filter((n) => n >= 0).slice(0, 3);
   if (!secs.length) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds[] required (up to 3 timeline positions)", isError: true };
   const base = path.join(os.tmpdir(), "claude-for-adobe-scopes-" + Date.now().toString(36));
@@ -649,6 +668,30 @@ function biggestFaceBox(file) {
   return { x0: f.box[0], y0: f.box[1], x1: f.box[2], y1: f.box[3] };
 }
 
+// The same measurement WITHOUT Premiere: the clip under `seconds` on the track is decoded from its own
+// source file (BRAW through the Blackmagic SDK, everything else through ffmpeg) at the matching source
+// frame. Nothing renders, nothing moves. These are the camera's pixels as the decoder interprets them,
+// not Premiere's render - no Lumetri, no sequence colour management - so it is the READ before a grade,
+// never the confirm after one, and whether it agrees with Premiere's own render is checked once per
+// footage type (scopes source:true against scopes at the same time) before it is trusted.
+async function measureSourceAt(seconds, track = 1, region = "frame") {
+  const snap = await readSnapshot();
+  if (snap.error) throw new Error(snap.error);
+  const c = snap.clips.find((k) => k.track === "V" + track && seconds >= k.start && seconds < k.end && k.mediaPath);
+  if (!c) throw new Error("no footage with a source file at " + seconds + "s on V" + track);
+  const at = toSourceSeconds(seconds, c.start, c.inPoint);
+  const f = sourceFrameRgb(c.mediaPath, at, { maxWidth: 0 });
+  const whole = measureScopes(f.rgb);
+  Object.assign(whole, { region: "frame", source: true, clip: c.name, sourceSeconds: at, decoded: f.width + "x" + f.height + (f.frame !== undefined ? " frame " + f.frame : "") });
+  if (region === "frame") return whole;
+  // Regions need Vision, which wants an image file: write the decoded frame out once.
+  const png = path.join(os.tmpdir(), "claude-for-adobe-source-" + Date.now().toString(36) + ".png");
+  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
+  if (w.status !== 0) return Object.assign(whole, { fellBack: "could not write the decoded frame for Vision" });
+  try { const m = measureRegion(png, region); return Object.assign(m, { source: true, clip: c.name, sourceSeconds: at, decoded: whole.decoded }); }
+  finally { try { fs.rmSync(png, { force: true }); } catch (_) {} }
+}
+
 const round2 = (n) => (isFinite(n) ? Math.round(Number(n) * 100) / 100 : n);
 
 // Drive one Lumetri parameter until the picture measures what was asked for. The loop, the statistics
@@ -734,7 +777,7 @@ async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame",
 }
 // The whole job, deterministically: every footage clip on the track, read once, goals from the rules,
 // knobs from the model, one confirm. The agent calls this once and reports; it decides nothing per shot.
-async function gradeSequenceTool({ track = 1, region = "subject", tolerance } = {}) {
+async function gradeSequenceTool({ track = 1, region = "subject", tolerance, read = "premiere", confirm = true } = {}) {
   const card = addTool("grade sequence V" + track + " (" + region + ")", "");
   setStatus("Grading sequence…");
   let tf; try { tf = await readTransforms(); } catch (error) { return err(card, error.message); }
@@ -747,7 +790,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance } = 
     const at = Math.round(((c.start + c.end) / 2) * 1000) / 1000;
     const label = c.name + " @" + at + "s";
     let m;
-    try { m = await measureFrameAt(at, { region }); renders++; } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
+    try {
+      if (read === "source") { m = await measureSourceAt(at, track, region); }
+      else { m = await measureFrameAt(at, { region }); renders++; }
+    } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
     const goals = gradeGoalsFor(m, seen);
     const before = "whites " + round2(GRADE_STATS.whitesRB(m)) + " / bright " + round2(GRADE_STATS.brightness(m)) + " / spread " + round2(GRADE_STATS.spread(m));
@@ -761,8 +807,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance } = 
     for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
     let r;
     try {
-      r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: () => measureFrameAt(at, { region }), goals, tolerance, measured: m });
-      renders += r.renders;
+      const confirmMeasure = confirm ? () => measureFrameAt(at, { region }) : async () => m; // no confirm: the model's word stands, unverified
+      r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: m });
+      renders += confirm ? r.renders - 1 : 0;
     } catch (error) { lines.push(label + ": " + error.message); continue; }
     touched++;
     const v = gradeVerdict(r.after, r.after.region || seen);
@@ -771,7 +818,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance } = 
     lines.push(label + " [" + seen + "] " + before + " → " + knobs + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + (r.unsafe ? " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off" : ""));
   }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
-  lines.unshift("Graded V" + track + " by " + region + ": " + clips.length + " clips, " + touched + " changed, " + balanced + " balanced, " + renders + " renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
+  lines.unshift("Graded V" + track + " by " + region + (read === "source" ? ", read from the source files" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + balanced + " balanced, " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
+  if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured. Run scopes on a couple of clips, or rerun with confirm on, before trusting 'balanced'.");
   lines.push("Every change is on the working copy; Discard copy removes all of it. Balanced means: whites aligned, subject in its brightness band, spread neither flat nor harsh, nothing clipped or crushed.");
   card.done(lines.join("\n"), true);
   setStatus("Thinking…");
@@ -2564,9 +2612,9 @@ const TOOL_DEFS = [
   { name: "analyze_audio", description: "For every audio clip overlapping a timeline range of the active sequence: levels per window, a waveform sparkline, and silence ranges, in timeline seconds. Read from Premiere's own peak-file waveform cache. Use to answer questions about audio, not before remove_silences (it measures on its own).",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
   { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `colour` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
-    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face", "subject"], description: "\"subject\" measures only Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" measures only the biggest face box (skin without hair and clothes, best for skin tone). Use one of them whenever the shot has a subject: the background drags whole-frame numbers away from it. Says so when nothing is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
+    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face", "subject"], description: "\"subject\" measures only Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" measures only the biggest face box (skin without hair and clothes, best for skin tone). Use one of them whenever the shot has a subject: the background drags whole-frame numbers away from it. Says so when nothing is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." }, source: { type: "boolean", description: "Decode the clip's own source file at the matching frame instead of rendering in Premiere: nothing renders, nothing moves. Camera pixels, not the grade - a read, never a confirm. Check it against a plain call once per footage type." }, track: { type: "number", description: "With source: which video track's clip, default 1." } }, required: ["seconds"] } },
   { name: "grade", description: "Load the `colour` skill before grading. Sets ONE Lumetri Color parameter on the clip at a timeline position so the scopes read what you asked, in one go: one render to read the scopes, the calibration model chooses the value, one render to confirm (one nudge from the two real readings if the confirm is off, then it stops and reports the residual). Never leaves the slider's range, never leaves the frame clipped or crushed. Give the number the statistic should reach, not the slider value. Defaults: temperature steers whitesRB (the parade's blue-minus-red whites; 0 = neutral whites), exposure steers brightness (luma median), contrast steers spread (luma p99-p1). For a whole shot use grade_shot instead: one render for all the knobs.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should read (0-100 scale; parade differences and cast are signed)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "blackPoint", "whitePoint", "spread", "whitesRB", "whitesG", "blacksRB", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by. \"subject\" = Vision's foreground subject; \"face\" = the biggest face box. Clipping is always judged on the whole frame." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
-  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically. Per clip: one render to read the scopes (subject region by default), goals by rule - white balance first (align the frame's parade whites with temperature), then exposure only if the subject is outside the band for what it is (face 53-66, anything else 40-55), then contrast only if the spread is flat or harsh - knobs from the calibration model, all written, one confirm render. Two renders a clip, about 1.5 s. Never leaves a slider's range; clipping is judged on the whole frame. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." } } } },
+  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically. Per clip: one render to read the scopes (subject region by default), goals by rule - white balance first (align the frame's parade whites with temperature), then exposure only if the subject is outside the band for what it is (face 53-66, anything else 40-55), then contrast only if the spread is flat or harsh - knobs from the calibration model, all written, one confirm render. Two renders a clip, about 1.5 s. Never leaves a slider's range; clipping is judged on the whole frame. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["premiere", "source"], description: "Where the first reading comes from. \"source\" decodes each clip's own file (no render, nothing moves); check it agrees with Premiere once per footage type first." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." } } } },
   { name: "grade_shot", description: "Grade a whole shot in ONE go: one render to read its scopes, the calibration model chooses every knob, all are written, one render confirms the lot. Two renders per shot. goals are applied in the order given - a colourist's order is white balance (temperature → whitesRB 0), then exposure (→ brightness), then contrast (→ spread). Each knob is solved on the state predicted after the ones before it. Reports, per knob: before, predicted, what the confirm actually read, the residual; and warns if the frame ended up clipped or crushed. Knobs without a calibration (anything but temperature, exposure, contrast) are skipped and named - set those with grade.",     inputSchema: { type: "object", properties: { goals: { type: "array", items: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "exposure", "contrast", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number" }, statistic: { type: "string" } }, required: ["parameter", "target"] }, description: "In the order to apply." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by; clipping is judged on the whole frame regardless." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit per knob, default 1." } }, required: ["goals", "seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },

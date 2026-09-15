@@ -51,9 +51,10 @@ test("reading past the end of the clip fails loudly", needsFfmpeg, () => {
   assert.throws(() => frameRgb(clip, 99), /no frame at 99s|frame decode failed/);
 });
 
-test("camera raw with no open decoder names the fallback instead of returning nothing", () => {
-  assert.throws(() => frameRgb("/x/A001_C001.braw", 1), /vendor SDK \(BRAW\) or a Premiere frame export/);
-  assert.throws(() => frameRgb("/x/A001_C001.R3D", 1), /vendor SDK/);
+test("camera raw without a decoder names the fallback instead of returning nothing", () => {
+  assert.throws(() => frameRgb("/x/A001_C001.R3D", 1), /vendor SDK or a Premiere frame export/);
+  // BRAW goes to the SDK helper; a file that does not exist fails there, loudly, never silently.
+  assert.throws(() => frameRgb("/x/A001_C001.braw", 1), /BRAW (info failed|decoder)/);
 });
 
 test("timeline seconds map into the source through the clip's in point", () => {
