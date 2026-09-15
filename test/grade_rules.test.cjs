@@ -200,3 +200,17 @@ test("the white balance has two axes: Temperature on blue-red, Tint on green-mag
   assert.ok(b && b.value < 0 && b.tint !== null && b.tint > 0, "both axes move: " + JSON.stringify(b && { value: b.value, tint: b.tint }));
   assert.match(b.why, /temperature .*; whites green by .*: tint/);
 });
+
+const { satCurveFor } = require("../src/grade_rules.cjs");
+
+test("the saturation roll-off skips a coloured end and a curve the clip already carries", () => {
+  const neutral = frame(5, 45, 90, [5, 5, 5], [90, 90, 90]);
+  const both = satCurveFor(neutral);
+  assert.ok(both && both.points.length === 9 && /shadows and whites/.test(both.why));
+  // C187 on the live runs: every dark band warm by 25-32 - the objects' colour, not to be drained.
+  const warmBottom = frame(20, 45, 90, [30, 12, 5], [90, 90, 90]);
+  const one = satCurveFor(warmBottom);
+  assert.ok(one && /whites only/.test(one.why), one && one.why);
+  assert.ok(one.points.every(([x, y]) => x > 0.2 || y === 0), "no shadow end: " + JSON.stringify(one.points));
+  assert.equal(satCurveFor(neutral, [[0, -0.2], [1, 0]]), null, "left as found");
+});

@@ -17,8 +17,8 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resiz
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
-const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels } = require(path.join(extensionRoot, "src", "curves.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
@@ -778,6 +778,17 @@ function curveWriter(at, track) {
   return { read: () => call(""), write: (curves) => call(formatCurves(curves)) };
 }
 
+// Luma vs Sat, the same door: read as a point list ([] = the empty curve "0:"), write the same shape.
+function satWriter(at, track) {
+  const call = async (value) => {
+    const raw = await host("lumetriQE", String(at), String(track), "Luma vs Sat", value);
+    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+    const [, text, clipName] = raw.split(COL);
+    return { points: parseSatCurve(text), text, clipName };
+  };
+  return { read: () => call(""), write: (points) => call(formatSatCurve(points)) };
+}
+
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
 // all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
 async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
@@ -858,13 +869,14 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Where the knobs are. A clip that already carries a balance (a temperature, a pad) is read from
     // Premiere's render, since its source pixels no longer describe it. A wheel read that fails means
     // the pads are left alone for this clip: writing "all neutral" over an unknown state is not a grade.
-    const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), tiw = lumetriWriter(at, track, "Tint", region), cw = curveWriter(at, track);
-    let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null;
+    const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), tiw = lumetriWriter(at, track, "Tint", region), cw = curveWriter(at, track), sw = satWriter(at, track);
+    let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null, currentSat = null, satErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
     try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
     try { tintFrom = await tiw.read(); if (!isFinite(tintFrom)) tintFrom = 0; } catch (_) { tintFrom = 0; }
     try { currentCurves = (await cw.read()).curves; } catch (error) { curvesErr = error.message; }
-    const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves));
+    try { currentSat = (await sw.read()).points; } catch (error) { satErr = error.message; }
+    const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves)) || !!(currentSat && currentSat.length);
 
     let m, readFrom = read;
     // auto: decode the clip's own file (parity with Premiere's render verified on BRAW, 2026-09-15:
@@ -1040,6 +1052,14 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
         } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }
       }
+      // 3. The colourists' cleanup, last, judged on the confirmed state: saturation rolled off in the
+      //    deepest shadows and the near-whites (Luma vs Sat, the QE text door, probed 2026-09-16), never
+      //    on a coloured end. One write, one confirm: the verdict reads what the editor will see.
+      if (!satErr) {
+        const sc = gradeSatCurveFor(state, currentSat);
+        if (sc) { await sw.write(sc.points); if (confirm) { state = await confirmMeasure(); renders++; } parts.push("sat roll-off: " + sc.why); }
+        else if (currentSat && currentSat.length) parts.push("Luma vs Sat left as found (" + currentSat.length + " points)");
+      } else needs.push("Luma vs Sat not read (" + satErr + "): no saturation roll-off");
     } catch (error) { lines.push(label + ": " + error.message); continue; }
 
     touched++;

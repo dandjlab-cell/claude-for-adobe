@@ -18,7 +18,9 @@ the Master curve's bottom point, then Whites to the white point with Highlights 
 only if flat or harsh, Blacks only to lift crushed blacks, Exposure only for a face's skin.
 Knobs from the calibration model, written as one set and confirmed once; then one correction (a
 rollback of what damaged the frame beyond what the source had, else a direction-aware pad nudge)
-and one confirm of that - two renders a clip. The read is decoded from the clip's own file
+and one confirm of that; last, the colourists' cleanup - saturation rolled off in the deepest
+shadows and the near-whites on Luma vs Sat (never on a coloured end, never over a curve the clip
+already carries) with one confirm of that. The read is decoded from the clip's own file
 (verified identical to Premiere's render on BRAW: parade to the decimal, median within 0.4), so
 only the confirms render; `confirm: false` makes it render-free at the price of taking the model's
 word, and it then withholds the balanced count. You decide nothing per shot; say the one-line plan, call it, then relay its

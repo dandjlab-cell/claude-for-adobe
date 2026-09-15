@@ -60,3 +60,33 @@ test("levels() composes onto an existing set of curves", () => {
   assert.deepEqual(c.Master, [[0.1, 0], [0.9, 1]]);
   assert.equal(c.Red.length, 3, "the other curves are kept");
 });
+
+// Luma vs Sat through the same QE door, probed live 2026-09-16 00:10-00:20 (clip 1, saturation median 28).
+const { parseSingle, formatSingle, spline, satRolloff } = require("../src/curves.cjs");
+
+test("a Hue Saturation curve reads as N:x,y,… with comma decimals and signed y, writes dotted, and 0: is empty", () => {
+  assert.deepEqual(parseSingle("0:"), []);
+  assert.deepEqual(parseSingle("2:0,00,-0,50,1,00,-0,50,"), [[0, -0.5], [1, -0.5]]);
+  assert.equal(formatSingle([[0, -0.5], [1, -0.5]]), "2:0.00,-0.50,1.00,-0.50,");
+  assert.equal(formatSingle([]), "0:");
+  const seven = "7:0,00,-0,50,0,15,0,00,0,30,0,00,0,50,0,00,0,70,0,00,0,85,0,00,1,00,-0,50,";
+  assert.equal(formatSingle(parseSingle(seven)), seven.replace(/(\d),(\d\d)/g, "$1.$2"), "round trip of the live read");
+});
+
+test("the spline reproduces the live bow: ends at -0.5 with zeros at 0.15 / 0.85 renders as a flat +0.5", () => {
+  const s = spline([[0, -0.5], [0.15, 0], [0.85, 0], [1, -0.5]]);
+  assert.ok(Math.abs(s(0.5) - 0.51) < 0.05, "peak " + s(0.5).toFixed(2));
+  assert.ok(Math.abs(s(0)) - 0.5 < 0.001 && Math.abs(s(1) + 0.5) < 0.001, "through the end points");
+  const flat = spline([[0, 0.5], [1, 0.5]]);
+  assert.equal(flat(0.3), 0.5);
+});
+
+test("the roll-off shape holds the middle within 0.04 and desaturates only the ends", () => {
+  const pts = satRolloff();
+  const s = spline(pts);
+  for (let x = 0.2; x <= 0.8; x += 0.01) assert.ok(Math.abs(s(x)) < 0.04, "bow at " + x.toFixed(2) + ": " + s(x).toFixed(3));
+  assert.ok(s(0) < -0.3 && s(1) < -0.3 && s(0.05) < -0.1 && s(0.95) < -0.1);
+  const shadowsOnly = spline(satRolloff({ whites: false }));
+  assert.ok(shadowsOnly(0) < -0.3 && Math.abs(shadowsOnly(1)) < 0.01 && Math.abs(shadowsOnly(0.95)) < 0.04);
+  assert.equal(satRolloff({ shadows: false, whites: false }), null);
+});

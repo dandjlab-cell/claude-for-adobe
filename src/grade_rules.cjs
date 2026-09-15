@@ -17,7 +17,7 @@
 const { STATISTICS } = require("./grade.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
 const { castAt, solveCast, predictPads, MAX_SAT } = require("./wheels.cjs");
-const { levels, blackInFor, predictLevels } = require("./curves.cjs");
+const { levels, blackInFor, predictLevels, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -231,6 +231,21 @@ function verdict(after, region = "frame") {
   return { balanced: !notes.length, notes };
 }
 
+// The colourists' cleanup, after the balance: saturation rolled off in the deepest shadows and the
+// near-whites on Luma vs Sat. Never on a coloured end (a parade end more than COLOURED off neutral is an
+// object's colour, and rolling its saturation off drains it); a clip already carrying a Luma vs Sat
+// curve keeps it. `current` is the curve as read (points). null = nothing to write.
+function satCurveFor(m, current = null) {
+  if (current && current.length) return null;
+  const f = frameOf(m);
+  const coloured = (wheel) => { const c = castAt(f, wheel); return Math.hypot(c[0], c[1]) > COLOURED; };
+  const shadows = !coloured("shadows"), whites = !coloured("highlights");
+  const points = satRolloff({ shadows, whites });
+  if (!points) return null;
+  const ends = shadows && whites ? "shadows and whites" : shadows ? "shadows only (whites are the scene's colour)" : "whites only (blacks are the scene's colour)";
+  return { points, why: ends + " rolled off by " + ROLLOFF_DEPTH + " (Luma vs Sat)" };
+}
+
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { temperatureFor, padsFor, levelsFor, goalsFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };

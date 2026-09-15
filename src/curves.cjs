@@ -108,4 +108,59 @@ function predictLevels(m, blackIn = 0, whiteIn = 1, anchor = null) {
   return out;
 }
 
-module.exports = { NAMES, IDENTITY, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels };
+// Lumetri's Hue Saturation Curves ("Luma vs Sat", "Hue vs Sat", "Hue vs Hue", "Hue vs Luma", "Sat vs
+// Sat") are single curves through the same QE text door: "N:x,y,x,y,…," with x the position 0..1 and y a
+// SIGNED offset, 0 neutral; "0:" is the empty curve (no points). Premiere draws a cubic spline through
+// the points, so a sparse shape bows: ends at -0.5 with two zeros at 0.15 / 0.85 rendered as a flat
+// +0.5 (the natural spline through them peaks at +0.51). Probed live 2026-09-16 00:10-00:20 on the
+// sandbox (Luma vs Sat: flat ±0.5 moved the saturation median 28 -> 45 / 12; seven pinned points held
+// the median at 28 while the ends desaturated; "0:" restored the baseline every time).
+function parseSingle(text) {
+  const m = /^\s*(\d+)\s*:\s*(.*)$/.exec(String(text || ""));
+  if (!m) return [];
+  const body = m[2].replace(/,\s*$/, "");
+  if (!body) return [];
+  let nums;
+  if (body.indexOf(".") >= 0) nums = body.split(",").map(Number);
+  else { const t = body.split(","); nums = []; for (let i = 0; i + 1 < t.length; i += 2) nums.push(Number(t[i] + "." + t[i + 1])); }
+  const pts = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) if (isFinite(nums[i]) && isFinite(nums[i + 1])) pts.push([nums[i], nums[i + 1]]);
+  return pts;
+}
+function formatSingle(points) {
+  const pts = points || [];
+  if (!pts.length) return "0:";
+  return pts.length + ":" + pts.map(([x, y]) => Math.max(0, Math.min(1, x)).toFixed(2) + "," + Math.max(-1, Math.min(1, y)).toFixed(2) + ",").join("");
+}
+
+// A natural cubic spline through the points: Premiere's own curve is not published, but this one
+// reproduced the live bow (+0.51 for the sparse shape; the rendered saturation matched the flat +0.5).
+function spline(points) {
+  const p = points.slice().sort((a, b) => a[0] - b[0]), n = p.length;
+  if (n < 2) return () => (n ? p[0][1] : 0);
+  const h = [], a = [], l = [1], mu = [0], z = [0], c = new Array(n).fill(0), b = [], d = [];
+  for (let i = 0; i < n - 1; i++) h.push(p[i + 1][0] - p[i][0]);
+  for (let i = 1; i < n - 1; i++) a[i] = 3 / h[i] * (p[i + 1][1] - p[i][1]) - 3 / h[i - 1] * (p[i][1] - p[i - 1][1]);
+  for (let i = 1; i < n - 1; i++) { l[i] = 2 * (p[i + 1][0] - p[i - 1][0]) - h[i - 1] * mu[i - 1]; mu[i] = h[i] / l[i]; z[i] = (a[i] - h[i - 1] * z[i - 1]) / l[i]; }
+  for (let j = n - 2; j >= 0; j--) { c[j] = z[j] - mu[j] * c[j + 1]; b[j] = (p[j + 1][1] - p[j][1]) / h[j] - h[j] * (c[j + 1] + 2 * c[j]) / 3; d[j] = (c[j + 1] - c[j]) / (3 * h[j]); }
+  return (x) => {
+    let j = 0;
+    while (j < n - 2 && x > p[j + 1][0]) j++;
+    const t = Math.max(0, Math.min(x, p[n - 1][0])) - p[j][0];
+    return p[j][1] + b[j] * t + c[j] * t * t + d[j] * t * t * t;
+  };
+}
+
+// The colourists' cleanup on Luma vs Sat: saturation rolled off in the deepest shadows and the near-
+// whites, the middle pinned so the spline holds it (Frame.io, the Resolve manual, a Premiere user's
+// default preset). Each end is its own half so a coloured end can be left alone.
+// ponytail: one depth for both ends, from the ±0.5 sweep; per-end depth if a frame ever asks for it.
+const ROLLOFF_DEPTH = 0.35;
+function satRolloff({ shadows = true, whites = true, depth = ROLLOFF_DEPTH } = {}) {
+  if (!shadows && !whites) return null;
+  const low = shadows ? [[0, -depth], [0.06, -0.43 * depth], [0.12, 0]] : [[0, 0], [0.12, 0]];
+  const high = whites ? [[0.88, 0], [0.94, -0.43 * depth], [1, -depth]] : [[0.88, 0], [1, 0]];
+  return [...low, [0.25, 0], [0.5, 0], [0.75, 0], ...high].map(([x, y]) => [x, Math.round(y * 100) / 100]);
+}
+
+module.exports = { NAMES, IDENTITY, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
