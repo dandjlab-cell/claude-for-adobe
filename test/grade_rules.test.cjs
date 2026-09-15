@@ -71,7 +71,7 @@ test("a lifted black point is the curve's job: the Master bottom point, solved e
   assert.ok(Math.abs(lev.predicted.luma.p1 - 4) < 0.01, "and the prediction lands on 4");
   assert.equal(lev.predicted.luma.p50, 40, "the median does not move: the curve is a toe pull, not a stretch");
   assert.equal(lev.predicted.luma.p99, 90);
-  assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [0.4, 0.4], [0.8, 0.8], [1, 1]], "four points: bottom, the median pin, a pin at 0.8, the top corner - the colourists' three-to-four");
+  assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [0.4, 0.4], [1, 1]], "three points: bottom, the median pin, the top corner");
   const far = levelsFor(frame(40, 60, 90, [40, 40, 40], [90, 90, 90]));
   assert.equal(far.blackIn, LEVELS_CAP, "a black point of 40 is a picture with no black: the automatic pass stops at the cap");
   assert.equal(levelsFor(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), null, "already at the black point: no curve");

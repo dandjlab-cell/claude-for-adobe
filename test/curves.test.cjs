@@ -49,7 +49,7 @@ test("an anchored bottom point is a toe pull: the median and the top stay, the b
   assert.equal(p.luma.p50, 41.6, "the median is pinned");
   assert.equal(p.luma.p99, 75.7, "the top is untouched");
   assert.equal(p.red.p99, 74.1);
-  assert.equal(format(levels(x, 1, null, a)).split(";")[0], "Master:4:0.13,0.00,0.42,0.42,0.80,0.80,1.00,1.00,");
+  assert.equal(format(levels(x, 1, null, a)).split(";")[0], "Master:3:0.13,0.00,0.42,0.42,1.00,1.00,");
   assert.deepEqual(levels(0.1, 1, null, 0.12).Master, [[0.1, 0], [1, 1]], "an anchor too close to the bottom point is dropped");
 });
 
