@@ -263,6 +263,17 @@
     </section>
     <footer id="version-row" class="mono muted">v… <button id="check-updates" type="button" class="utility">Check for updates</button> <button id="dump-surface" type="button" class="utility" hidden title="Dev: write every method, property, effect, transition and preset name this Premiere build exposes, plus your keyboard shortcut files, to a report on disk. Read-only.">Dump Premiere surface</button> <button id="probe-leads" type="button" class="utility" hidden title="Dev, read-only: Media Intelligence preferences (where the visual-search index lives) and the QE multicam properties of every clip on the active sequence.">Probe leads</button></footer>
   </main>
+  <script>
+    // Premiere eats the editing shortcuts before the panel sees them: Cmd/Ctrl+V in this chat box ran
+    // Premiere's own Paste on the timeline instead of pasting text. A CEP extension has to ASK for the
+    // keys it wants; this is that ask. Runs before panel.js so the very first keystroke is covered.
+    // Keys are the usual text-editing set only - shortcuts we do not name still belong to Premiere.
+    try {
+      window.__adobe_cep__.registerKeyEventsInterest(JSON.stringify(
+        [86, 67, 88, 65, 90].flatMap((keyCode) => [{ keyCode, metaKey: true }, { keyCode, ctrlKey: true }]) // V C X A Z
+      ));
+    } catch (e) { /* older host or no CEP: the panel still works, paste just stays host-owned */ }
+  </script>
   <script src="panel.js"></script>
 </body>
 </html>
