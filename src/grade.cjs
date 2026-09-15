@@ -221,9 +221,12 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     const culprits = new Set();
     if (harm.clipped > allow.clipped) for (const k of ["exposure", "contrast", "highlights", "whites"]) culprits.add(k);
     if (harm.crushed > allow.crushed) for (const k of ["exposure", "contrast", "shadows", "blacks"]) culprits.add(k);
+    // Half the move, not none of it: a white point that clipped 0.6% at +50 keeps most of its gain at
+    // +25 (the 21:37 run left four white points at 82 by going back to zero). Still one render.
     for (const p of plan) if (p.value !== undefined && culprits.has(p.param)) {
-      p.readBack = Number(await set(p.from, p.param)); p.value = p.from;
-      p.note = "backed off: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
+      const half = round(p.from + (p.value - p.from) / 2);
+      p.readBack = Number(await set(half, p.param)); p.value = half;
+      p.note = "backed off to half: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
     }
     after = await measure(); renders++;
     judge(after); harm = damage(after); backedOff = true;

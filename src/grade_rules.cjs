@@ -16,7 +16,7 @@
 "use strict";
 const { STATISTICS } = require("./grade.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
-const { castAt, solveCast, MAX_SAT } = require("./wheels.cjs");
+const { castAt, solveCast, predictPads, MAX_SAT } = require("./wheels.cjs");
 const { levels, blackInFor, predictLevels } = require("./curves.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
@@ -48,6 +48,11 @@ const frameOf = (m) => m.frame || m;
 // blue, strongest at the top, so it is solved to line the WHITES up and only when the blacks lean the
 // same way (a warm bottom under blue tops is two lights, not a white balance - that is the pads' job).
 // Returns null when temperature is not the tool.
+// A colour move that puts a channel on the floor has crushed it: a -50 temperature on warm shadows takes
+// red below zero (5.7% of C227's pixels on the 21:37 run). The model predicts the channel bottoms, so a
+// move is scaled back until they stay off the floor.
+const FLOOR_MIN = 1.5;
+const channelFloor = (m) => { const f = frameOf(m); return Math.min(f.red.p1, f.green.p1, f.blue.p1); };
 function temperatureFor(m, from = 0) {
   const f = frameOf(m);
   const whites = STATISTICS.whitesRB(f), blacks = STATISTICS.blacksRB(f);
@@ -58,10 +63,12 @@ function temperatureFor(m, from = 0) {
   if (Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) <= PAD_REACH) return null;
   const s = solveKnob(m, "temperature", from, STATISTICS.whitesRB, 0);
   if (!s || !s.helps) return null;
-  const value = Math.max(-TEMPERATURE_CAP, Math.min(TEMPERATURE_CAP, s.value));
+  let value = Math.max(-TEMPERATURE_CAP, Math.min(TEMPERATURE_CAP, s.value)), predicted = predict(m, "temperature", from, value), floored = false;
+  while (channelFloor(predicted) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, "temperature", from, value); floored = true; }
+  if (Math.abs(value - from) <= 2) return null;
   return {
-    value, predicted: predict(m, "temperature", from, value),
-    why: "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): white balance " + round(value) + (Math.abs(value) < Math.abs(s.value) - 1e-6 ? " (capped at ±" + TEMPERATURE_CAP + ")" : ""),
+    value, predicted,
+    why: "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): white balance " + round(value) + (Math.abs(value) < Math.abs(s.value) - 1e-6 ? (floored ? " (held back: further would put a channel on the floor)" : " (capped at ±" + TEMPERATURE_CAP + ")") : ""),
   };
 }
 
@@ -74,14 +81,23 @@ function padsFor(m, current = null) {
   for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
     const cast = castAt(f, wheel);
     if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
+    // A parade end this far off neutral after the white balance is an object's colour, not the light:
+    // a pad can only part-neutralise it and tints whatever the curve crushed under it (C187, 21:37: a
+    // 0.45 cyan pad on a red-orange surface, a flat blue floor in the parade). No pad; said out loud.
+    if (Math.hypot(cast[0], cast[1]) > COLOURED) { needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + ": at this size the " + label + " are a coloured surface, not a lit black or white - left alone, neutralising it would drain the object"); continue; }
     const r = solveCast(wheel, [-cast[0], -cast[1]]);
     if (!r) continue;
     const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
     const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
     const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
     w.sat = Math.min(MAX_SAT, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
+    // A Shadows pad that pulls red out of warm shadows can put red on the floor: scale it back until the
+    // predicted channel bottoms stay off it.
+    let floored = false;
+    while (wheel === "shadows" && w.sat > 0.02 && channelFloor(m) >= FLOOR_MIN && channelFloor(predictPads(m, { [wheel]: w }, now)) < FLOOR_MIN) { w.sat *= 0.8; floored = true; }
+    if (floored) w.why.push("held back: further would put a channel on the floor");
     w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped at " + MAX_SAT + ")" : ""));
-    if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased" + (Math.hypot(cast[0], cast[1]) > COLOURED ? " - at this size the " + label + " are a coloured surface, not a lit black or white; neutralising it would drain the object" : ""));
+    if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased");
     wheels[wheel] = w;
   }
   return { wheels, needs };
@@ -94,7 +110,10 @@ function padsFor(m, current = null) {
 const LEVELS_CAP = 0.25;
 // The curve is pinned at the frame's median (kept inside 0.3..0.6) and at 0.8, so the move is a toe
 // pull, not a global stretch: the midtones and the top stay where they are.
-function levelsFor(m, current = null) {
+// `asRead` is the frame as read, before any predicted move: the coloured-surface test must see the
+// footage, not the state after a predicted pad has been subtracted from it (21:37: C227 and C187 got a
+// curve because the predicted-after-pads cast was under 20).
+function levelsFor(m, current = null, asRead = null) {
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
@@ -102,7 +121,7 @@ function levelsFor(m, current = null) {
   // black to be put at 4: a master curve cannot lower a luma that comes from one channel and only
   // crushes the other two (C187, 21:26 - green and blue on the floor, red untouched, then the pad
   // tinted the floor blue). Left alone; padsFor says why.
-  const cast = castAt(f, "shadows");
+  const cast = castAt(frameOf(asRead || m), "shadows");
   if (Math.hypot(cast[0], cast[1]) > COLOURED) return null;
   const target = BLACK_POINT[1] - 1;
   const anchor = Math.max(0.3, Math.min(0.6, f.luma.p50 / 100));

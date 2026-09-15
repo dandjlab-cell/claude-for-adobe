@@ -891,7 +891,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const afterBalance = padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
     // The black point: the Master curve's bottom point, a levels move that lands where it is asked
     // (src/curves.cjs); the sliders are then solved on the state it predicts.
-    const lev = curvesErr ? null : gradeLevelsFor(afterBalance, currentCurves);
+    const lev = curvesErr ? null : gradeLevelsFor(afterBalance, currentCurves, m);
     if (curvesErr && (afterBalance.frame || afterBalance).luma.p1 > GRADE_ACCEPT.blackMax) needs.push("curves not read (" + curvesErr + "): the black point is left where it is");
     const afterLevels = lev ? lev.predicted : afterBalance;
     const goals = gradeGoalsFor(afterLevels, seen);
@@ -958,7 +958,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (lev) {
           const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
           const p1Before = (afterBalance.frame || afterBalance).luma.p1, predictedMove = p1Before - lev.predicted.luma.p1, actualMove = p1Before - p1;
-          if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.5) {
+          if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.25) { // 21:37: a 39% response re-solved to 4.3 the run before; 25% is the line between 'slow' and 'not a black'
             // The black point did not follow the curve: the darkest pixels are not a black (a coloured
             // surface keeps its luma in one channel while the curve crushes the other two). Pushing
             // further only crushes more - C187 on the 21:26 run went to the cap for nothing.

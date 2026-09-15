@@ -202,10 +202,11 @@ test("a whole-shot plan backs the brightness knobs off when the confirm shows th
   };
   const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "exposure", target: 45 }] });
   assert.equal(r.backedOff, true);
-  assert.equal(r.plan[0].value, 0, "exposure went back to neutral");
-  assert.match(r.plan[0].note, /backed off/);
+  const chosen = writes[0];
+  assert.ok(Math.abs(r.plan[0].value - chosen / 2) < 0.01, "exposure went back to HALF its move, not to zero: " + r.plan[0].value + " of " + chosen);
+  assert.match(r.plan[0].note, /backed off to half/);
   assert.equal(r.renders, 3, "safety spent the third render");
-  assert.equal(writes[writes.length - 1], 0, "the last thing written is the safe value");
+  assert.ok(Math.abs(writes[writes.length - 1] - chosen / 2) < 0.01, "the last thing written is the halved value");
 });
 
 test("damage the shot arrived with is allowed to stay: a source clipping 1.7% is not backed off for clipping 1.7%", async () => {
@@ -224,7 +225,7 @@ test("only the knobs that push the offending end are backed off: a crushed botto
   const host = { set: base.set, measure: () => Object.assign(base.measure(), { crushed: ++n > 1 ? 5 : 0 }) };
   const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "whites", target: 92 }, { param: "blacks", value: -30, target: 4 }] });
   assert.equal(r.backedOff, true);
-  assert.equal(r.plan.find((p) => p.param === "blacks").value, 0, "Blacks crushed it: back to neutral");
+  assert.equal(r.plan.find((p) => p.param === "blacks").value, -15, "Blacks crushed it: back to half its move");
   assert.notEqual(r.plan.find((p) => p.param === "whites").value, 0, "Whites did not: left where it was");
 });
 

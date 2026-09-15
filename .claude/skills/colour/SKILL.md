@@ -101,7 +101,7 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 | Step | The tool | Status |
 |---|---|---|
 | white balance (whole-parade cast) | Temperature | calibrated; solved on the whites, capped at ±50 |
-| shadow cast (what is left) | Shadows wheel pad | read on the darkest 3% of pixels as pixels (the parade's bottoms); 2x2 fitted at sat 0.15 on that statistic, within 0.8 of every sweep row; pad ≤ 0.3, one direction-aware nudge |
+| shadow cast (what is left) | Shadows wheel pad | read on the darkest 3% of pixels as pixels (the parade's bottoms); 2x2 fitted at sat 0.15 on that statistic, within 0.8 of every sweep row; pad ≤ 0.3, one direction-aware nudge; held back before it puts a channel on the floor; a bottom more than 20 off neutral is a coloured surface and gets no pad |
 | highlight cast (what is left) | Highlights wheel pad | same, on the brightest 3% (the tops) |
 | white point | Whites, then Highlights | Whites clips past +50, an automatic pass stops there; Highlights (bright areas, never clipped in its sweep) finishes, capped at 60 |
 | contrast | Contrast | calibrated; capped at ±60 |
