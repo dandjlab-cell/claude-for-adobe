@@ -1,6 +1,6 @@
 ---
 name: colour
-description: Grading footage in Premiere by measurement - what the numbers mean, what order to work in, and what "correct" looks like as a number. Use whenever the job is exposure, contrast, white balance, matching two shots, or "make this look better".
+description: Use when the editor asks to grade, colour correct, color correct, fix the exposure, contrast or white balance, match shots, or make footage look better, cinematic or consistent - including "grade this video". The procedure, which tool at each step, what the numbers mean, and what correct is as a number.
 ---
 
 # Colour
