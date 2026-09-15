@@ -982,12 +982,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           // a 0.4 change to temperature. A move under 1 point is not a slope to divide by.
           const scale1 = (before, after) => { const d = after - before; if (Math.abs(d) < 1 || Math.abs(after) <= 1.5) return null; const t = -before / d; return t > 0 && t < 3 ? t : null; };
           const tops = (x) => { const f = x.frame || x; return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
+          // Relative, like the floor check: a frame whose top already sits at 99 (Whites at +100) may still
+          // be rescaled as long as the move does not push the tops higher (C193 at 15.4 s, 23:00: warm by
+          // 5.9 left uncorrected because the absolute check saw "past the ceiling" before any move).
+          const topLimit = Math.max(98.5, tops(state) + 0.5);
           const tT = tempWrote ? scale1(c0[0], c1[0]) : null;
           if (tT !== null) {
             // Same ceiling check as the initial white balance: a rescale after a whites backoff took C227
             // to -83 and clipped 1% (22:55). Scaled back while the predicted tops would pass the ceiling.
             let v = tempBase + tT * (tempNow - tempBase);
-            while (Math.abs(v - tempNow) > 1 && tops(gradePredict(state, "temperature", tempNow, v)) > 98.5) v = tempNow + (v - tempNow) * 0.8;
+            while (Math.abs(v - tempNow) > 1 && tops(gradePredict(state, "temperature", tempNow, v)) > topLimit) v = tempNow + (v - tempNow) * 0.8;
             v = Math.round(v * 100) / 100;
             if (Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
           }
@@ -1001,7 +1005,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
               // The correction's write takes the last render, so it checks the predicted ceiling itself:
               // Tint clips red or blue past +50 (its sweep), and C209 clipped 1.1% on the 22:17 run.
               let tv = Math.max(-100, Math.min(100, st.value));
-              while (Math.abs(tv - tintNow) > 1 && tops(gradePredict(state, "tint", tintNow, tv)) > 98.5) tv = tintNow + (tv - tintNow) * 0.8;
+              while (Math.abs(tv - tintNow) > 1 && tops(gradePredict(state, "tint", tintNow, tv)) > topLimit) tv = tintNow + (tv - tintNow) * 0.8;
               tv = Math.round(tv * 100) / 100;
               if (Math.abs(tv - tintNow) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
             }
