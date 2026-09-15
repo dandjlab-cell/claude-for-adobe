@@ -913,6 +913,15 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
+    // The colourists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
+    // Sat, the QE text door, probed 2026-09-16), never on a coloured end, judged on the frame as read.
+    // Written with the first batch, not after the corrections: the 00:27 run wrote it last and the
+    // blacks cast moved 1-3 points on the final read that nothing then corrected (C200 and C228 lost
+    // their tick). In the batch, the corrections rescale from a reading that already carries it.
+    const sat = satErr ? null : gradeSatCurveFor(m, currentSat);
+    if (satErr) needs.push("Luma vs Sat not read (" + satErr + "): no saturation roll-off");
+    else if (sat) parts.push("sat roll-off: " + sat.why);
+    else if (currentSat && currentSat.length) parts.push("Luma vs Sat left as found (" + currentSat.length + " points)");
 
     if (!temp && !padMoves.length && !lev && !goals.length) {
       const v = gradeVerdict(m, seen);
@@ -931,6 +940,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
       if (padMoves.length) await ww.write(applied);
       if (lev) await cw.write(lev.curves);
+      if (sat) await sw.write(sat.points);
       if (goals.length) {
         const writers = {};
         for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
@@ -1052,14 +1062,6 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
         } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }
       }
-      // 3. The colourists' cleanup, last, judged on the confirmed state: saturation rolled off in the
-      //    deepest shadows and the near-whites (Luma vs Sat, the QE text door, probed 2026-09-16), never
-      //    on a coloured end. One write, one confirm: the verdict reads what the editor will see.
-      if (!satErr) {
-        const sc = gradeSatCurveFor(state, currentSat);
-        if (sc) { await sw.write(sc.points); if (confirm) { state = await confirmMeasure(); renders++; } parts.push("sat roll-off: " + sc.why); }
-        else if (currentSat && currentSat.length) parts.push("Luma vs Sat left as found (" + currentSat.length + " points)");
-      } else needs.push("Luma vs Sat not read (" + satErr + "): no saturation roll-off");
     } catch (error) { lines.push(label + ": " + error.message); continue; }
 
     touched++;
