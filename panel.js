@@ -926,14 +926,19 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       } else if (confirm) { state = await confirmMeasure(); renders++; }
       else state = afterLevels;
       // Damage the balance writes caused (no sliders, or the sliders' rollback was not enough): the
-      // balance goes back to where it was, confirmed once.
+      // likely culprit goes back first - a crush is the curve's (its bottom point clamps the tail),
+      // a clip is the white balance's and the pads' - confirmed once. Not the whole balance: the
+      // 21:26 run threw away a correct temperature over a curve that crushed 2.8%.
       if (confirm && gradeUnsafe(gradeDamage(state), gradeAllowance(baseline))) {
-        const h = gradeDamage(state);
-        if (temp) await tw.set(tempFrom);
-        if (padMoves.length) { applied = Object.assign({}, currentWheels || {}); await ww.write(applied); }
-        if (lev) await cw.write(currentCurves || {});
+        const h = gradeDamage(state), allow = gradeAllowance(baseline), undone = [];
+        if (lev && h.crushed > allow.crushed) { await cw.write(currentCurves || {}); undone.push("curve"); }
+        if (h.clipped > allow.clipped || !undone.length) {
+          if (temp) { await tw.set(tempFrom); undone.push("temperature"); }
+          if (padMoves.length) { applied = Object.assign({}, currentWheels || {}); await ww.write(applied); undone.push("pads"); }
+          if (lev && undone.indexOf("curve") < 0) { await cw.write(currentCurves || {}); undone.push("curve"); }
+        }
         state = await confirmMeasure(); renders++; corrected = true;
-        parts.push("balance restored: the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "% (source " + round2(baseline.clipped) + "% / " + round2(baseline.crushed) + "%)");
+        parts.push("restored " + undone.join(" + ") + ": the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "% (source " + round2(baseline.clipped) + "% / " + round2(baseline.crushed) + "%)");
       }
       // The one correction, if it is still free, from the real reading: each pad rescaled from what
       // it actually did, and the curve's bottom point re-solved from the black point it actually

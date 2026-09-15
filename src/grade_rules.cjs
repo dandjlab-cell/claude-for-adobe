@@ -34,6 +34,7 @@ const SPREAD = { flat: 55, harsh: 93, target: 70 };
 const NEUTRAL = 1.5;             // parade ends within this of each other are neutral
 const TEMPERATURE_CAP = 50;      // a balance is not a look: half the slider
 const PAD_REACH = 12;            // about what a pad at its cap (0.3) cancels, from the 21:00 sweep (6.5 per 0.15)
+const COLOURED = 20;             // a parade end this far off neutral is an object's colour (a red-orange surface in shadow), not the light
 // Blacks is a toe control ("black clipping", Adobe), not a lift: the sweep's p1 sits at 0 from -20 down,
 // so nothing below -20 is calibrated and nothing above the toe is reached by it. The -20..0 slope (0.41
 // per unit) is a lower bound taken on a clipped sample; an automatic pass never goes past -20 and says
@@ -80,7 +81,7 @@ function padsFor(m, current = null) {
     const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
     w.sat = Math.min(MAX_SAT, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
     w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped at " + MAX_SAT + ")" : ""));
-    if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased");
+    if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased" + (Math.hypot(cast[0], cast[1]) > COLOURED ? " - at this size the " + label + " are a coloured surface, not a lit black or white; neutralising it would drain the object" : ""));
     wheels[wheel] = w;
   }
   return { wheels, needs };

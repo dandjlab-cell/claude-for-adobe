@@ -147,7 +147,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
   const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, currentCurves)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
   assert.ok(iPads > 0 && iPads < iLev && iLev < iGoals, "balance on the frame as read, the curve's black point on the balanced state, the sliders on the state after both");
-  assert.match(seqTool, /if \(lev\) await cw\.write\(currentCurves \|\| \{\}\);/, "a rollback of the balance restores the curve too");
+  assert.match(seqTool, /if \(lev && h\.crushed > allow\.crushed\) \{ await cw\.write\(currentCurves \|\| \{\}\);/, "a crush rolls back the curve first, not the whole balance");
+  assert.match(seqTool, /if \(temp\) \{ await tw\.set\(tempFrom\); undone\.push\("temperature"\); \}/, "a clip rolls back the white balance and the pads");
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");
