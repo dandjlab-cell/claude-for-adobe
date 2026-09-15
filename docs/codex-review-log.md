@@ -239,6 +239,41 @@ Independent read-only Terra review APPROVED exact selected-source/bin/timeline s
 
 Regression covers exact names versus prefix collisions, unrelated active timelines and historical selections, selected bins, stale timeline transcripts, explicit all:true, selection errors, and no selection/timeline. Live dev-panel read-only call returned one selected source, no matched analysis and two guidance titles; unrelated edits/chats/renders were absent and the model did not expand scope. Current Editorial remained unchanged. No release.
 
+
+## 2026-09-10 — Cut silences native rebuild button
+
+Independent reviewer: fresh Terra agent `rebuild_review` (read-only), worker separate from root and reviewer. Scope: `host/premiere.jsx`, `panel.js`, `src/silence-rebuild.cjs`, and their regression tests. Verdict: **APPROVED**, with live verification subsequently passed.
+
+Findings resolved: caption tracks cannot be discovered through CEP, so the button requires explicit no-caption acknowledgement before detection/mutation; inserted V1/A1 counts are exact; mapping rows must be nonempty, finite, contiguous and duration-consistent; pending source marks survive failed restoration and cancellation retries recovery before clearing state. Regressions cover cancelled acknowledgement, failed/stalled host responses, partial word mapping, source/destination guards, extra insertions, bounded batches, and restore failure recovery.
+
+Full suite: 190 total / 189 pass / 1 external Adobe schema skip; panel syntax and whitespace checks passed. Actual dev-panel button run: 144.310833s source to 76.993583s separate copy, 36 linked pairs, native verification passed and source mapping saved; original geometry preserved. Live cancellation of the preflight prompt passed. Mid-batch cancellation has VM coverage, not a separate live run. Transcript/listening quality and large-project crash resistance are not established by this small test. No release.
+
+
+## 2026-09-10 — Larger native rebuild batches
+
+Internal benchmark option accepts only numeric 8, 32 or 64, with per-call timings on successful runs. Independent Terra reviewer approved the bounded option and ascending live trials with escalation stopped on poor responsiveness. Full suite: 191 total / 190 pass / 1 external Adobe schema skip.
+
+Large live baseline at 8 completed 360 linked pairs: 191.649 seconds host roundtrip work; slowest step 9.650 seconds. The 32 trial continued progressing but was substantially less responsive and was stopped. Cancellation requested at 10:32:06 UTC, logged complete at 10:32:53 UTC (about 47 seconds). Original reopened; incomplete copy retained. No successful 32 report or partial host timing record; 64 was not attempted. Sequential trials shared the same Premiere process and accumulated project state, so this does not isolate batch size as the cause. Default restored to 8. No release; investigate the slowdown before larger defaults.
+
+
+### 16-pair follow-up trial
+
+User requested 16. Added exact numeric 16 to the existing host allowlist; regression failed before the change, then full suite passed 191 total / 190 pass / 1 external schema skip. Independent Terra reviewer approved the bounded change before live execution.
+
+Live 16 completed 360 linked pairs with native verification PASS: 161.838 seconds host work versus 191.649 at 8 (15.6% faster); slowest step 11.008 seconds versus 9.650. All mapping rows exactly equal the 8-pair baseline; output duration 748.831416666667 seconds, original preserved. No stall observed; cancellation was not tested at 16. This is one sequential trial, not an isolated repeated benchmark. Default restored to 8 after trial. Dialogue quality not checked. No release.
+
+
+### 24-pair follow-up trial
+
+User requested 24. Exact numeric 24 added to existing host allowlist and fixture. Regression failed before implementation; full191/190pass/1external schema skip after. Independent Terra read-only reviewer approved before live execution.
+
+Live 24 completed360 linked pairs with native verification PASS:135.048s host work (16:161.838s;8:191.649s). Slowest step12.347s (16:11.008s;8:9.650s). All360 mapping rows exactly identical across8/16/24, duration748.831416666667s; original preserved. No stall observed. Cancellation not exercised at24; sequential single trials do not isolate warm caches or accumulated Premiere state. Default restored to8 after trial. Dialogue quality not checked. No release.
+
+
+## 2026-09-10 — Default24, safe fallback, source format
+
+Independent Terra actual review APPROVED after replacing per-insert full geometry scans with an exception-only read-only prefix proof. Only pristine native insertion failures can reduce24→16→8 on the same clone; invalid overrides, changed prefixes, mark restoration failures and Stop remain terminal. Clone and finish verify original dimensions/timebase/PAR; static Motion position and scale remain exact. Integrated actual host VM test injects failure after3 pairs, verifies one clone, resumed mappings, preserved Motion and format. Full197/196pass/1external schema skip; syntax and whitespace passed. Fallback verified by injected tests, not by forcing Premiere to fail. No release.
+
 ## 2026-09-14 — `scopes` tool, capability-first tool text, script refusal latch (branch feat/scopes)
 
 Context: the editor asked the panel to "see the scopes". The model believed its frames were 512 px thumbnails (the preview_frames description led with the default), read in the scripting skill that `.export` is refused and concluded export was impossible (preview_frames already renders through QE exportFramePNG at full size), then sent a Haiku Explore subagent to read the panel's source. That subagent, which never receives the panel prompt, tried Bash (refused), Reads outside the allowed folders (denied), a `new Folder(...)` disk walk through run_extendscript (refused by the guard) and a media_info call on a fake path. No data left the machine; every guard held.

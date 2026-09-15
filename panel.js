@@ -701,7 +701,7 @@ async function applyCuts(card, cuts, dryRun, summary, expectedSnapshot = null) {
 // Silence removal. method "vad" (default): Silero VAD finds speech on every audio clip; everything outside
 // speech is a candidate cut. method "db": Premiere's peak-file waveform vs each clip's noise floor.
 const CUT_PRESETS = { social: { min_silence_s: 0.3, pad_s: 0.04 }, natural: { min_silence_s: 0.6, pad_s: 0.15 } };
-async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 0.3, pad_s = 0.04, threshold_db, method = "vad", preset, dry_run = true }) {
+async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 0.3, pad_s = 0.04, threshold_db, method = "vad", preset, dry_run = true, _planOnly = false }) {
   if (preset && CUT_PRESETS[preset]) ({ min_silence_s, pad_s } = CUT_PRESETS[preset]);
   const useVad = method !== "db" && vad.available();
   const card = addTool((dry_run ? "plan" : "remove") + "_silences (" + (useVad ? "voice: Silero VAD" : "dB") + ")", "");
@@ -749,6 +749,7 @@ async function removeSilences({ start_seconds = 0, end_seconds, min_silence_s = 
   const how = useVad ? "voice: Silero VAD speech regions, min " + min_silence_s + "s, pad " + pad_s + "s" : "waveform" + (threshold_db === undefined ? ", threshold auto = noise floor + 8 dB" : ", threshold " + threshold_db + " dBFS");
   const summary = cuts.length + " silent range(s), " + total.toFixed(1) + "s total, sequence " + snap.duration.toFixed(1) + "s -> " + (snap.duration - total).toFixed(1) + "s (method: " + how + ")"
     + (skipped.length ? " (never cut: " + skipped.join(", ") + ")" : "");
+  if (_planOnly) return { cuts, snap, summary };
   return applyCuts(card, cuts, dry_run, summary);
 }
 
@@ -2625,27 +2626,54 @@ function beginButtonJob(label) {
 let cancelRequested = false;
 function requestCancel() { cancelRequested = true; setStatus("Stopping after the current step…"); }
 function endButtonJob() { buttonJob = ""; quietCard = null; cancelRequested = false; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = false; }); }
-async function runCutButton(tool, params, label) {
+// Start at the measured 24-pair batch; verified insertion failures fall back to 16 then 8.
+const SILENCE_REBUILD_BATCH_SIZE = 24;
+async function runCutButton(params, label) {
   if (!beginButtonJob(label)) return;
-  const card = addTool(label, "");
-  card.open();
-  quietCard = card;
+  const card = addTool(label, ""); card.open(); quietCard = card;
+  const startedAt = Date.now();
   try {
+    project = await readProject();
+    const expectedSnapshot = await host("snapshot");
+    const before = parseSnapshot(expectedSnapshot);
+    if (before.error) throw new Error(before.error);
+    const directory = analysisDir(), transcript = freshTimelineWords(before);
+    // CEP cannot enumerate caption tracks. A saved project is not evidence about the live timeline.
+    if (!await askInline("Use this rebuild only on footage without caption tracks. Caption timing cannot be checked automatically. Confirm this sequence has no captions.", "No captions — continue")) {
+      card.done("Cancelled; nothing rebuilt.", true); return;
+    }
     card.progress(0, 1, "finding silences ");
-    const plan = await tool({ ...params, dry_run: true });
-    if (plan.isError) { card.done(plan.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, ""), false); return; }
-    const summary = plan.text.split("\n")[0].replace(/^PLAN \(nothing changed\): /, "");
-    const m = /^(\d+) [^,]+, ([\d.]+)s total, sequence ([\d.]+)s -> ([\d.]+)s/.exec(summary);
-    if (!m || m[1] === "0") { card.done("Nothing to cut. " + summary, true); return; }
-    const result = await tool({ ...params, dry_run: false });
-    const p = await readProject().catch(() => ({}));
-    const where = p.sequence ? " on \"" + p.sequence + "\"" : "";
-    card.done(result.isError
-      ? result.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, "")
-      : m[1] + " silences removed, " + m[2] + "s cut, " + m[3] + "s -> " + m[4] + "s" + where + ". Cmd+Z undoes one range at a time.", !result.isError);
+    const plan = await removeSilences({ ...params, dry_run: true, _planOnly: true });
+    if (plan.isError) throw new Error(plan.text.replace(/^CLAUDE_FOR_ADOBE_ERROR:/, ""));
+    if (timelineFingerprint(plan.snap) !== timelineFingerprint(before)) throw new Error("Timeline changed during silence detection; nothing rebuilt");
+    if (!plan.cuts.length) { card.done("Nothing to cut. " + plan.summary, true); return; }
+    const { rebuildSequence, mapRetainedWords } = require(path.join(extensionRoot, "src", "silence-rebuild.cjs"));
+    refreshSuspended = true; clearTimeout(snapshotTimer); clearTimeout(ledgerTimer);
+    const result = await rebuildSequence((action, payload) => host("rebuildSilences", action, payload),
+      { cuts: plan.cuts, expectedSnapshot, batchSize: SILENCE_REBUILD_BATCH_SIZE }, () => cancelRequested,
+      (completed, total, batchSize, estimate) => {
+        const seconds = estimate.remainingMs == null ? null : Math.max(1, Math.ceil(estimate.remainingMs / 1000));
+        const eta = seconds == null ? "Estimating…" : "~" + (seconds >= 60 ? Math.ceil(seconds / 60) + " min" : seconds + " sec") + " left to build";
+        const status = estimate.phase === "checking" ? "Checking source ranges and framing…" : eta + " · batch " + batchSize;
+        card.progress(completed, total, status + " "); setStatus(status);
+      });
+    // Keep actual read-back source ranges, not the requested cut arithmetic. Mapped words are evidence,
+    // not a fresh transcript: clipped words are flagged and require listening at the corresponding seam.
+    const evidence = { ...result, originalSequenceId: before.id, originalFingerprint: timelineFingerprint(before),
+      requestedCuts: plan.cuts, detectorSummary: plan.summary, createdAt: new Date().toISOString(), elapsedMs: Date.now() - startedAt,
+      transcriptStatus: transcript ? "mapped from original; audio not reverified" : "no matching original transcript",
+      words: transcript ? mapRetainedWords(transcript.words || [], result.mapping) : [] };
+    const file = path.join(directory, result.name.replace(/[\/\\:]/g, "_") + ".silence-rebuild.json");
+    try { fs.mkdirSync(directory, { recursive: true }); fs.writeFileSync(file, JSON.stringify(evidence)); }
+    catch (error) { throw new Error("Rebuild verified on \"" + result.name + "\", but source mapping could not be saved: " + error.message); }
+    card.done("CHECK PASS: rebuilt \"" + result.name + "\" (" + result.duration.toFixed(2) + "s). Linked audio/video and source ranges verified. Original preserved. Source mapping saved; dialogue quality has not been checked.", true);
     setStatus("Ready");
   } catch (error) { card.done("Failed: " + error.message, false); log("button job " + label + " failed: " + (error.stack || error.message)); }
-  finally { endButtonJob(); }
+  finally {
+    refreshSuspended = false;
+    try { project = await readProject(); timeline = await readSnapshot(); refreshLedgerSoon(); } catch (_) {}
+    endButtonJob(); setStatus("Ready");
+  }
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
 // Captions button toggles the options strip under the toolbar; Make captions runs the job.
@@ -2689,7 +2717,7 @@ ui.btnCaptions.onclick = () => toggleCaptionOptions();
 ui.btnMakeCaptions.onclick = runCaptionsButton;
 ui.btnCancelCaptions.onclick = () => toggleCaptionOptions(false);
 // One click: the method and thresholds live in Settings (the options strip is gone; the hidden run/cancel buttons keep old references harmless).
-ui.btnCut.onclick = () => runCutButton(removeSilences, { method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
+ui.btnCut.onclick = () => runCutButton({ method: ui.cutMethod.value, min_silence_s: Number(ui.minSilence.value), pad_s: Number(ui.pad.value) }, "Cut silences " + (ui.cutMethod.value === "vad" ? "by voice" : "by level"));
 ["cutMethod", "minSilence", "pad"].forEach((k) => { try { const v = localStorage.getItem("cut." + k); if (v) ui[k].value = v; } catch (_) {} ui[k].onchange = () => { try { localStorage.setItem("cut." + k, ui[k].value); } catch (_) {} }; });
 // The bundled voice model is Apple Silicon only: on other Macs default to the level method and say why.
 if (process.arch !== "arm64") { ui.cutMethod.value = "db"; ui.cutMethod.querySelector('[value="vad"]').disabled = true; ui.cutMethod.title = "Voice detection needs an Apple Silicon Mac; using the level method."; }

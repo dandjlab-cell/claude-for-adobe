@@ -1326,11 +1326,233 @@ var PCX = (function () {
     try { app.properties.setProperty(name, value, 1, 1); return String(app.properties.getProperty(name)); } catch (e) { return "ERR:" + e; }
   }
 
+  // Native silence rebuilding deliberately has no QE dependency.  It only accepts the small, lossless subset
+  // that can be proved after every insert: contiguous, linked, normal-speed V1/A1 source pairs.  The output is
+  // an incomplete clone until finish has checked every retained range.
+  var silenceRebuild = null;
+  function rebuildEsc(s) { return String(s).replace(/[\\\"\u0000-\u001f]/g, function (ch) { var n = ch.charCodeAt(0); if (ch === "\\") return "\\\\"; if (ch === "\"") return "\\\""; if (n === 8) return "\\b"; if (n === 9) return "\\t"; if (n === 10) return "\\n"; if (n === 12) return "\\f"; if (n === 13) return "\\r"; return "\\u" + ("000" + n.toString(16)).slice(-4); }); }
+  function rebuildProgress(done, completed, total, extra) {
+    return "{\"done\":" + (done ? "true" : "false") + ",\"completed\":" + completed + ",\"total\":" + total + (extra ? "," + extra : "") + "}";
+  }
+  function rebuildBatchSize(value) { return value === 8 || value === 16 || value === 24 || value === 32 || value === 64 ? value : 0; }
+  function rebuildTime(ticks) { var z = new Time(); z.ticks = String(Math.round(num(ticks))); return z; }
+  function rebuildCount(x) { return x ? (typeof x.numItems === "number" ? x.numItems : x.length) : 0; }
+  function rebuildTrackCount(x) { return x ? (typeof x.numTracks === "number" ? x.numTracks : rebuildCount(x)) : 0; }
+  function rebuildSafeTick(x) { return typeof x === "number" && isFinite(x) && Math.floor(x) === x && Math.abs(x) <= 9007199254740991; }
+  function rebuildLinked(a, b) {
+    var l = null, n = 0, av = false, bv = false;
+    try { l = a.getLinkedItems(); n = rebuildCount(l); } catch (e) { return false; }
+    for (var i = 0; i < n; i++) { if (String(l[i].nodeId) === String(a.nodeId)) av = true; if (String(l[i].nodeId) === String(b.nodeId)) bv = true; }
+    return n === 2 && av && bv;
+  }
+  function rebuildLinkSig(a) { var l = null, n = 0, z = ""; try { l = a.getLinkedItems(); n = rebuildCount(l); } catch (e) { return "ERR"; } for (var i = 0; i < n; i++) z += ":" + l[i].nodeId; return z; }
+  function rebuildValue(v) {
+    if (v === null) return "null";
+    if (v instanceof Array) { var a = "["; for (var i = 0; i < v.length; i++) a += (i ? "," : "") + rebuildValue(v[i]); return a + "]"; }
+    return typeof v + ":" + String(v);
+  }
+  function rebuildEffects(cl, kind) {
+    var goodV = { "AE.ADBE Opacity": 1, "AE.ADBE Motion": 1 }, goodA = { "Internal Volume Stereo": 1, "Internal Channel Volume Stereo": 1 };
+    var good = kind === "v" ? goodV : goodA, out = [], cs = cl.components;
+    for (var i = 0; i < rebuildCount(cs); i++) {
+      var c = cs[i], match = String(c.matchName);
+      if (!good[match]) throw new Error("nonintrinsic effect " + (c.displayName || match));
+      var ps = [], props = c.properties;
+      for (var j = 0; j < rebuildCount(props); j++) {
+        var p = props[j];
+        if (p.isTimeVarying && p.isTimeVarying()) throw new Error("keyframed " + (c.displayName || match) + "/" + p.displayName);
+        ps.push({ name: String(p.displayName), value: p.getValue() });
+      }
+      out.push({ match: match, name: String(c.displayName), props: ps });
+    }
+    return out;
+  }
+  function rebuildEffectSig(cl) {
+    var out = "", cs = cl.components;
+    for (var i = 0; i < rebuildCount(cs); i++) { var c = cs[i], ps = c.properties; out += "|" + c.matchName + ":" + c.displayName; for (var j = 0; j < rebuildCount(ps); j++) { var p = ps[j]; out += ":" + p.displayName + ":" + (p.isTimeVarying && p.isTimeVarying() ? "1" : "0") + ":" + rebuildValue(p.getValue()); } }
+    return out;
+  }
+  function rebuildCopyEffects(cl, source) {
+    var cs = cl.components;
+    if (rebuildCount(cs) !== source.length) throw new Error("inserted component count changed");
+    for (var i = 0; i < source.length; i++) {
+      var c = cs[i], e = source[i], ps = c.properties;
+      if (String(c.matchName) !== e.match || String(c.displayName) !== e.name || rebuildCount(ps) !== e.props.length) throw new Error("inserted component identity changed");
+      for (var j = 0; j < e.props.length; j++) { var p = ps[j], q = e.props[j]; if (String(p.displayName) !== q.name || (p.isTimeVarying && p.isTimeVarying())) throw new Error("inserted parameter changed"); if (rebuildValue(p.getValue()) !== rebuildValue(q.value)) { p.setValue(q.value, 1); if (rebuildValue(p.getValue()) !== rebuildValue(q.value)) throw new Error("effect value did not hold"); } }
+    }
+  }
+  function rebuildGeometry(s) {
+    var z = String(s.sequenceID) + ":" + s.end + ":" + s.timebase + ":" + s.zeroPoint, settings = s.getSettings(); for (var sk in settings) if (typeof settings[sk] !== "function") { var sv = settings[sk]; z += ":S" + sk + "=" + (sv && typeof sv.ticks !== "undefined" ? sv.ticks : rebuildValue(sv)); }
+    function walk(ts, kind) { z += ":T" + kind + ":" + rebuildTrackCount(ts); for (var t = 0; t < rebuildTrackCount(ts); t++) { var tr = ts[t]; z += ":R" + rebuildCount(tr.clips) + ":X" + rebuildCount(tr.transitions) + ":M" + tr.isMuted() + ":L" + tr.isLocked(); for (var c = 0; c < rebuildCount(tr.clips); c++) { var q = tr.clips[c]; z += ":C" + q.nodeId + ":" + (q.projectItem ? q.projectItem.nodeId : "") + ":" + q.start.ticks + ":" + q.end.ticks + ":" + q.inPoint.ticks + ":" + q.outPoint.ticks + ":" + q.getSpeed() + ":" + q.isSpeedReversed() + ":" + q.disabled + rebuildLinkSig(q) + ":" + rebuildEffectSig(q); } } }
+    walk(s.videoTracks, "v"); walk(s.audioTracks, "a"); return z;
+  }
+  function rebuildHeader(s) {
+    var z = String(s.sequenceID) + ":" + s.timebase + ":" + s.zeroPoint, settings = s.getSettings();
+    for (var sk in settings) if (typeof settings[sk] !== "function") { var sv = settings[sk]; z += ":S" + sk + "=" + (sv && typeof sv.ticks !== "undefined" ? sv.ticks : rebuildValue(sv)); }
+    function tracks(ts, kind) { z += ":T" + kind + ":" + rebuildTrackCount(ts); for (var i = 0; i < rebuildTrackCount(ts); i++) { var tr = ts[i]; z += ":R" + rebuildCount(tr.transitions) + ":M" + tr.isMuted() + ":L" + tr.isLocked(); } }
+    tracks(s.videoTracks, "v"); tracks(s.audioTracks, "a"); return z;
+  }
+  function rebuildFormatMatches(source, destination) {
+    if (num(source.timebase) !== num(destination.timebase)) return false;
+    var a = source.getSettings(), b = destination.getSettings(), keys = ["videoFrameWidth", "videoFrameHeight", "videoPixelAspectRatio"];
+    if (!(num(a.videoFrameWidth) > 0) || !(num(a.videoFrameHeight) > 0) || !(num(b.videoFrameWidth) > 0) || !(num(b.videoFrameHeight) > 0) || !isFinite(num(a.videoFrameWidth)) || !isFinite(num(a.videoFrameHeight)) || !isFinite(num(b.videoFrameWidth)) || !isFinite(num(b.videoFrameHeight))) return false;
+    for (var i = 0; i < keys.length; i++) {
+      var av = a[keys[i]], bv = b[keys[i]];
+      if (typeof av === "undefined" && typeof bv === "undefined") continue;
+      if (rebuildValue(av) !== rebuildValue(bv)) return false;
+    }
+    return true;
+  }
+  function rebuildIsSpecial(item) {
+    try { if (item.isMultiCamClip && item.isMultiCamClip()) return true; } catch (e) {}
+    try { if (item.isSequence && item.isSequence()) return true; } catch (e2) {}
+    return false;
+  }
+  function rebuildPreflight(s, cuts) {
+    try { if (s.markers && num(s.markers.numMarkers) > 0) throw new Error("markers unsupported"); } catch (markErr) { if (String(markErr).indexOf("markers unsupported") >= 0) throw markErr; }
+    if (rebuildTrackCount(s.videoTracks) < 1 || rebuildTrackCount(s.audioTracks) < 1) throw new Error("requires V1/A1");
+    var total = 0, t, tr;
+    for (t = 0; t < rebuildTrackCount(s.videoTracks); t++) { tr = s.videoTracks[t]; total += rebuildCount(tr.clips); if (rebuildCount(tr.transitions)) throw new Error("transitions unsupported"); if (t > 0 && rebuildCount(tr.clips)) throw new Error("only V1/A1 may contain clips"); }
+    for (t = 0; t < rebuildTrackCount(s.audioTracks); t++) { tr = s.audioTracks[t]; total += rebuildCount(tr.clips); if (rebuildCount(tr.transitions)) throw new Error("transitions unsupported"); if (t > 0 && rebuildCount(tr.clips)) throw new Error("only V1/A1 may contain clips"); }
+    if (total > 600) throw new Error("source has more than 600 clips; snapshot is capped");
+    var vs = s.videoTracks[0].clips, as = s.audioTracks[0].clips, n = rebuildCount(vs), out = [], cursor = 0;
+    if (!n || n !== rebuildCount(as)) throw new Error("V1/A1 pair count differs");
+    for (var i = 0; i < n; i++) {
+      var v = vs[i], a = as[i], st = num(v.start.ticks), en = num(v.end.ticks);
+      if (!rebuildSafeTick(st) || !rebuildSafeTick(en) || !rebuildSafeTick(num(v.inPoint.ticks)) || !rebuildSafeTick(num(v.outPoint.ticks)) || !rebuildSafeTick(num(a.inPoint.ticks)) || !rebuildSafeTick(num(a.outPoint.ticks)) || st < 0 || en <= st || num(v.inPoint.ticks) < 0 || num(a.inPoint.ticks) < 0 || st !== cursor || num(a.start.ticks) !== st || num(a.end.ticks) !== en || num(v.outPoint.ticks) - num(v.inPoint.ticks) !== en - st || num(a.outPoint.ticks) - num(a.inPoint.ticks) !== en - st || num(v.inPoint.ticks) !== num(a.inPoint.ticks) || num(v.outPoint.ticks) !== num(a.outPoint.ticks)) throw new Error("V1/A1 must be contiguous, coextensive, and source-aligned");
+      if (!v.projectItem || !a.projectItem || String(v.projectItem.nodeId) !== String(a.projectItem.nodeId) || rebuildIsSpecial(v.projectItem) || !rebuildLinked(v, a) || !rebuildLinked(a, v)) throw new Error("V1/A1 source or links unsupported");
+      if (v.getSpeed() !== 1 || a.getSpeed() !== 1 || v.isSpeedReversed() || a.isSpeedReversed() || v.disabled || a.disabled) throw new Error("speed, reverse, or disabled clip unsupported");
+      out.push({ item: v.projectItem, id: String(v.projectItem.nodeId), originalStart: st, originalEnd: en, vin: num(v.inPoint.ticks), ain: num(a.inPoint.ticks), ve: rebuildEffects(v, "v"), ae: rebuildEffects(a, "a"), vs: rebuildEffectSig(v), as: rebuildEffectSig(a) }); cursor = en;
+    }
+    if (cursor !== num(s.end) || !rebuildSafeTick(num(s.end))) throw new Error("V1/A1 does not cover the sequence end");
+    var removes = [], prior = 0, end = num(s.end);
+    if (!cuts.length) throw new Error("at least one cut is required");
+    var frame = num(s.timebase); if (!rebuildSafeTick(frame) || !rebuildSafeTick(end)) throw new Error("unsupported sequence precision");
+    var supplied = [];
+    for (i = 0; i < cuts.length; i++) { if (!cuts[i] || !isFinite(num(cuts[i].start)) || !isFinite(num(cuts[i].end))) throw new Error("cut times must be finite"); var rawStart = num(cuts[i].start) * T, rawEnd = num(cuts[i].end) * T; if (!(rawStart >= 0 && rawEnd >= rawStart && rawEnd <= end)) throw new Error("invalid cut"); supplied.push({ start: rawStart, end: rawEnd }); }
+    supplied.sort(function (left, right) { return left.start - right.start; });
+    for (i = 0; i < supplied.length; i++) { if (supplied[i].start < prior) throw new Error("overlapping cut"); var x = Math.ceil(Math.round(supplied[i].start) / frame) * frame, y = Math.floor(Math.round(supplied[i].end) / frame) * frame; if (y > x) removes.push({ start: x, end: y }); prior = supplied[i].end; }
+    if (!removes.length) throw new Error("cuts contain no full frames");
+    var keeps = [], at = 0; for (i = 0; i < removes.length; i++) { if (removes[i].start > at) keeps.push({ start: at, end: removes[i].start }); at = removes[i].end; } if (at < end) keeps.push({ start: at, end: end });
+    var plan = [], output = 0;
+    for (i = 0; i < keeps.length; i++) for (var j = 0; j < out.length; j++) { var lo = Math.max(keeps[i].start, out[j].originalStart), hi = Math.min(keeps[i].end, out[j].originalEnd); if (hi > lo) { plan.push({ record: out[j], sourceInV: out[j].vin + lo - out[j].originalStart, sourceOutV: out[j].vin + hi - out[j].originalStart, sourceInA: out[j].ain + lo - out[j].originalStart, sourceOutA: out[j].ain + hi - out[j].originalStart, originalStart: lo, originalEnd: hi, start: output, end: output + hi - lo }); output += hi - lo; } }
+    if (!plan.length) throw new Error("cuts remove the entire sequence");
+    return { records: out, plan: plan, output: output };
+  }
+  function rebuildMark(item, a, b, kind, step) {
+    var q = kind === 1 ? step.frameQuarter : step.audioQuarter;
+    item.setOutPoint((b + q) / T, kind); item.setInPoint((a + q) / T, kind);
+    if (String(item.getInPoint(kind).ticks) !== String(a) || String(item.getOutPoint(kind).ticks) !== String(b)) throw new Error("source " + (kind === 1 ? "video" : "audio") + " marks did not read back exactly");
+  }
+  function rebuildRestore(m) {
+    var pass, failed;
+    for (pass = 0; pass < 2; pass++) {
+      failed = false;
+      try { if (num(m.out) < 0) m.item.clearOutPoint(m.kind); else m.item.setOutPoint((num(m.out) + m.offset) / T, m.kind); } catch (outErr) { failed = true; }
+      try { if (num(m.inn) < 0) m.item.clearInPoint(m.kind); else m.item.setInPoint((num(m.inn) + m.offset) / T, m.kind); } catch (inErr) { failed = true; }
+      try { if (!failed && String(m.item.getInPoint(m.kind).ticks) === String(m.inn) && String(m.item.getOutPoint(m.kind).ticks) === String(m.out)) return; } catch (readErr) {}
+    }
+    throw new Error("source marks did not restore exactly");
+  }
+  function rebuildRestorePending(st) {
+    if (!st.pendingMarks) return;
+    var first = null;
+    try { rebuildRestore(st.pendingMarks[0]); } catch (e0) { first = e0; }
+    try { rebuildRestore(st.pendingMarks[1]); } catch (e1) { if (!first) first = e1; }
+    if (first) throw first;
+    st.pendingMarks = null;
+  }
+  function rebuildCheckDestination(st, p, index, readOnly) {
+    var v = st.dst.videoTracks[0].clips[index], a = st.dst.audioTracks[0].clips[index];
+    if (st.inserting && (rebuildCount(st.dst.videoTracks[0].clips) !== index + 1 || rebuildCount(st.dst.audioTracks[0].clips) !== index + 1)) throw new Error("insert produced an unexpected V1/A1 count");
+    for (var rt = 1; rt < rebuildTrackCount(st.dst.videoTracks); rt++) if (rebuildCount(st.dst.videoTracks[rt].clips)) throw new Error("insert populated V" + (rt + 1));
+    for (rt = 1; rt < rebuildTrackCount(st.dst.audioTracks); rt++) if (rebuildCount(st.dst.audioTracks[rt].clips)) throw new Error("insert populated A" + (rt + 1));
+    if (!v || !a || String(v.projectItem.nodeId) !== p.record.id || String(a.projectItem.nodeId) !== p.record.id || num(v.start.ticks) !== p.start || num(v.end.ticks) !== p.end || num(a.start.ticks) !== p.start || num(a.end.ticks) !== p.end || num(v.inPoint.ticks) !== p.sourceInV || num(v.outPoint.ticks) !== p.sourceOutV || num(a.inPoint.ticks) !== p.sourceInA || num(a.outPoint.ticks) !== p.sourceOutA || !rebuildLinked(v, a) || v.getSpeed() !== 1 || a.getSpeed() !== 1 || v.isSpeedReversed() || a.isSpeedReversed() || v.disabled || a.disabled) throw new Error("inserted pair did not verify at " + index);
+    if (!readOnly) { rebuildCopyEffects(v, p.record.ve); rebuildCopyEffects(a, p.record.ae); }
+    if (rebuildEffectSig(v) !== p.record.vs || rebuildEffectSig(a) !== p.record.as) throw new Error("inserted effects did not verify at " + index);
+  }
+  function rebuildPrefixMatches(st) {
+    var count = st.completed, expectedEnd = count ? st.plan[count - 1].end : 0;
+    try {
+      if (rebuildHeader(st.dst) !== st.destHeader || num(st.dst.end) !== expectedEnd || rebuildCount(st.dst.videoTracks[0].clips) !== count || rebuildCount(st.dst.audioTracks[0].clips) !== count) return false;
+      for (var i = 0; i < count; i++) rebuildCheckDestination(st, st.plan[i], i, true);
+      return true;
+    } catch (e) { return false; }
+  }
+  function rebuildSilences(action, json) {
+    var a = null; try { a = parse(json || "{}"); } catch (bad) { return "ERR:invalid rebuild JSON"; }
+    try {
+      if (action === "begin") {
+        if (silenceRebuild) return "ERR:rebuild already active (output " + silenceRebuild.dst.name + ")";
+        if (a.batchSize !== undefined && a.batchSize !== 24) return "ERR:rebuild begins at batch size 24";
+        var batchSize = 24;
+        var s = seq(); if (!s) return "ERR:no active sequence";
+        if (!a.expectedSnapshot || snapshot() !== a.expectedSnapshot) return "ERR:timeline changed before rebuild; nothing cloned";
+        var pf = rebuildPreflight(s, a.cuts instanceof Array ? a.cuts : []), sourceBase = rebuildGeometry(s), ids = {}, i;
+        for (i = 0; i < app.project.sequences.numSequences; i++) ids[String(app.project.sequences[i].sequenceID)] = 1;
+        if (!s.clone()) return "ERR:clone failed";
+        var dst = null; for (i = 0; i < app.project.sequences.numSequences; i++) if (!ids[String(app.project.sequences[i].sequenceID)]) { if (dst) throw new Error("clone made multiple sequences"); dst = app.project.sequences[i]; }
+        if (!dst) throw new Error("clone not found"); dst.name = uniqueSequenceName(s.name + " Silence cleanup [INCOMPLETE]");
+        try { var sourceItem = s.projectItem, copyItem = dst.projectItem, sourceBin = sourceItem ? parentBinOf(sourceItem.nodeId) : null; if (copyItem && sourceBin && copyItem.moveBin) copyItem.moveBin(sourceBin); } catch (moveErr) {}
+        if (!rebuildFormatMatches(s, dst)) throw new Error("clone format differs from source; nothing cleared");
+        silenceRebuild = { source: s, dst: dst, base: sourceBase, plan: pf.plan, output: pf.output, completed: 0, batchSize: batchSize, frameQuarter: num(s.timebase) / 4, audioQuarter: T / 48000 / 4, destBase: "" };
+        for (var m = 0; m < 2; m++) { var ts = m ? dst.audioTracks : dst.videoTracks; for (var t = 0; t < rebuildTrackCount(ts); t++) for (var c = rebuildCount(ts[t].clips) - 1; c >= 0; c--) ts[t].clips[c].remove(false, false); }
+        if (rebuildCount(dst.videoTracks[0].clips) || rebuildCount(dst.audioTracks[0].clips)) throw new Error("clone did not clear");
+        app.project.openSequence(dst.sequenceID); silenceRebuild.destBase = rebuildGeometry(dst); silenceRebuild.destHeader = rebuildHeader(dst);
+        return rebuildProgress(false, 0, pf.plan.length);
+      }
+      if (!silenceRebuild) return "ERR:no active rebuild";
+      var st = silenceRebuild;
+      if (action === "cancel") { try { rebuildRestorePending(st); } catch (recover) { return "ERR:original source mark recovery incomplete; output " + st.dst.name + " remains incomplete; retry cancel: " + recover; } try { app.project.openSequence(st.source.sequenceID); } catch (ignore) {} silenceRebuild = null; return rebuildProgress(false, st.completed, st.plan.length, "\"cancelled\":true,\"sequenceId\":\"" + rebuildEsc(st.dst.sequenceID) + "\",\"name\":\"" + rebuildEsc(st.dst.name) + "\""); }
+      if (rebuildGeometry(st.source) !== st.base) throw new Error("source changed; output " + st.dst.name + " is incomplete");
+      if (!app.project.activeSequence || String(app.project.activeSequence.sequenceID) !== String(st.dst.sequenceID)) throw new Error("active destination changed; output " + st.dst.name + " is incomplete");
+      if (rebuildGeometry(st.dst) !== st.destBase) throw new Error("destination changed; output " + st.dst.name + " is incomplete");
+      if (action === "step") {
+        var requestedBatch = st.batchSize;
+        if (st.retryable && a.batchSize === undefined) return "ERR:retryable native insert failure requires its explicit smaller batch size";
+        if (a.batchSize !== undefined) {
+          if (!st.retryable) return "ERR:batch override is allowed only after a retryable native insert failure";
+          if (a.batchSize !== st.retryNext) return "ERR:batch retry must decrease 24 to 16 to 8";
+          requestedBatch = a.batchSize; st.batchSize = requestedBatch; st.retryable = false; st.retryNext = 0;
+        }
+        var limit = Math.min(st.plan.length, st.completed + requestedBatch);
+        for (var k = st.completed; k < limit; k++) {
+          var p = st.plan[k], marks = [{ item: p.record.item, kind: 1, inn: String(p.record.item.getInPoint(1).ticks), out: String(p.record.item.getOutPoint(1).ticks), offset: st.frameQuarter }, { item: p.record.item, kind: 2, inn: String(p.record.item.getInPoint(2).ticks), out: String(p.record.item.getOutPoint(2).ticks), offset: st.audioQuarter }], insertFailure = null;
+          st.pendingMarks = marks;
+          try { rebuildMark(p.record.item, p.sourceInV, p.sourceOutV, 1, st); rebuildMark(p.record.item, p.sourceInA, p.sourceOutA, 2, st); try { st.dst.insertClip(p.record.item, rebuildTime(p.start), 0, 0); } catch (nativeInsertError) { insertFailure = nativeInsertError; } } finally { rebuildRestorePending(st); }
+          if (insertFailure) {
+            if (rebuildGeometry(st.source) === st.base && rebuildPrefixMatches(st)) {
+              var nextBatch = requestedBatch === 24 ? 16 : requestedBatch === 16 ? 8 : 0;
+              if (!nextBatch) throw new Error("native insert failed at minimum batch size 8");
+              st.destBase = rebuildGeometry(st.dst); st.retryable = true; st.retryNext = nextBatch;
+              return rebuildProgress(false, st.completed, st.plan.length, "\"retryable\":true,\"retryBatchSize\":" + nextBatch + ",\"retryReason\":\"native insert failed before modifying destination\"");
+            }
+            throw new Error("native insert failed after an ambiguous change: " + insertFailure);
+          }
+          st.inserting = true; rebuildCheckDestination(st, p, k); st.inserting = false; st.completed++;
+        }
+        if (rebuildGeometry(st.source) !== st.base) throw new Error("source changed during batch; output " + st.dst.name + " is incomplete");
+        st.destBase = rebuildGeometry(st.dst);
+        return rebuildProgress(st.completed === st.plan.length, st.completed, st.plan.length);
+      }
+      if (action === "finish") {
+        if (st.completed !== st.plan.length) return "ERR:rebuild incomplete " + st.completed + "/" + st.plan.length + " (output " + st.dst.name + ")";
+        if (!rebuildFormatMatches(st.source, st.dst) || num(st.dst.end) !== st.output || rebuildGeometry(st.source) !== st.base || rebuildGeometry(st.dst) !== st.destBase || rebuildCount(st.dst.videoTracks[0].clips) !== st.plan.length || rebuildCount(st.dst.audioTracks[0].clips) !== st.plan.length) throw new Error("final geometry verification failed; output " + st.dst.name + " is incomplete");
+        for (var z = 0; z < st.plan.length; z++) rebuildCheckDestination(st, st.plan[z], z);
+        var rows = []; for (z = 0; z < st.plan.length; z++) { p = st.plan[z]; rows.push("{\"sourceId\":\"" + rebuildEsc(p.record.id) + "\",\"sourceIn\":" + (p.sourceInV / T) + ",\"sourceOut\":" + (p.sourceOutV / T) + ",\"originalStart\":" + (p.originalStart / T) + ",\"originalEnd\":" + (p.originalEnd / T) + ",\"start\":" + (p.start / T) + ",\"end\":" + (p.end / T) + "}"); }
+        st.dst.name = uniqueSequenceName(st.source.name + " Silence cleanup");
+        var finishSettings = st.dst.getSettings(), finishPixel = finishSettings.videoPixelAspectRatio;
+        silenceRebuild = null; return "{\"done\":true,\"sequenceId\":\"" + rebuildEsc(st.dst.sequenceID) + "\",\"name\":\"" + rebuildEsc(st.dst.name) + "\",\"duration\":" + (num(st.dst.end) / T) + ",\"timebase\":" + num(st.dst.timebase) + ",\"videoFrameWidth\":" + num(finishSettings.videoFrameWidth) + ",\"videoFrameHeight\":" + num(finishSettings.videoFrameHeight) + ",\"videoPixelAspectRatio\":\"" + rebuildEsc(rebuildValue(finishPixel)) + "\",\"mapping\":[" + rows.join(",") + "]}";
+      }
+      return "ERR:unknown rebuild action";
+    } catch (e) { return "ERR:" + e + (silenceRebuild ? " (output " + silenceRebuild.dst.name + " is incomplete; call cancel)" : ""); }
+  }
+
   return {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents
   };
 }());
 "PCX loaded";
