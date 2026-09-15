@@ -126,10 +126,15 @@ function levelsFor(m, current = null, asRead = null) {
   const target = BLACK_POINT[1] - 1;
   const anchor = Math.max(0.3, Math.min(0.6, f.luma.p50 / 100));
   const want = blackInFor(bp, target, anchor);
-  const blackIn = Math.min(LEVELS_CAP, want);
+  // The bottom point maps every channel, so it cannot pass the lowest channel bottom of the state it is
+  // written on: after a cyan pad has taken red at the bottom to 3, a curve at 0.13 puts it at 0 (C220,
+  // 21:43 - restored by the guard every run). x <= (lowest channel p1 - margin); under 0.02 is no curve.
+  const floorCap = Math.max(0, (channelFloor(m) - FLOOR_MIN) / 100);
+  const blackIn = Math.min(LEVELS_CAP, want, floorCap);
+  if (blackIn < 0.02) return null;
   return {
     blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
-    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (want > blackIn ? " (capped at " + LEVELS_CAP + ")" : ""),
+    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
   };
 }
 

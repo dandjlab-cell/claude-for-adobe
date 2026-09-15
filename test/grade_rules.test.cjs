@@ -175,3 +175,13 @@ test("a parade end more than 20 off neutral is a coloured surface: no pad, no cu
   assert.ok(pads.needs.some((n) => /coloured surface/.test(n)), pads.needs.join(" | "));
   assert.equal(levelsFor(f, null, f), null, "and no black-point curve: it would only crush the other two channels");
 });
+
+test("the curve's bottom point never passes the lowest channel bottom: a channel a pad has taken to 3 is not crushed by the curve", () => {
+  const { levelsFor } = require("../src/grade_rules.cjs");
+  const f = frame(16, 45, 85, [3, 12, 14], [85, 85, 85]); // red at the bottom already at 3 (after a cyan pad); luma black point 16
+  assert.equal(levelsFor(f), null, "x would have to be under 0.02: no curve, the black point is reported instead");
+  const g = frame(16, 45, 85, [8, 12, 14], [85, 85, 85]);
+  const lev = levelsFor(g);
+  assert.ok(lev && Math.abs(lev.blackIn - 0.065) < 0.001, "held at (8 - 1.5) / 100: " + (lev && lev.blackIn));
+  assert.match(lev.why, /held at the lowest channel bottom/);
+});
