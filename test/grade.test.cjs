@@ -34,6 +34,10 @@ function premiereStandIn(name) {
         luma: { min: at("min"), p1: at("p1"), p50: at("p50"), p99: at("p99"), max: at("max") },
         red: { mean: at("red") }, green: { mean: at("green") }, blue: { mean: at("blue") },
         saturation: { p50: at("sat") }, cast: { cb: at("cb"), cr: at("cr") },
+        // Real clipping from the sweep: a channel piles into 255 as the picture is pushed up, and the
+        // floor fills as it is pushed down. Modelled off the measured ends so the guard is exercised.
+        clipped: { red: at("max") >= 99.5 ? 2 : 0, green: 0, blue: 0 },
+        crushed: at("min") <= 0.5 ? 3 : 0,
       };
     },
     get counts() { return { writes, measures, current }; },
@@ -90,6 +94,25 @@ test("a parameter that will not take the value reports the clamp", async () => {
   const r = await steer({ set: stuck.set, measure: stuck.measure, param: "exposure", target: 45, start: 3 });
   assert.equal(r.hit, false);
   assert.match(r.problem, /clamped/);
+});
+
+test("a target only reachable by clipping is refused, and the safe value is left on the clip", async () => {
+  // The whole point of grading by numbers is that it must not trade picture for a statistic. Brightness
+  // 58.8 needs Exposure 2, which piles a channel into 255; the loop has to hand back the last setting
+  // that did not, and say why, rather than reporting a proud PASS over blown highlights.
+  const host = premiereStandIn("exposure");
+  const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 58.8 });
+  assert.match(r.problem, /backed off/, "it must say it gave up the target on purpose");
+  assert.ok(r.clipped <= 0.5, "left clipping " + r.clipped + "%, above the guard");
+  assert.ok(r.value < 2, "backed away from Exposure 2, landed at " + r.value);
+  assert.equal(host.counts.current, r.value, "and the clip is left holding the safe value, not the clipped one");
+});
+
+test("a guard the caller widens is respected", async () => {
+  const host = premiereStandIn("exposure");
+  const r = await steer({ set: host.set, measure: host.measure, param: "exposure", target: 58.8, guard: { clipped: 100, crushed: 100 } });
+  assert.equal(r.problem, null, "told it may clip, it takes the target");
+  assert.ok(r.hit);
 });
 
 test("every reading taken is returned, so the panel can show its work", async () => {

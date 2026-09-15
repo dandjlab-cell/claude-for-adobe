@@ -1,0 +1,94 @@
+---
+name: colour
+description: Grading footage in Premiere by measurement - what the numbers mean, what order to work in, and what "correct" looks like as a number. Use whenever the job is exposure, contrast, white balance, matching two shots, or "make this look better".
+---
+
+# Colour
+
+You cannot see. `preview_frames` gives you a small JPEG and you will misjudge colour from it — the
+picture is for composition and framing, not for grade decisions. **The scopes are your eyes.** Every
+judgement below is a number you can measure and a number you can drive.
+
+## Measure the subject, not the frame
+
+If a person is in shot, grade the **face**: `scopes` and `grade` both take `region: "face"`, which
+measures Vision's biggest face box instead of the whole picture. This is not a detail. A warm wall,
+a sunset window or a red jacket drags the frame's average cast far from the skin, and "neutralising
+the frame" then drains the face grey. Whole-frame numbers are right for landscapes, graphics and
+matching two shots of the same scene; face numbers are right for anything with a person in it.
+
+The panel says which one it measured. If it fell back to the frame because no face was found, treat
+the cast reading with suspicion.
+
+## The scale
+
+Everything is 0-100 (the 8-bit frame read full-range as SDR Rec.709), except cast, which is -50..50.
+
+| Reading | What it is |
+|---|---|
+| `luma median` | overall brightness of what you measured |
+| `luma p1` / `p99` | where the shadows and highlights sit; the honest ends, ignoring stray pixels |
+| `luma min` / `max` | the actual ends |
+| `spread` (p99 − p1) | contrast |
+| `R/G/B means` | the parade; their differences are the cast |
+| `cast Cr` / `Cb` | warm↔cyan / blue↔yellow. 0 is neutral |
+| `saturation median` | colourfulness |
+| `clipped %` | pixels pinned at 255. **Unrecoverable** |
+| `crushed %` | pixels at the floor. **Unrecoverable** |
+
+Broadcast IRE converts to this scale as `16 + IRE × 2.19` in 8-bit, then `/2.55`. So IRE 70 ≈ **66**
+here and IRE 55 ≈ **53**. A normally exposed face lands in that 53-66 band; that is the one absolute
+target worth remembering.
+
+## Order of operations
+
+Work in this order and re-measure after each step — the controls interact, which is why `grade`
+measures rather than predicts. (Live example: after exposure was raised, contrast's spread had
+already moved from 74 to 79.6 before contrast was touched at all.)
+
+1. **Exposure** — put the subject in range. Face in 53-66; a landscape's median around 45-55.
+2. **Contrast / whites / blacks** — set the ends. Spread 60-80 is normal; under 55 reads flat and
+   over 85 is aggressive. Watch `clipped` and `crushed`: 0% is the goal, and `grade` refuses to pass
+   0.5% clipped or 1% crushed by default. Getting a target by blowing highlights is not a win.
+3. **White balance** — temperature then tint, on the FACE. Neutral is cast 0, but **skin is not
+   neutral**: a healthy face reads warm, roughly Cr +4 to +10. Driving a face's warmth to 0 makes a
+   corpse. Drive a grey card or a white wall to 0; drive a face to a warm target.
+4. **Saturation / vibrance** — last, and gently.
+
+## Matching two shots
+
+This is most of real grading, and it needs no theory at all: measure the shot you like, then drive
+the other one to those numbers.
+
+```
+scopes at the reference time, region face
+scopes at the target time, region face
+grade exposure   → the reference's brightness
+grade contrast   → the reference's spread
+grade temperature→ the reference's warmth
+```
+
+Match brightness and warmth before anything else; a 2-point brightness difference across a cut is
+visible, a 2-point saturation difference is not.
+
+## What to distrust
+
+- **A cast reading from a whole frame with a person in it.** Measure the face.
+- **Any target that needed clipping.** The tool backs off and says so; do not widen the guard to
+  "succeed".
+- **`max` as a steering statistic on exposure.** It saturates near 100 and stops responding, so the
+  answer becomes meaningless. `grade` flags this as low confidence — believe it, and steer the
+  median instead.
+- **Parameters marked untested in the result.** Exposure, contrast and temperature were swept live;
+  the rest have a steering statistic inferred from what the control is for. If a grade on one of
+  those does nothing, the statistic is probably wrong, not the parameter.
+- **Your own eye on a JPEG.** Report what you measured.
+
+## What is not reachable
+
+Curves, colour wheels and HSL secondaries are packed values, not numbers, and `grade` cannot drive
+them. Basic Correction, Creative's adjustments and Vignette are plain scalars and can be driven.
+Full map: `premiere-scripting/lumetri.md`.
+
+The grade is always the editor's to keep or undo; say what you changed and how many Cmd+Z steps it
+takes to back out.

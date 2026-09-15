@@ -49,9 +49,20 @@ const PARAMS = {
 const MAX_MEASURES = 6;       // 6 x ~0.7 s is the most this should ever cost the editor
 const CLAMP_EPSILON = 1e-6;   // a read-back that differs by more than this means Premiere refused the value
 
+// Hitting the number is not the job - a grade that reaches its target by blowing the highlights or
+// crushing the blacks has destroyed picture to satisfy a statistic, and no colourist would take it.
+// Every measurement already carries these shares, so guarding costs nothing extra. Both are shares of
+// pixels, in percent, from the same scopes measurement the target is read from.
+const GUARD = { clipped: 0.5, crushed: 1.0 };
+const damage = (m) => ({
+  clipped: Math.max(m.clipped.red, m.clipped.green, m.clipped.blue),
+  crushed: m.crushed,
+});
+const unsafe = (d, guard) => d.clipped > guard.clipped || d.crushed > guard.crushed;
+
 // set(value) -> the value Premiere reads back. measure() -> one scopes measurement.
 // Returns what it did, what it achieved, and every reading taken, so the caller can show its work.
-async function steer({ set, measure, param, target, statistic, start = 0, step, tolerance = 0.5 }) {
+async function steer({ set, measure, param, target, statistic, start = 0, step, tolerance = 0.5, guard = GUARD }) {
   const spec = PARAMS[param];
   if (!spec) throw new Error("unknown parameter: " + param);
   const statName = statistic || spec.steer;
@@ -71,12 +82,13 @@ async function steer({ set, measure, param, target, statistic, start = 0, step, 
     const readBack = Number(await set(value));
     const clamped = Math.abs(readBack - value) > CLAMP_EPSILON;
     const known = readings.find((r) => Math.abs(r.value - readBack) <= CLAMP_EPSILON);
-    if (known) return { value: readBack, stat: known.stat, clamped, repeat: true };
+    if (known) return { ...known, clamped, repeat: true }; // the whole reading, damage included
     if (measures >= MAX_MEASURES) return { value: readBack, clamped, exhausted: true };
     measures++;
-    const stat = readStat(await measure());
-    readings.push({ value: readBack, stat });
-    return { value: readBack, stat, clamped };
+    const m = await measure();
+    const stat = readStat(m), harm = damage(m);
+    readings.push({ value: readBack, stat, ...harm });
+    return { value: readBack, stat, clamped, ...harm };
   };
 
   await at(start);
@@ -115,7 +127,21 @@ async function steer({ set, measure, param, target, statistic, start = 0, step, 
       if (retry.stat !== undefined) applied = retry;
     }
   }
-  return done(null, solved, applied);
+  // Hitting the number is not the job. If the value that reaches the target also blows highlights or
+  // crushes blacks, fall back to the closest reading that did neither and say so: a target is a wish,
+  // clipped picture is damage, and the editor cannot get those pixels back.
+  let gaveUp = null;
+  if (applied.stat !== undefined && unsafe(applied, guard)) {
+    const safe = readings
+      .filter((r) => !unsafe(r, guard))
+      .sort((a, b) => Math.abs(a.stat - target) - Math.abs(b.stat - target))[0];
+    gaveUp = "backed off from the target: it would have clipped " + round(applied.clipped) + "% / crushed " + round(applied.crushed) + "%";
+    if (safe) {
+      await set(safe.value);
+      applied = safe;
+    }
+  }
+  return done(gaveUp, solved, applied);
 
   function done(problem, solvedValue, appliedReading) {
     // Whatever is closest to the target is what the clip is left showing, so report that, not the last
@@ -127,6 +153,7 @@ async function steer({ set, measure, param, target, statistic, start = 0, step, 
       param, statistic: statName, target,
       value: best ? best.value : start,
       achieved: best ? best.stat : null,
+      clipped: best ? best.clipped : null, crushed: best ? best.crushed : null,
       hit: !!best && Math.abs(best.stat - target) <= tolerance,
       reliable: !!(solvedValue && solvedValue.reliable),
       measures, readings, problem: problem || null,
@@ -135,4 +162,6 @@ async function steer({ set, measure, param, target, statistic, start = 0, step, 
   }
 }
 
-module.exports = { steer, STATISTICS, PARAMS, MAX_MEASURES };
+const round = (n) => Math.round(Number(n) * 100) / 100;
+
+module.exports = { steer, STATISTICS, PARAMS, MAX_MEASURES, GUARD };

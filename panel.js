@@ -545,7 +545,7 @@ async function previewFrames({ seconds = [], max_px = 512, solo_track, labels = 
 
 // Lumetri Scopes as numbers, from Premiere's own full-resolution render of the frame (grade included), plus one scope
 // picture. Added 2026-09-14 after the panel had no way to answer "is this exposed right" but eyeballing a thumbnail.
-async function scopesTool({ seconds = [], solo_track } = {}) {
+async function scopesTool({ seconds = [], solo_track, region = "frame" } = {}) {
   const secs = [].concat(seconds).map(Number).filter((n) => n >= 0).slice(0, 3);
   if (!secs.length) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds[] required (up to 3 timeline positions)", isError: true };
   const base = path.join(os.tmpdir(), "claude-for-adobe-scopes-" + Date.now().toString(36));
@@ -567,7 +567,9 @@ async function scopesTool({ seconds = [], solo_track } = {}) {
     const src = [b + ".png", b].find((f) => fs.existsSync(f)), jpg = b + "_scopes.jpg";
     try {
       if (!src) { content.push({ type: "text", text: "at " + secs[i] + "s: export failed (" + ok + ")" }); return; }
-      content.push({ type: "text", text: scopeReport(measureScopes(decodeRgb(src)), where(i, tc)) });
+      const box = region === "face" ? biggestFaceBox(src) : null;
+      const label = where(i, tc) + (box ? " — FACE only" : region === "face" ? " — whole frame (no face found)" : "");
+      content.push({ type: "text", text: scopeReport(measureScopes(decodeRgb(src, box)), label) });
       measured++;
       renderScopes(src, jpg);
       content.push({ type: "image", data: fs.readFileSync(jpg).toString("base64"), mimeType: "image/jpeg" });
@@ -585,7 +587,7 @@ async function scopesTool({ seconds = [], solo_track } = {}) {
 
 // One frame measured the way `scopes` measures it, as numbers rather than a report: Premiere's own
 // render of the composite at that time. The grade loop calls this after every write.
-async function measureFrameAt(seconds) {
+async function measureFrameAt(seconds, { region = "frame" } = {}) {
   const base = path.join(os.tmpdir(), "claude-for-adobe-grade-" + Date.now().toString(36));
   const raw = await host("frames", JSON.stringify([seconds]), base, "");
   if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
@@ -593,15 +595,38 @@ async function measureFrameAt(seconds) {
   const [b, ok] = String(rows[0] || "").split(COL);
   const src = [b + ".png", b].find((f) => f && fs.existsSync(f));
   if (!src) throw new Error("frame export failed at " + seconds + "s (" + ok + ")");
-  try { return measureScopes(decodeRgb(src)); }
-  finally { try { fs.rmSync(src, { force: true }); } catch (_) {} }
+  try {
+    const frame = measureScopes(decodeRgb(src));
+    if (region !== "face") return frame;
+    // One export, two decodes: the face costs no extra render. Grading a person by whole-frame numbers
+    // grades the room as well - a warm wall pulls the frame's cast away from the skin, and neutralising
+    // the frame then drains the face. So when a face is found, it is what gets measured.
+    const box = biggestFaceBox(src);
+    if (!box) return Object.assign(frame, { region: "frame", faceFound: false });
+    return Object.assign(measureScopes(decodeRgb(src, box)), { region: "face", faceFound: true, box });
+  } finally { try { fs.rmSync(src, { force: true }); } catch (_) {} }
+}
+
+// The biggest face in a rendered frame, as fractions of the frame, from macOS Vision (bin/ocr --faces).
+// NOTE: the vertical origin of these boxes has not been checked against a rendered frame, so a face crop
+// is reported alongside the whole-frame numbers until one live run confirms it lands on the face.
+function biggestFaceBox(file) {
+  let entry = null;
+  try {
+    const out = require("node:child_process").execFileSync(OCR_BIN, ["--faces", file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    entry = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
+  } catch (_) { return null; }
+  const faces = (entry && entry.faces) || [];
+  if (!faces.length) return null;
+  const f = faces.slice().sort((a, b) => (b.box[2] - b.box[0]) - (a.box[2] - a.box[0]))[0];
+  return { x0: f.box[0], y0: f.box[1], x1: f.box[2], y1: f.box[3] };
 }
 
 const round2 = (n) => (isFinite(n) ? Math.round(Number(n) * 100) / 100 : n);
 
 // Drive one Lumetri parameter until the picture measures what was asked for. The loop, the statistics
 // and the accuracy limits live in src/grade.cjs; this is the part that talks to Premiere.
-async function gradeTool({ parameter, target, statistic, seconds, track = 1, tolerance } = {}) {
+async function gradeTool({ parameter, target, statistic, seconds, track = 1, tolerance, region = "frame" } = {}) {
   const at = Number(seconds);
   if (!(at >= 0)) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds required (the timeline position to grade by)", isError: true };
   if (!GRADE_PARAMS[parameter]) return { text: "CLAUDE_FOR_ADOBE_ERROR:unknown parameter " + parameter + "; known: " + Object.keys(GRADE_PARAMS).join(", "), isError: true };
@@ -621,15 +646,25 @@ async function gradeTool({ parameter, target, statistic, seconds, track = 1, tol
 
   let result;
   try {
-    result = await steerGrade({ set, measure: () => measureFrameAt(at), param: parameter, target: Number(target), statistic, tolerance });
+    let measuredRegion = region, sawFace = false;
+    const measure = async () => {
+      const m = await measureFrameAt(at, { region });
+      measuredRegion = m.region || region; sawFace = !!m.faceFound;
+      return m;
+    };
+    result = await steerGrade({ set, measure, param: parameter, target: Number(target), statistic, tolerance });
+    result.measuredRegion = measuredRegion; result.sawFace = sawFace;
   } catch (error) { return err(card, error.message); }
 
   const lines = [
     (result.hit ? "CHECK PASS" : "CHECK MISS") + ": " + parameter + " = " + round2(result.value) + " on " + clip +
-      " — " + result.statistic + " measured " + round2(result.achieved) + ", asked for " + round2(Number(target)),
+      " — " + result.statistic + " of the " + (result.measuredRegion || "frame") + " measured " + round2(result.achieved) +
+      ", asked for " + round2(Number(target)),
     "readings: " + result.readings.map((r) => round2(r.value) + "→" + round2(r.stat)).join(", ") + " (" + result.measures + " renders)",
   ];
-  if (result.problem) lines.push("stopped: " + result.problem);
+  if (result.problem) lines.push(result.problem);
+  if (region === "face" && !result.sawFace) lines.push("no face was found, so this is the whole frame: a warm background pulls these numbers away from the skin.");
+  if (result.sawFace) lines.push("measured the face only (Vision's biggest face box), not the whole frame.");
   if (!result.hit && !result.problem) lines.push("that is as close as this parameter gets; another parameter or statistic may be the one that moves it.");
   if (result.hit && !result.reliable) lines.push("low confidence: the statistic barely moves over this range, so the value is approximate — check the picture.");
   if (!result.tested) lines.push("NOTE: " + parameter + " has not been swept live, so its steering statistic is inferred. Trust the picture over the number.");
@@ -2424,9 +2459,9 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { summary: { type: "string", description: "One line, shown to the user." }, code: { type: "string", description: "ES3 ExtendScript. End with a result expression." } }, required: ["summary", "code"] } },
   { name: "analyze_audio", description: "For every audio clip overlapping a timeline range of the active sequence: levels per window, a waveform sparkline, and silence ranges, in timeline seconds. Read from Premiere's own peak-file waveform cache. Use to answer questions about audio, not before remove_silences (it measures on its own).",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
-  { name: "scopes", description: "Lumetri Scopes as numbers for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
-    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
-  { name: "grade", description: "Set one Lumetri Color parameter on the clip at a timeline position until the picture MEASURES what you asked for. Adds Lumetri Color if the clip has none. Give the number you want the picture to reach, not the slider value: the panel brackets, writes and re-measures Premiere's own render (about 0.7 s each, at most 6), then reports every reading and whether it hit. Each parameter moves its own statistic and steering by the wrong one reads as nothing happening, so the default is the measured one: exposure -> brightness (luma median), contrast -> spread (luma p99-p1, the median barely moves), temperature -> warmth (cast Cr). Typical targets on the 0-100 scale: brightness 45-55 for a normally exposed face, spread 60-80, warmth 0 for neutral. Read the shot with `scopes` first, then set a target from what you saw. Exposure, contrast and temperature were swept live; the rest are inferred and say so in the result. Curves, colour wheels and HSL secondaries are not reachable this way - they are packed values, not numbers.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["exposure", "contrast", "temperature", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should measure, 0-100 (cast is -50..50)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "shadows", "highlights", "spread", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
+  { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `colour` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
+    inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face"], description: "\"face\" measures only Vision's biggest face box. Use it whenever a person is the subject: a warm wall or a coloured jacket drags whole-frame numbers away from the skin. Says so when no face is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
+  { name: "grade", description: "Load the `colour` skill before grading: it has the order of operations, what each number means and what \"correct\" is as a number. Sets one Lumetri Color parameter on the clip at a timeline position until the picture MEASURES what you asked for. Adds Lumetri Color if the clip has none. Give the number you want the picture to reach, not the slider value: the panel brackets, writes and re-measures Premiere's own render (about 0.7 s each, at most 6), then reports every reading and whether it hit. Each parameter moves its own statistic and steering by the wrong one reads as nothing happening, so the default is the measured one: exposure -> brightness (luma median), contrast -> spread (luma p99-p1, the median barely moves), temperature -> warmth (cast Cr). Typical targets on the 0-100 scale: brightness 45-55 for a normally exposed face, spread 60-80, warmth 0 for neutral. Read the shot with `scopes` first, then set a target from what you saw. Exposure, contrast and temperature were swept live; the rest are inferred and say so in the result. Curves, colour wheels and HSL secondaries are not reachable this way - they are packed values, not numbers.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["exposure", "contrast", "temperature", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should measure, 0-100 (cast is -50..50)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "shadows", "highlights", "spread", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face"], description: "What to measure. \"face\" measures only Vision's biggest face box, which is what you want whenever a person is the subject: whole-frame numbers grade the background too, so neutralising a warm room drains the skin. Falls back to the whole frame, and says so, when no face is found." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
   { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
   { name: "layer_frames", description: "One layer alone: every clip on a video track rendered with the other video tracks hidden, so that layer's own placement is judged for the shot alone. Reframe order: footage tracks in step 1 (picture), graphic tracks in step 3 (graphics). Fix with nudge_clip and the same track.",

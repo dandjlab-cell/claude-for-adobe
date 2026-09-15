@@ -3,6 +3,7 @@
 // Lumetri's own readout, so shots are compared with each other rather than against Lumetri numbers. A model reads
 // values reliably and a waveform picture poorly, so the numbers carry the answer and the picture corroborates.
 "use strict";
+const clamp01 = (n) => Math.min(1, Math.max(0, Number(n) || 0));
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { FFMPEG } = require("./media.cjs");
@@ -72,8 +73,14 @@ function report(m, label) {
 }
 
 // The exported PNG as packed RGB24, at full resolution (clip and crush shares need every pixel).
-function decodeRgb(png) {
-  const r = spawnSync(FFMPEG, ["-v", "error", "-i", png, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { maxBuffer: 256 * 1024 * 1024 });
+// box, when given, is {x0,y0,x1,y1} as fractions of the frame: measure only that rectangle. Grading a
+// person by whole-frame numbers is grading the background too - a warm wall drags the frame's cast far
+// from the face's, and neutralising the frame then drains the skin. The crop happens in ffmpeg, so the
+// pixel dimensions never have to be known here.
+function decodeRgb(png, box) {
+  const crop = box ? ["-vf", "crop=iw*" + clamp01(box.x1 - box.x0) + ":ih*" + clamp01(box.y1 - box.y0) +
+    ":iw*" + clamp01(box.x0) + ":ih*" + clamp01(box.y0)] : [];
+  const r = spawnSync(FFMPEG, ["-v", "error", "-i", png, "-frames:v", "1", ...crop, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0 || !r.stdout || !r.stdout.length) throw new Error("ffmpeg could not decode the frame: " + String(r.stderr || "").trim().slice(0, 200));
   return r.stdout;
 }
