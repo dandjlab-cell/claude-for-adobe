@@ -63,6 +63,9 @@ read-only script that enumerates `displayName` / `matchName` first, then write t
   key when a job is the editor's click. `premiere_shortcut` reads the editor's own bindings.
 - `reference.md`: the three API surfaces, object and property names, the can/cannot table by task with
   the exact call and trap per row, what is UXP-only or impossible, and the verification legend.
+- `lumetri.md`: all 130 Lumetri Color parameters by name and index — which are plain scalars a grade can
+  drive today, which are packed blobs (curves, wheels, HSL keys) that need decoding first, and which
+  statistic each measured parameter actually moves. Read before any colour work.
 - `snippets.md`: twelve complete ES3 scripts that pass the panel's gate (enumerate clips, scale/position,
   keyframe, sequence marker, clip markers, SRT caption track, insert at time, nest, volume, MOGRT text,
   find item by path, rename). Each is tagged verified or unverified.
