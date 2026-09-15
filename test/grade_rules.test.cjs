@@ -175,7 +175,7 @@ test("a parade end more than 20 off neutral is a coloured surface: no pad, no cu
   const f = frame(22, 45, 90, [32, 12, 4], [90, 90, 90]); // B-R -28 at the bottom: a red-orange object in shadow
   const pads = padsFor(f);
   assert.equal(pads.wheels.shadows, undefined, "no Shadows pad on an object's colour");
-  assert.ok(pads.needs.some((n) => /coloured surface/.test(n)), pads.needs.join(" | "));
+  assert.ok(pads.needs.some((n) => /the scene's own colour/.test(n)), pads.needs.join(" | "));
   assert.equal(levelsFor(f, null, f), null, "and no black-point curve: it would only crush the other two channels");
 });
 

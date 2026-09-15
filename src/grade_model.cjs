@@ -69,7 +69,7 @@ function predict(m, param, from, to) {
 
 function coupleBands(before, after) {
   if (!before.bands || !after.bands) return;
-  const pairs = [["blacks", "p1"], ["whites", "p99"], ["shadows", "p1"], ["highlights", "p99"], ["midtones", "mean"]];
+  const pairs = [["blacks", "p1"], ["blacks1", "p1"], ["whites", "p99"], ["whites1", "p99"], ["shadows", "p1"], ["highlights", "p99"], ["midtones", "mean"]];
   for (const [band, k] of pairs) {
     const b = after.bands[band];
     if (!b || b.rb === null || b.rb === undefined) continue;

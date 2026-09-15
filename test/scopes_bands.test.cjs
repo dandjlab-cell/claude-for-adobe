@@ -49,3 +49,14 @@ test("a channel on the floor is counted, so a curve that crushes two channels of
   const { damage } = require("../src/grade.cjs");
   assert.ok(damage(m).crushed > 49, "and the guard treats it as crushed");
 });
+
+test("the whites reference is the brightest 1% when it has enough pixels, the 3% otherwise", () => {
+  const { STATISTICS } = require("../src/grade.cjs");
+  const { castAt } = require("../src/wheels.cjs");
+  const f = { red: { p99: 90 }, green: { p99: 90 }, blue: { p99: 90 }, bands: { whites: { share: 3, rb: -14, g: 2.7 }, whites1: { share: 1, rb: -7.5, g: 1.2 }, blacks: { share: 3, rb: -30, g: -7 } } };
+  assert.equal(STATISTICS.whitesRB(f), -7.5, "a specular reflects the light: the canon's reference");
+  assert.deepEqual(castAt(f, "highlights"), [-7.5, 1.2]);
+  const thin = { ...f, bands: { ...f.bands, whites1: { share: 0.2, rb: 30, g: 0 } } };
+  assert.equal(STATISTICS.whitesRB(thin), -14, "too few pixels in the 1% band: the 3% is used");
+  assert.deepEqual(castAt(f, "shadows"), [-30, -7], "the blacks stay at 3%");
+});

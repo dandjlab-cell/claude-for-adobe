@@ -17,6 +17,12 @@ const { predict, solveKnob, SWEEPS } = require("./grade_model.cjs");
 // Statistics a grade is read from and steered by. The parade ones are what white balance IS on a
 // scope: the three channels' whites line up when the picture is neutral, whatever colour the subject
 // is - a tomato does not fool the parade the way it fools a frame-average cast.
+const whitesBand = (f) => {
+  if (!f.bands) return null;
+  const one = f.bands.whites1, three = f.bands.whites;
+  if (one && one.rb !== null && one.rb !== undefined && one.share >= 0.5) return one;
+  return three && three.rb !== null && three.rb !== undefined ? three : null;
+};
 const STATISTICS = {
   brightness: (m) => m.luma.p50,
   // The tonal ends are the FRAME's, like the parade whites below: the canon's black point is the
@@ -31,8 +37,12 @@ const STATISTICS = {
   // light. White surfaces and specular hits anywhere in the room are what line up when it is neutral.
   // From PAIRED pixels when the measurement carries the bands (the brightest / darkest 3% of pixels,
   // scopes.cjs); the separately taken channel percentiles are the fallback for older readings.
-  whitesRB: (m) => { const f = m.frame || m; const b = f.bands && f.bands.whites; return b && b.rb !== null ? b.rb : f.blue.p99 - f.red.p99; },        // > 0 blue, < 0 warm
-  whitesG: (m) => { const f = m.frame || m; const b = f.bands && f.bands.whites; return b && b.g !== null ? b.g : f.green.p99 - (f.red.p99 + f.blue.p99) / 2; },
+  // The whites reference is the brightest 1% when it has enough pixels: a specular is the reflection
+  // of the light itself, the canon's white-balance reference, where the brightest 3% can be a cream
+  // cabinet (C187, 22:38: brightest 1% -7.5, brightest 3% -14, every other band -25..-32 - a warm room
+  // under a mildly warm light; the 3% reference cooled it by 29 and had to give half back for clipping).
+  whitesRB: (m) => { const f = m.frame || m; const b = whitesBand(f); return b ? b.rb : f.blue.p99 - f.red.p99; },        // > 0 blue, < 0 warm
+  whitesG: (m) => { const f = m.frame || m; const b = whitesBand(f); return b ? b.g : f.green.p99 - (f.red.p99 + f.blue.p99) / 2; },
   blacksRB: (m) => { const f = m.frame || m; const b = f.bands && f.bands.blacks; return b && b.rb !== null ? b.rb : f.blue.p1 - f.red.p1; },
   red: (m) => m.red.mean, green: (m) => m.green.mean, blue: (m) => m.blue.mean,
   warmth: (m) => m.cast.cr, tintCast: (m) => m.cast.cb,

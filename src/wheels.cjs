@@ -56,7 +56,10 @@ const BAND = { shadows: "blacks", midtones: "midtones", highlights: "whites" };
 const END = { shadows: "P1", midtones: "P50", highlights: "P99" };
 function castAt(m, wheel) {
   const f = m.frame || m;
-  const b = f.bands && f.bands[BAND[wheel]];
+  // The whites are the brightest 1% when it has enough pixels (a specular reflects the light; the 3%
+  // can be a cream cabinet - C187, 22:38), the brightest 3% otherwise; the blacks stay at 3%.
+  const one = wheel === "highlights" && f.bands && f.bands.whites1;
+  const b = (one && one.rb !== null && one.rb !== undefined && one.share >= 0.5) ? one : (f.bands && f.bands[BAND[wheel]]);
   if (b && b.rb !== null && b.rb !== undefined) return [b.rb, b.g];
   if (wheel === "midtones") { // no per-channel median in the measurement: use the means
     return [f.blue.mean - f.red.mean, f.green.mean - (f.red.mean + f.blue.mean) / 2];
@@ -173,8 +176,10 @@ function predictPads(m, wheels, current = null) {
       const dx = to[0] - from[0], dy = to[1] - from[1];
       const dBR = a * dx + b * dy, dG = c * dx + d * dy;
       f.blue[k] += dBR / 2; f.red[k] -= dBR / 2; f.green[k] += dG;
-      const band = f.bands && f.bands[BAND[wheel]];
-      if (band && band.rb !== null && band.rb !== undefined) { band.rb += dBR; band.g += dG; }
+      for (const key of wheel === "highlights" ? ["whites", "whites1"] : [BAND[wheel]]) {
+        const band = f.bands && f.bands[key];
+        if (band && band.rb !== null && band.rb !== undefined) { band.rb += dBR; band.g += dG; }
+      }
     }
   };
   apply(out);
