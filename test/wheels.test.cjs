@@ -62,6 +62,19 @@ test("the pads' predicted effect on the parade ends follows the same model the s
   assert.equal(after.red.p99, 90, "the whites are the Highlights wheel's, untouched by a Shadows pad");
 });
 
+test("the pads read and are fitted on the paired-pixel bands: the darkest and brightest 3% as pixels", () => {
+  const m = { luma: { p1: 8, p99: 76 }, red: { p1: 9.4, p99: 74.1, mean: 50 }, green: { p1: 7.8, p99: 76.1, mean: 39 }, blue: { p1: 4.7, p99: 76.1, mean: 29 },
+    bands: { blacks: { share: 3, rb: -1.6, g: -0.8 }, whites: { share: 3, rb: 2.7, g: 1.2 }, midtones: { share: 74, rb: -27.5, g: 0.4 }, shadows: { share: 20, rb: -18, g: -1.6 }, highlights: { share: 5, rb: 2.4, g: 1.2 } } };
+  assert.deepEqual(castAt(m, "shadows"), [-1.6, -0.8], "the blacks band, not blue p1 - red p1 (-4.7)");
+  assert.deepEqual(castAt(m, "highlights"), [2.7, 1.2]);
+  assert.deepEqual(castAt({ red: m.red, green: m.green, blue: m.blue }, "shadows"), [4.7 - 9.4, 7.8 - (9.4 + 4.7) / 2], "no bands: the channel ends, as before");
+  // The 21:00 sweep: a Shadows pad at hue 0 (red) sat 0.15 moved the blacks band by -6.6 on B-R.
+  const [[a]] = castMatrix("shadows");
+  assert.ok(a * 0.15 < -5 && a * 0.15 > -8, "d(B-R)/dx x 0.15 = " + (a * 0.15).toFixed(1));
+  const r = solveCast("shadows", [6, 0]); // blacks warm by 6 -> add 6 to B-R
+  assert.ok(r.hue > 150 && r.hue < 240 && r.sat > 0.08 && r.sat < 0.2, "a cyan-blue pad, about the sweep's radius: " + JSON.stringify(r));
+});
+
 test("a warm cast is cancelled by a cool pad, opposite direction", () => {
   const r = solveCast("shadows", [6, 0]); // blacks warm by 6 -> B-R must rise by 6
   assert.ok(r.hue > 150 && r.hue < 240, "cyan/blue side, got " + r.hue.toFixed(1));

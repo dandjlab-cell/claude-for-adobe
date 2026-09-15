@@ -29,9 +29,11 @@ const STATISTICS = {
   // The parade-whites statistics read the WHOLE FRAME even when a subject was measured (`frame` is
   // attached by the panel): a red product's brightest pixels are red, which is its colour, not the
   // light. White surfaces and specular hits anywhere in the room are what line up when it is neutral.
-  whitesRB: (m) => { const f = m.frame || m; return f.blue.p99 - f.red.p99; },        // > 0 blue, < 0 warm
-  whitesG: (m) => { const f = m.frame || m; return f.green.p99 - (f.red.p99 + f.blue.p99) / 2; },
-  blacksRB: (m) => { const f = m.frame || m; return f.blue.p1 - f.red.p1; },
+  // From PAIRED pixels when the measurement carries the bands (the brightest / darkest 3% of pixels,
+  // scopes.cjs); the separately taken channel percentiles are the fallback for older readings.
+  whitesRB: (m) => { const f = m.frame || m; const b = f.bands && f.bands.whites; return b && b.rb !== null ? b.rb : f.blue.p99 - f.red.p99; },        // > 0 blue, < 0 warm
+  whitesG: (m) => { const f = m.frame || m; const b = f.bands && f.bands.whites; return b && b.g !== null ? b.g : f.green.p99 - (f.red.p99 + f.blue.p99) / 2; },
+  blacksRB: (m) => { const f = m.frame || m; const b = f.bands && f.bands.blacks; return b && b.rb !== null ? b.rb : f.blue.p1 - f.red.p1; },
   red: (m) => m.red.mean, green: (m) => m.green.mean, blue: (m) => m.blue.mean,
   warmth: (m) => m.cast.cr, tintCast: (m) => m.cast.cb,
   saturation: (m) => m.saturation.p50,

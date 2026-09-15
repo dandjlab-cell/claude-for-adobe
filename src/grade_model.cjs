@@ -60,7 +60,23 @@ function predict(m, param, from, to) {
   // so the frame's whites stayed flat in the model, never crossed zero, and every temperature went to
   // the end of its range.
   if (m.frame) { out.frame = JSON.parse(JSON.stringify(m.frame)); move(m.frame, out.frame); }
+  // The casts by band (paired pixels) were not in these sweeps: move them by what the same knob did to
+  // the channel ends, so a white balance the model predicts is not cancelled again by the pads that
+  // read the bands next.
+  coupleBands(m, out); if (m.frame) coupleBands(m.frame, out.frame);
   return out;
+}
+
+function coupleBands(before, after) {
+  if (!before.bands || !after.bands) return;
+  const pairs = [["blacks", "p1"], ["whites", "p99"], ["shadows", "p1"], ["highlights", "p99"], ["midtones", "mean"]];
+  for (const [band, k] of pairs) {
+    const b = after.bands[band];
+    if (!b || b.rb === null || b.rb === undefined) continue;
+    const dRB = (after.blue[k] - after.red[k]) - (before.blue[k] - before.red[k]);
+    const dG = (after.green[k] - (after.red[k] + after.blue[k]) / 2) - (before.green[k] - (before.red[k] + before.blue[k]) / 2);
+    b.rb = Math.round((b.rb + dRB) * 10) / 10; b.g = Math.round((b.g + dG) * 10) / 10;
+  }
 }
 
 // The knob value that should bring `readStat(m)` to `target`, from the current value, by this model.

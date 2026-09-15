@@ -46,10 +46,18 @@ function format(wheels) {
 }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v)));
 
-// Cast at a wheel's end of the parade: (B - R, G - (R + B) / 2), the two axes the parade shows.
+// Cast at a wheel's end of the parade: (B - R, G - (R + B) / 2), the two axes the parade shows. Read
+// from PAIRED pixels when the measurement carries the bands (scopes.cjs: blacks = the darkest 3% of
+// pixels, whites = the brightest 3%, midtones = the 30-65 level band) - the parade's bottoms and tops
+// as pixels. Three separately taken channel percentiles are the fallback for older measurements; once a
+// tonal knob puts one channel on the floor they stop being the same pixels, which is how the 20:05 run
+// read a warm bottom getting warmer after a correct pad.
+const BAND = { shadows: "blacks", midtones: "midtones", highlights: "whites" };
 const END = { shadows: "P1", midtones: "P50", highlights: "P99" };
 function castAt(m, wheel) {
   const f = m.frame || m;
+  const b = f.bands && f.bands[BAND[wheel]];
+  if (b && b.rb !== null && b.rb !== undefined) return [b.rb, b.g];
   if (wheel === "midtones") { // no per-channel median in the measurement: use the means
     return [f.blue.mean - f.red.mean, f.green.mean - (f.red.mean + f.blue.mean) / 2];
   }
@@ -57,16 +65,22 @@ function castAt(m, wheel) {
   return [f.blue[k] - f.red[k], f.green[k] - (f.red[k] + f.blue[k]) / 2];
 }
 
-// 2x2 response of a wheel's pad on its cast, fitted by least squares from the sweep's four hues.
+// 2x2 response of a wheel's pad on its cast, fitted by least squares from a sweep's four hues. Fitted
+// on the band statistic (the 21:00 sweep, `wheelBands`) when that sweep has the wheel; the channel-end
+// statistic from the older sweep otherwise (Midtones).
+const BANDS_SWEEP = require("./lumetri_sweeps.json").wheelBands;
 function castMatrix(wheel) {
-  const n = SWEEPS.neutral, end = END[wheel];
-  const rows = SWEEPS[wheel].filter((p) => p.sat > 0);
-  const nb = n["blue" + end] - n["red" + end], ng = n["green" + end] - (n["red" + end] + n["blue" + end]) / 2;
+  const banded = BANDS_SWEEP && BANDS_SWEEP[wheel];
+  const n = banded ? BANDS_SWEEP.neutral : SWEEPS.neutral, end = END[wheel], key = BAND[wheel];
+  const rows = (banded ? BANDS_SWEEP[wheel] : SWEEPS[wheel]).filter((p) => p.sat > 0);
+  const castOf = banded ? (r) => [r[key + "RB"], r[key + "G"]] : (r) => [r["blue" + end] - r["red" + end], r["green" + end] - (r["red" + end] + r["blue" + end]) / 2];
+  const [nb, ng] = castOf(n);
   // Solve d = [a b; c d] * [x y] for each row; with four rows use normal equations on x and y.
   let sxx = 0, sxy = 0, syy = 0, sxb = 0, syb = 0, sxg = 0, syg = 0;
   for (const p of rows) {
     const x = p.sat * Math.cos(p.hue * Math.PI / 180), y = p.sat * Math.sin(p.hue * Math.PI / 180);
-    const db = (p["blue" + end] - p["red" + end]) - nb, dg = (p["green" + end] - (p["red" + end] + p["blue" + end]) / 2) - ng;
+    const [cb, cg] = castOf(p);
+    const db = cb - nb, dg = cg - ng;
     sxx += x * x; sxy += x * y; syy += y * y; sxb += x * db; syb += y * db; sxg += x * dg; syg += y * dg;
   }
   const det = sxx * syy - sxy * sxy;
@@ -159,6 +173,8 @@ function predictPads(m, wheels, current = null) {
       const dx = to[0] - from[0], dy = to[1] - from[1];
       const dBR = a * dx + b * dy, dG = c * dx + d * dy;
       f.blue[k] += dBR / 2; f.red[k] -= dBR / 2; f.green[k] += dG;
+      const band = f.bands && f.bands[BAND[wheel]];
+      if (band && band.rb !== null && band.rb !== undefined) { band.rb += dBR; band.g += dG; }
     }
   };
   apply(out);
