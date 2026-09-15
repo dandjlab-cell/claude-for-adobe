@@ -9,6 +9,32 @@ You cannot see. `preview_frames` gives you a small JPEG and you will misjudge co
 picture is for composition and framing, not for grade decisions. **The scopes are your eyes.** Every
 judgement below is a number you can measure and a number you can drive.
 
+## "Grade this video"
+
+The whole job, start to finish. Say the plan in three lines, then do it; do not ask which shot to
+start from unless the editor named one.
+
+1. `sequence_overview` — the clips and their ranges.
+2. **Measure every clip once**: `scopes` at each clip's midpoint, `region: "subject"`. Note which
+   region actually came back (the panel says: subject, face, or whole frame because nothing was
+   found) and how much of the frame it covered. Where a face is the subject, measure `face` too —
+   that is the skin reading.
+3. **Pick the reference.** The shot the editor named; otherwise the best-exposed face shot (face
+   brightness nearest 53-66, nothing clipped or crushed); otherwise the best-exposed subject shot.
+   Say which one and why in one line. Everything else is matched to it.
+4. **Grade every other clip to the reference**, in timeline order, same region it was measured
+   with: `grade exposure` → the reference's brightness, then `grade contrast` → its spread, then
+   `grade temperature` → its warmth. Skip a step when the clip is already within 1 of the target -
+   that saves renders and leaves good footage alone. A reading that backed off because it would
+   have clipped stays where the tool left it; do not widen the guard.
+5. **Verify**: `scopes` at each graded clip again. Report one table - clip, region, before → after
+   for brightness / spread / warmth, what was set, anything that backed off or fell back to the
+   whole frame - and one line on how to undo (the grade is on the working copy; Discard copy
+   removes all of it).
+
+Cost: each `grade` is 3-5 renders at about 0.7 s, so a 20-clip sequence takes a few minutes. Say
+so once at the start and keep going; do not stop to ask between clips.
+
 ## Measure the subject, not the frame
 
 `scopes` and `grade` both take a `region`:
