@@ -95,26 +95,34 @@ function goalsFor(m, region = "frame") {
     if (sat < SKIN_SAT[0] || sat > SKIN_SAT[1]) needs.push("skin saturation " + round(sat) + "% (20-50): Saturation");
   }
 
-  // 2. White point: Whites. It clips past about +50, so an automatic pass caps it there and reports
-  //    what is left; a shot that needs more is a taste call (grade_shot), not a balance.
+  // 2. White point: Whites, then Highlights for what Whites leaves. Whites clips past about +50, so
+  //    an automatic pass caps it there; Highlights (a bright-areas control that never clipped in its
+  //    sweep, +100 = p99 75.7 -> 87.8) finishes, capped at 60 - a shot that needs more is a taste
+  //    call (grade_shot), not a balance.
   const wp = f.luma.p99;
-  if (wp < ACCEPT.whiteMin) goals.push({ param: "whites", statistic: "whitePoint", target: 92, cap: 50, why: "white point " + round(wp) + " → 92" });
-  else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, cap: 50, why: "white point " + round(wp) + " → 93" });
+  const whiteLow = (state) => frameOf(state).luma.p99 < ACCEPT.whiteMin;
+  if (wp < ACCEPT.whiteMin) {
+    goals.push({ param: "whites", statistic: "whitePoint", target: 92, cap: 50, why: "white point " + round(wp) + " → 92" });
+    goals.push({ param: "highlights", statistic: "whitePoint", target: 92, cap: 60, onlyIf: whiteLow, why: "Highlights finishes what Whites leaves" });
+  } else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, cap: 50, why: "white point " + round(wp) + " → 93" });
 
   // 3. Contrast, on the FRAME's spread, only when flat or harsh, never past +-60.
   const spread = STATISTICS.spread(f);
   if (spread < SPREAD.flat || spread > SPREAD.harsh) goals.push({ param: "contrast", statistic: "spread", target: SPREAD.target, cap: 60, why: "frame spread " + round(spread) + " is " + (spread < SPREAD.flat ? "flat" : "harsh") });
 
-  // 4. Black point: the Blacks slider, LAST - it is the most local knob and every knob above moves the
-  //    black point too, so it is solved on the state predicted after them, from where the knob is.
-  //    Lowering is the calibrated slope down to -20 and no further; a black point beyond that reach is
-  //    a lifted shadow region, which is another tool's job (Shadows slider, a curve), said out loud.
+  // 4. Black point: Shadows for a lifted one, then Blacks LAST for the toe. Blacks is the most local
+  //    knob and every knob above moves the black point too, so both are solved on the state predicted
+  //    after them, from where the knob is. A black point beyond Blacks' reach (a toe control,
+  //    calibrated to -20) is a lifted dark region, which is the Shadows slider's job (Adobe: "adjusts
+  //    dark areas"; -100 = p1 8.2 -> 4.7 with the median 41.6 -> 31, so it is capped at 60 - density
+  //    is not a look either). Blacks then takes what is left.
   const bp = f.luma.p1;
   if (bp > ACCEPT.blackMax) {
     const target = BLACK_POINT[1] - 1;
+    const blackLifted = (state) => frameOf(state).luma.p1 > ACCEPT.blackMax;
+    if (bp - target > BLACKS_REACH * BLACKS_SLOPE) goals.push({ param: "shadows", statistic: "blackPoint", target, cap: 60, onlyIf: blackLifted, why: "black point " + round(bp) + " is beyond Blacks' reach: Shadows first" });
     const solve = (state, from = 0) => { const p1 = frameOf(state).luma.p1; return p1 > ACCEPT.blackMax ? Math.max(-BLACKS_REACH, from - (p1 - target) / BLACKS_SLOPE) : from; };
     goals.push({ param: "blacks", statistic: "blackPoint", target, solve, why: "black point " + round(bp) + " → " + target });
-    if (bp - target > BLACKS_REACH * BLACKS_SLOPE) needs.push("black point " + round(bp) + " is beyond Blacks' reach (a toe control; -" + BLACKS_REACH + " at most): Shadows slider or a curve for the rest");
   } else if (f.crushed > 1 || bp < BLACK_POINT[0]) {
     goals.push({ param: "blacks", statistic: "blackPoint", target: BLACK_POINT[0] + 2, why: "blacks " + (f.crushed > 1 ? "crushed " + round(f.crushed) + "%" : "at " + round(bp)) + " → lifted to " + (BLACK_POINT[0] + 2) });
   }

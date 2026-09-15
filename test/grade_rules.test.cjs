@@ -27,15 +27,27 @@ test("a low white point is Whites, never Exposure and never a subject brightness
   // blacks with it.
   const f = frame(5, 30, 73, [5, 5, 5], [73, 73, 73]);
   const g = goalsFor(withSubject(f, frame(7, 21, 51, [7, 7, 6], [57, 50, 51])), "subject");
-  assert.deepEqual([...g].map((x) => x.param), ["whites"]);
+  assert.deepEqual([...g].map((x) => x.param), ["whites", "highlights"], "Whites, then Highlights finishes what the +50 cap leaves");
   assert.ok([...g].every((x) => x.statistic !== "brightness"), "no invented subject band");
   assert.equal(g[0].cap, 50, "Whites clips past +50: an automatic pass stops there");
+  assert.equal(g[1].cap, 60);
+  assert.equal(g[1].onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "Highlights is skipped once the white point is in the band");
+  assert.equal(g[1].onlyIf(frame(5, 40, 80, [5, 5, 5], [80, 80, 80])), true);
+});
+
+test("a whole-shot plan skips a conditional goal the earlier knobs made unnecessary", async () => {
+  const { planShot } = require("../src/grade.cjs");
+  const sets = [];
+  const m = frame(5, 40, 90, [5, 5, 5], [90, 90, 90]);
+  const r = await planShot({ set: (v, p) => { sets.push(p); return v; }, measure: async () => m, measured: m, goals: [{ param: "highlights", target: 92, onlyIf: () => false }] });
+  assert.equal(r.plan[0].skipped, "not needed after the knobs before it");
+  assert.deepEqual(sets, [], "nothing written for a skipped goal");
 });
 
 test("the sliders compose: whites, contrast, then blacks last, solved on the predicted state", () => {
   const g = goalsFor(frame(14, 40, 65, [14, 14, 14], [65, 65, 65]), "frame"); // lifted, low, flat (spread 51)
-  assert.deepEqual([...g].map((x) => x.param), ["whites", "contrast", "blacks"]);
-  const b = g[2];
+  assert.deepEqual([...g].map((x) => x.param), ["whites", "highlights", "contrast", "shadows", "blacks"]);
+  const b = g[4];
   assert.equal(typeof b.solve, "function", "Blacks re-solves from where the knobs before it leave the black point");
   assert.ok(b.solve(frame(12, 40, 90, [12, 12, 12], [90, 90, 90])) < b.solve(frame(8, 40, 90, [8, 8, 8], [90, 90, 90])), "a higher black point asks for more");
   assert.equal(b.solve(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), 0, "already at the black point: no move");
@@ -63,7 +75,11 @@ test("a lifted black point comes down with Blacks from the measured slope, never
   const lifted = frame(22, 40, 90, [22, 22, 22], [90, 90, 90]);
   const far = goalsFor(lifted, "frame");
   assert.equal(far.find((x) => x.param === "blacks").solve(lifted), -20, "Blacks is a toe control: -20 is as far as the calibration goes (-40 moved 22 -> 18 live)");
-  assert.ok(far.needs.some((n) => /beyond Blacks' reach/.test(n)), "and the rest is said out loud: " + far.needs);
+  assert.deepEqual([...far].map((x) => x.param), ["shadows", "blacks"], "beyond Blacks' reach, the Shadows slider (dark areas) goes first, Blacks takes what is left");
+  const sh = far[0];
+  assert.equal(sh.cap, 60, "Shadows costs midtone density: capped");
+  assert.equal(sh.onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "skipped if the knobs before it already brought the black point down");
+  assert.equal(goalsFor(frame(10, 40, 90, [10, 10, 10], [90, 90, 90]), "frame").some((x) => x.param === "shadows"), false, "within Blacks' reach: Blacks alone");
   const crushed = goalsFor(frame(0, 40, 90, [0, 0, 0], [90, 90, 90], { crushed: 4 }), "frame").find((x) => x.param === "blacks");
   assert.ok(crushed && crushed.target > 0 && crushed.solve === undefined, "crushed blacks are lifted by the model");
 });

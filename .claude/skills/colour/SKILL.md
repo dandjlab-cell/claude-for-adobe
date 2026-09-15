@@ -101,9 +101,10 @@ Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour se
 | white balance (whole-parade cast) | Temperature | calibrated; solved on the whites, capped at ±50 |
 | shadow cast (what is left) | Shadows wheel pad | 2x2 model fitted at sat 0.15; pad ≤ 0.3, one direction-aware nudge |
 | highlight cast (what is left) | Highlights wheel pad | same |
-| white point | Whites | calibrated; clips past +50, an automatic pass stops there |
+| white point | Whites, then Highlights | Whites clips past +50, an automatic pass stops there; Highlights (bright areas, never clipped in its sweep) finishes, capped at 60 |
 | contrast | Contrast | calibrated; capped at ±60 |
-| black point | Blacks, last | a toe control (Adobe: "black clipping"); calibrated to -20 only, the rest is reported as a Shadows/curve job |
+| lifted black point (beyond 12) | Shadows | a dark-areas control (Adobe): -100 = p1 8.2 → 4.7 but the median 41.6 → 31, so capped at 60 |
+| black point | Blacks, last | a toe control (Adobe: "black clipping"); calibrated to -20 only, takes what Shadows leaves |
 | a face's skin luma | Exposure | calibrated (±2 stops, highlight-protected); used for nothing else |
 | skin hue / midtones | Midtones wheel | calibrated, not yet driven |
 | saturation | Saturation / Vibrance | writable, not calibrated |

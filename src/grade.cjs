@@ -50,8 +50,8 @@ const PARAMS = {
   tint: { lumetri: "Tint", steer: "whitesG", range: [-100, 100], step: 25, tested: false },
   exposure: { lumetri: "Exposure", steer: "brightness", range: [-5, 5], step: 0.5, tested: true },
   contrast: { lumetri: "Contrast", steer: "spread", range: [-100, 100], step: 25, tested: true },
-  highlights: { lumetri: "Highlights", steer: "whitePoint", range: [-100, 100], step: 25, tested: false },
-  shadows: { lumetri: "Shadows", steer: "blackPoint", range: [-100, 100], step: 25, tested: false },
+  highlights: { lumetri: "Highlights", steer: "whitePoint", range: [-100, 100], step: 25, tested: true }, // p99 58.8 -> 87.8, peak 95.7 at +100: never clips
+  shadows: { lumetri: "Shadows", steer: "blackPoint", range: [-100, 100], step: 25, tested: true },     // dark areas: p1 4.7 -> 17.6, but the median moves 31 -> 52.9 with it
   whites: { lumetri: "Whites", steer: "whitePoint", range: [-100, 100], step: 25, tested: true },   // p99 56.5 -> 99.6; clips past +50
   blacks: { lumetri: "Blacks", steer: "blackPoint", range: [-100, 100], step: 25, tested: true },   // p1 0 -> 20.4; crushes below -20
   saturation: { lumetri: "Saturation", steer: "saturation", range: [0, 200], step: 20, tested: false, neutral: 100 },
@@ -176,6 +176,9 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     if (!readStat) throw new Error("unknown statistic: " + statName);
     // Solve from where the knob actually is: an editor's earlier move, or a previous grade, is the
     // starting point, not zero. Assuming neutral would compound on top of whatever is already set.
+    // A goal can be conditional on the state the knobs before it predict: Highlights finishes a white
+    // point only if Whites left it low, Shadows precedes Blacks only if the black point is still lifted.
+    if (g.onlyIf && !g.onlyIf(state)) { plan.push({ param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), skipped: "not needed after the knobs before it" }); continue; }
     const from = current ? Number(await current(g.param)) : (spec.neutral || 0);
     const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), from };
     // A caller may bring its own solve (from a measured slope the sweep cannot give, like lowering
