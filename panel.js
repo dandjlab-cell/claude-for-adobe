@@ -789,6 +789,16 @@ function satWriter(at, track) {
   return { read: () => call(""), write: (points) => call(formatSatCurve(points)) };
 }
 
+// The white balance of an earlier cut of the same source file, predicted on this cut's read; null when
+// this cut already carries it. The same shape temperatureFor returns, so the pass writes it the same way.
+function matchedBalance(m, ref, tempFrom = 0, tintFrom = 0) {
+  const temp = isFinite(ref.temp) ? ref.temp : tempFrom, tint = isFinite(ref.tint) ? ref.tint : tintFrom;
+  if (Math.abs(temp - tempFrom) < 0.5 && Math.abs(tint - tintFrom) < 0.5) return null;
+  let predicted = gradePredict(m, "temperature", tempFrom, temp);
+  predicted = gradePredict(predicted, "tint", tintFrom, tint);
+  return { value: temp, tint, predicted, why: "matched to " + ref.label + " (same source)" };
+}
+
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
 // all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
 async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
@@ -881,27 +891,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // the pads are left alone for this clip: writing "all neutral" over an unknown state is not a grade.
     const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), tiw = lumetriWriter(at, track, "Tint", region), cw = curveWriter(at, track), sw = satWriter(at, track);
     const tookOf = () => { const totalMs = Date.now() - clipT0, hostCalls = hostTime.calls - host0.calls; return " [" + (totalMs / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " host calls, rest " + (Math.max(0, totalMs - readMs - renderMs) / 1000).toFixed(1) + "]"; };
-    if (matched[c.name]) {
-      const ref = matched[c.name];
-      try {
-        await tw.set(ref.temp); await tiw.set(ref.tint);
-        if (ref.wheels) await ww.write(ref.wheels);
-        if (ref.curves) await cw.write(ref.curves);
-        await sw.write(ref.sat);
-        for (const [param, value] of Object.entries(ref.sliders)) await lumetriWriter(at, track, GRADE_PARAMS[param].lumetri, region).set(value);
-        touched++;
-        let tail = " (not confirmed)";
-        if (confirm) {
-          const st = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++;
-          const v = gradeVerdict(st, st.region || region), f1 = st.frame || st;
-          balanced += v.balanced ? 1 : 0;
-          tail = " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(st)) + " / whites " + round2(GRADE_STATS.whitesRB(st)) + (v.balanced ? " ✓" : " — " + v.notes.join("; "));
-        }
-        const took = tookOf(); log("grade " + label + took);
-        lines.push(label + " → matched to " + ref.label + " (same source): " + ref.summary + tail + took);
-      } catch (error) { lines.push(label + ": " + error.message); }
-      continue;
-    }
+    // A later cut of a file already graded: its COLOUR (temperature, tint, pads, roll-off) is the first
+    // cut's - the same light - and only the tone (curve, whites, highlights, contrast) is solved here,
+    // on this cut's own read. The 00:58 run copied the whole state and the reference's Whites 100 and
+    // curve clipped 4% / crushed 9.4% on frames with other content.
+    const ref = matched[c.name] || null;
     let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null, currentSat = null, satErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
     try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
@@ -937,9 +931,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    shares, then each end's wheel pad for what is left, solved on the state predicted after
     //    temperature. The casts are read here, before the tonal sliders, because a bottom pulled to the
     //    floor cannot be read. The sliders are solved on the state predicted after the pads.
-    const temp = gradeTemperatureFor(m, tempFrom, tintFrom);
+    const temp = ref ? matchedBalance(m, ref, tempFrom, tintFrom) : gradeTemperatureFor(m, tempFrom, tintFrom);
     const afterTemp = temp ? temp.predicted : m;
-    const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
+    const pads = ref ? { wheels: Object.fromEntries(Object.entries(ref.wheels || {}).filter(([, w]) => w.sat > 0.005).map(([k, w]) => [k, { ...w, why: ["matched to " + ref.label] }])), needs: [] }
+      : wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
     const padMoves = Object.keys(pads.wheels);
     const afterBalance = padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
     // The black point: the Master curve's bottom point, a levels move that lands where it is asked
@@ -957,7 +952,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Written with the first batch, not after the corrections: the 00:27 run wrote it last and the
     // blacks cast moved 1-3 points on the final read that nothing then corrected (C200 and C228 lost
     // their tick). In the batch, the corrections rescale from a reading that already carries it.
-    const sat = satErr ? null : gradeSatCurveFor(m, currentSat);
+    const sat = satErr ? null : ref ? (ref.sat.length ? { points: ref.sat, why: "matched to " + ref.label } : null) : gradeSatCurveFor(m, currentSat);
     if (satErr) needs.push("Luma vs Sat not read (" + satErr + "): no saturation roll-off");
     else if (sat) parts.push("sat roll-off: " + sat.why);
     else if (currentSat && currentSat.length) parts.push("Luma vs Sat left as found (" + currentSat.length + " points)");
@@ -1013,9 +1008,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       // Two "before" states: the pads were solved against afterTemp (predicted), the white balance
       // against the frame as read - on the first pass each is judged against its own; from the
       // second pass on, both against the state before the last write.
-      let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, wbBefore = m, padSolved = pads.wheels;
+      let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, wbBefore = m, padSolved = ref ? {} : pads.wheels; // a matched colour is not corrected
       let tempNow = temp ? temp.value : tempFrom, tintNow = temp && temp.tint !== null ? temp.tint : tintFrom, tempBase = tempFrom, tintBase = tintFrom;
-      let tempWrote = !!(temp && temp.value !== tempFrom), tintWrote = !!(temp && temp.tint !== null); // what the last write moved
+      let tempWrote = !ref && !!(temp && temp.value !== tempFrom), tintWrote = !ref && !!(temp && temp.tint !== null); // what the last write moved
       let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? lev.predicted.luma.p1 : null;
       // A backoff (planShot's or the balance restore) spent one render: it counts as the first pass,
       // so one correction still follows it (22:51: C198 and C209 kept whites blue by 3.5-6.7 because the
@@ -1046,7 +1041,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         // the pads, t = -c0.d / d.d on the whites' cast, applied to the move; skipped when the pads'
         // correction already touched the whites (two corrections on one end are a guess).
         let temp2 = null, tint2 = null;
-        if (temp && !next.highlights) {
+        if (temp && !ref && !next.highlights) {
           const c0 = wheelCastAt(wbBefore.frame || wbBefore, "highlights"), c1 = wheelCastAt(fa, "highlights");
           // Each axis scales its own knob from its own move, and only a knob the previous write
           // actually moved: the 22:28 run doubled a temperature to -55 because the pass before had
@@ -1118,16 +1113,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const v = gradeVerdict(state, state.region || seen);
     balanced += confirm && v.balanced ? 1 : 0;
     const f1 = state.frame || state;
-    // What this cut ended with, read back from Premiere (no render), for the later cuts of the same file.
-    try {
-      const sliders = {};
-      for (const g of goals) sliders[g.param] = await lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region).read();
-      const wheels = wheelsErr ? null : (await ww.read()).wheels, curves = curvesErr ? null : (await cw.read()).curves, satNow = satErr ? [] : (await sw.read()).points;
-      const tempNow = await tw.read(), tintNow = await tiw.read();
-      const pads = wheels ? Object.keys(wheels).filter((w) => wheels[w].sat > 0.005).map((w) => w + " " + round2(wheels[w].hue) + "°/" + round2(wheels[w].sat)) : [];
-      matched[c.name] = { label, temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders,
-        summary: "temperature " + round2(tempNow) + ", tint " + round2(tintNow) + (pads.length ? ", " + pads.join(", ") : "") + (curves && !curvesIdentity(curves) ? ", curve" : "") + (satNow.length ? ", sat roll-off" : "") + Object.entries(sliders).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("") };
-    } catch (_) {}
+    // The colour this cut ended with, read back from Premiere (no render), for the later cuts of the same file.
+    if (!ref) {
+      try {
+        const wheels = wheelsErr ? null : (await ww.read()).wheels, satNow = satErr ? [] : (await sw.read()).points;
+        matched[c.name] = { label, temp: await tw.read(), tint: await tiw.read(), wheels, sat: satNow };
+      } catch (_) {}
+    }
     const took = tookOf();
     log("grade " + label + took);
     lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
