@@ -12,6 +12,7 @@
 // cast; a shadow cast is reported as needing the wheel, never faked with a slider.
 "use strict";
 const { STATISTICS } = require("./grade.cjs");
+const { castAt, solveCast, solveLuma } = require("./wheels.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -20,34 +21,51 @@ const SKIN_HUE = [116, 126];     // the vectorscope skin line, 123 at centre
 const SKIN_SAT = [20, 50];       // percent of the vectorscope radius; ~30 reads natural on Rec.709
 const SPREAD = { flat: 55, harsh: 85, target: 70 };
 const NEUTRAL = 1.5;             // parade ends within this of each other are neutral
-const TEMPERATURE_STANDIN_CAP = 30; // beyond this a whites cast is a wheel job, not a slider job
 
 const frameOf = (m) => m.frame || m;
 
 // One shot's goals in canon order, plus the things it needs that the panel cannot drive yet (`needs`).
 // `region` is what was measured for the subject; parade and tonal ends always read the frame.
-function goalsFor(m, region = "frame") {
+function goalsFor(m, region = "frame", current = null) {
   const goals = [], needs = [];
   const f = frameOf(m);
+  // The wheels: the canon's tools for the black point (Shadows luma = lift), the white point
+  // (Highlights luma = gain) and the casts at each end (the Shadows and Highlights pads). Each is a
+  // one-shot solve from the wheel calibration. `current` is where the wheels are now, so a second
+  // pass adds to the last move instead of restarting from neutral.
+  const now = current || {};
+  const wheels = {};
+  const want = (w) => (wheels[w] = wheels[w] || { ...(now[w] || { hue: 0, sat: 0, luma: 0.5 }), why: [] });
 
-  // 1. Black point (lift). The Blacks slider is the tool; it has no calibration yet, so this is a need.
+  // 1. Black point (lift): Shadows wheel luma.
   const bp = f.luma.p1;
-  if (bp > BLACK_POINT[1] + 1) needs.push("black point " + round(bp) + " is lifted (milky): Blacks slider, uncalibrated");
-  if (f.crushed > 1) needs.push("blacks crushed " + round(f.crushed) + "%: Blacks slider up, uncalibrated");
+  if (bp > BLACK_POINT[1] + 1 || bp < BLACK_POINT[0]) {
+    const target = bp > BLACK_POINT[1] ? BLACK_POINT[1] - 1 : BLACK_POINT[0] + 1;
+    const r = solveLuma("shadows", "p1", target - bp, (now.shadows || {}).luma);
+    if (r) { const w = want("shadows"); w.luma = r.luma; w.why.push("black point " + round(bp) + " → " + target + (r.capped ? " (luma at its end)" : "")); }
+  }
+  if (f.crushed > 1) { const w = want("shadows"); const r = solveLuma("shadows", "p1", 3, w.luma); if (r) { w.luma = r.luma; w.why.push("blacks crushed " + round(f.crushed) + "%: lifted"); } }
 
-  // 2. White point (gain) = Exposure, calibrated. Only when it is clearly off; never above 95.
+  // 2. White point (gain): Highlights wheel luma. Never above 95.
   const wp = f.luma.p99;
   if (wp < WHITE_POINT[0] - 3 || wp > WHITE_POINT[1]) {
-    goals.push({ param: "exposure", statistic: "whitePoint", target: wp < WHITE_POINT[0] ? 92 : 93, why: "white point " + round(wp) + " (target 90-95)" });
+    const target = wp < WHITE_POINT[0] ? 92 : 93;
+    const r = solveLuma("highlights", "p99", target - wp, (now.highlights || {}).luma);
+    if (r) { const w = want("highlights"); w.luma = r.luma; w.why.push("white point " + round(wp) + " → " + target + (r.capped ? " (luma at its end)" : "")); }
   }
 
-  // 3. Neutralise on the parade. Blacks: the Shadows wheel - report. Whites: the Highlights wheel;
-  //    temperature stands in only for a modest cast, and is named as a stand-in.
-  const blacks = STATISTICS.blacksRB(f), whites = STATISTICS.whitesRB(f);
-  if (Math.abs(blacks) > NEUTRAL) needs.push("blacks are " + (blacks > 0 ? "blue" : "warm") + " by " + round(blacks) + ": Shadows wheel");
-  if (Math.abs(whites) > NEUTRAL) {
-    if (Math.abs(whites) <= TEMPERATURE_STANDIN_CAP) goals.push({ param: "temperature", statistic: "whitesRB", target: 0, why: "whites are " + (whites > 0 ? "blue" : "warm") + " by " + round(whites) + " (temperature standing in for the Highlights wheel)" });
-    else needs.push("whites are " + (whites > 0 ? "blue" : "warm") + " by " + round(whites) + ": Highlights wheel (too far for temperature)");
+  // 3. Neutralise on the parade: cancel the cast at each end with that end's wheel pad.
+  for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
+    const cast = castAt(f, wheel);
+    if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
+    const r = solveCast(wheel, [-cast[0], -cast[1]]);
+    if (!r) continue;
+    const w = want(wheel);
+    // Compose with the pad's current offset: vectors add.
+    const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
+    const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
+    w.sat = Math.min(0.3, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
+    w.why.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(cast[0]) + (Math.abs(cast[1]) > NEUTRAL ? (cast[1] > 0 ? ", green" : ", magenta") + " by " + round(Math.abs(cast[1])) : "") + " → pad " + round(w.hue) + "° sat " + (Math.round(w.sat * 100) / 100) + (r.capped ? " (capped)" : ""));
   }
 
   // 4. Contrast, on the FRAME's spread, and only when it is flat or harsh. An automatic pass never
@@ -64,7 +82,7 @@ function goalsFor(m, region = "frame") {
     if (hue < SKIN_HUE[0] || hue > SKIN_HUE[1]) needs.push("skin hue " + round(hue) + "° off the skin line (116-126): Midtones wheel");
     if (sat < SKIN_SAT[0] || sat > SKIN_SAT[1]) needs.push("skin saturation " + round(sat) + "% (20-50): Saturation");
   }
-  return Object.assign(goals, { needs });
+  return Object.assign(goals, { needs, wheels });
 }
 
 // After the confirm: balanced, or what is still off - in the canon's words.

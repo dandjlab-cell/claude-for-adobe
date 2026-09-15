@@ -21,14 +21,15 @@ test("a shot with a good white point, neutral parade and normal spread is left a
   assert.equal(verdict(f, "frame").balanced, true);
 });
 
-test("a low white point is lifted with exposure (gain), not by chasing a subject brightness", () => {
+test("a low white point is lifted with the Highlights wheel's luma (gain), not by chasing a subject brightness", () => {
   // Clip 1 of the live run: whites at 73, a dark bottle as the subject. The canon sets the white point.
   const f = frame(5, 30, 73, [5, 5, 5], [73, 73, 73]);
   const g = goalsFor(withSubject(f, frame(7, 21, 51, [7, 7, 6], [57, 50, 51])), "subject");
-  const exp = g.find((x) => x.param === "exposure");
-  assert.equal(exp.statistic, "whitePoint", "gain sets the white point");
-  assert.ok(exp.target >= WHITE_POINT[0] && exp.target <= WHITE_POINT[1]);
-  assert.equal(g.some((x) => x.statistic === "brightness"), false, "no invented subject band");
+  assert.ok(g.wheels.highlights, "the Highlights wheel is the tool");
+  assert.ok(g.wheels.highlights.luma > 0.5, "luma up to lift the white point, got " + g.wheels.highlights.luma.toFixed(2));
+  assert.match(g.wheels.highlights.why.join(" "), /white point 73/);
+  assert.equal([...g].some((x) => x.param === "exposure"), false, "exposure is no longer the white-point tool");
+  assert.equal([...g].some((x) => x.statistic === "brightness"), false, "no invented subject band");
 });
 
 test("a subject's own narrow spread is NOT a contrast goal; the frame's is", () => {
@@ -40,22 +41,29 @@ test("a subject's own narrow spread is NOT a contrast goal; the frame's is", () 
   assert.equal(c.cap, 60, "an automatic pass never slams contrast to its end");
 });
 
-test("a shadow cast is a Shadows-wheel need, never faked with temperature", () => {
+test("a shadow cast is cancelled with the Shadows wheel's pad, never with temperature", () => {
   const f = frame(4, 40, 90, [14.5, 23.5, 31.8], [90, 90, 90]); // blacks blue by 17, whites neutral
   const g = goalsFor(f, "frame");
-  assert.equal(g.some((x) => x.param === "temperature"), false);
-  assert.ok(g.needs.some((n) => /Shadows wheel/.test(n)), g.needs.join(" | "));
+  assert.equal([...g].some((x) => x.param === "temperature"), false);
+  const sh = g.wheels.shadows;
+  assert.ok(sh && sh.sat > 0.1, "a pad move, sat " + (sh && sh.sat));
+  assert.ok(sh.hue > 0 && sh.hue < 60, "toward orange against blue blacks, got " + sh.hue.toFixed(1));
+  assert.equal(g.wheels.highlights, undefined, "the whites were neutral: the Highlights pad is left alone");
 });
 
-test("a modest whites cast gets temperature as a named stand-in; a large one is a Highlights-wheel need", () => {
-  const modest = frame(4, 40, 90, [4, 4, 4], [86, 88, 93]); // whites blue by 7
-  const g1 = goalsFor(modest, "frame");
-  const t = g1.find((x) => x.param === "temperature");
-  assert.ok(t && /standing in/.test(t.why));
-  const large = frame(4, 40, 90, [4, 4, 4], [55, 70, 95]); // whites blue by 40
-  const g2 = goalsFor(large, "frame");
-  assert.equal(g2.some((x) => x.param === "temperature"), false);
-  assert.ok(g2.needs.some((n) => /Highlights wheel/.test(n)));
+test("a whites cast is cancelled with the Highlights wheel's pad", () => {
+  const f = frame(4, 40, 90, [4, 4, 4], [86, 88, 93]); // whites blue by 7
+  const g = goalsFor(f, "frame");
+  assert.equal([...g].some((x) => x.param === "temperature"), false, "temperature is not the tool any more");
+  const hi = g.wheels.highlights;
+  assert.ok(hi && hi.sat > 0.02 && hi.hue > 0 && hi.hue < 60, "warm pad on the Highlights wheel: " + JSON.stringify(hi));
+});
+
+test("a second pass adds to the wheels' current position instead of restarting from neutral", () => {
+  const f = frame(4, 40, 90, [4, 4, 4], [86, 88, 93]);
+  const fresh = goalsFor(f, "frame").wheels.highlights;
+  const again = goalsFor(f, "frame", { highlights: { hue: fresh.hue, sat: fresh.sat, luma: 0.5 } }).wheels.highlights;
+  assert.ok(again.sat > fresh.sat, "the same cast still showing means the pad moves further: " + fresh.sat.toFixed(3) + " -> " + again.sat.toFixed(3));
 });
 
 test("skin is judged on the face: luma into 40-70, hue against the skin line", () => {
@@ -79,7 +87,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
-  assert.match(panel, /gradeGoalsFor\(m, seen\)/);
+  assert.match(panel, /gradeGoalsFor\(m, seen, currentWheels\)/);
   assert.match(panel, /measureFrameAt\(at, \{ region, reuse \}\)/, "the confirm measures the read's pixels");
   assert.match(panel, /NEEDS: /, "what the panel cannot drive is said out loud");
+  assert.match(panel, /wheelWriter\(at, track\)/, "the wheels are written from the sequence tool");
 });

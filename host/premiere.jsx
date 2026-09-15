@@ -831,6 +831,54 @@ var PCX = (function () {
     return "OK" + COL + p.getValue() + COL + cl.name;
   }
 
+  // One Lumetri parameter through QE's component API, by NAME, as text. This is the door for the
+  // parameters the DOM cannot serialise - "Color Wheels & Match", "HSL Secondary", "RGB Curves",
+  // "White Balance" - and it works for scalars too. value === "" reads; anything else writes and reads
+  // back. Writes need DOT decimals (comma form is accepted and ignored); reads come back with commas.
+  // Adds Lumetri Color to the clip when it has none. Returns "OK<COL>text<COL>clipName" or "ERR:...".
+  function lumetriQE(seconds, track, name, value) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) { var k = tr.clips[c]; if (at >= k.start.seconds && at < k.end.seconds) { cl = k; } }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+    app.enableQE();
+    var q = qe.project.getActiveSequence();
+    if (!q) return "ERR:QE has no active sequence";
+    var qt = q.getVideoTrackAt(t), qi = null;
+    for (var i = 0; i < qt.numItems; i++) {
+      var item = qt.getItemAt(i), st = -1;
+      try { st = num(item.start.secs); } catch (e1) { st = -1; }
+      if (st >= 0 && Math.abs(st - cl.start.seconds) < 0.02) { qi = item; }
+    }
+    if (!qi) return "ERR:could not match the clip in QE";
+    var qc = null;
+    for (var z = 0; z < qi.numComponents; z++) {
+      var comp = qi.getComponentAt(z);
+      if (String(comp.name).indexOf("Lumetri") >= 0 || String(comp.matchName).indexOf("Lumetri") >= 0) { qc = comp; }
+    }
+    if (!qc) {
+      var fx = qe.project.getVideoEffectByName("Lumetri Color");
+      if (!fx) return "ERR:Lumetri Color effect not found";
+      qi.addVideoEffect(fx);
+      for (var z2 = 0; z2 < qi.numComponents; z2++) {
+        var comp2 = qi.getComponentAt(z2);
+        if (String(comp2.name).indexOf("Lumetri") >= 0 || String(comp2.matchName).indexOf("Lumetri") >= 0) { qc = comp2; }
+      }
+      if (!qc) return "ERR:Lumetri Color did not appear on " + cl.name;
+    }
+    if (String(value) !== "") {
+      var ok = false;
+      try { ok = qc.setParamValue(String(name), String(value)); } catch (e2) { return "ERR:setParamValue " + e2; }
+      if (!ok) return "ERR:setParamValue refused " + name;
+    }
+    var back = "";
+    try { back = String(qc.getParamValue(String(name))); } catch (e3) { return "ERR:getParamValue " + e3; }
+    return "OK" + COL + back + COL + cl.name;
+  }
+
   // Every video clip's Motion Position and Scale, for the active sequence or one named. Read-only.
   // Rows: track|index|name|x|y|scale|graphic|startSec|endSec|srcW|srcH|opacity|mediaPath|alpha|crop(L/T/R/B %)|masked ; header: SEQ|name|w|h
   // alpha comes from Premiere's own Video Info column ("1920 x 1080 (1.0), Alpha"), so a still's transparency is Premiere's word, not a guess.
@@ -1612,7 +1660,7 @@ var PCX = (function () {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE
   };
 }());
 "PCX loaded";

@@ -17,6 +17,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resiz
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { goalsFor: gradeGoalsFor, verdict: gradeVerdict } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { parse: parseWheels, format: formatWheels } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
@@ -742,6 +743,18 @@ function lumetriWriter(at, track, lumetriName, region) {
   return { set, read, clipName: () => clip, regionSeen: { measure, which: () => seen, fellBack: () => fell } };
 }
 
+// The colour wheels of the clip at one timeline position, through QE by name: read as {shadows,
+// midtones, highlights} of {hue, sat, luma}; write the same shape (all three, dot decimals).
+function wheelWriter(at, track) {
+  const call = async (value) => {
+    const raw = await host("lumetriQE", String(at), String(track), "Color Wheels & Match", value);
+    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+    const [, text, clipName] = raw.split(COL);
+    return { wheels: parseWheels(text), text, clipName };
+  };
+  return { read: () => call(""), write: (wheels) => call(formatWheels(wheels)) };
+}
+
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
 // all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
 async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
@@ -803,11 +816,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       } else { m = await measureFrameAt(at, { region }); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     const seen = m.region || region;
-    const goals = gradeGoalsFor(m, seen);
+    // Where the wheels are now, so the plan adds to an earlier move rather than restarting.
+    const ww = wheelWriter(at, track);
+    let currentWheels = null;
+    try { currentWheels = (await ww.read()).wheels; } catch (_) { currentWheels = null; }
+    const goals = gradeGoalsFor(m, seen, currentWheels);
     const needs = goals.needs && goals.needs.length ? " NEEDS: " + goals.needs.join("; ") : "";
     const f0 = m.frame || m;
     const before = "black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(m)) + " / whites " + round2(GRADE_STATS.whitesRB(m)) + " / spread " + round2(GRADE_STATS.spread(f0)) + (seen === "face" ? " / face " + round2(GRADE_STATS.brightness(m)) + " @" + round2(GRADE_STATS.skinHue(m)) + "°" : "");
-    if (!goals.length) {
+    const wheelMoves = Object.keys(goals.wheels || {});
+    if (!goals.length && !wheelMoves.length) {
       const v = gradeVerdict(m, seen);
       balanced += v.balanced ? 1 : 0;
       lines.push(label + " [" + seen + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + needs);
@@ -817,6 +835,27 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Vision again on a differently rendered frame (the masks did not agree, and a subject's
     // brightness "fell" after a lift).
     const reuse = m.region !== "frame" && m.box ? { box: m.box } : null;
+
+    // Wheels first - the canon's black point, white point and casts - as ONE write, then one confirm.
+    // The sliders that remain (contrast) are then planned on the confirmed state, not the read.
+    let wheelLine = "", afterWheels = m;
+    if (wheelMoves.length) {
+      try {
+        const written = await ww.write(Object.assign({}, currentWheels || {}, goals.wheels));
+        touched++;
+        wheelLine = wheelMoves.map((w) => w + " " + round2(goals.wheels[w].hue) + "°/" + round2(goals.wheels[w].sat) + "/" + round2(goals.wheels[w].luma) + " (" + goals.wheels[w].why.join("; ") + ")").join("; ");
+        if (confirm) { afterWheels = await measureFrameAt(at, { region, reuse }); renders++; }
+        void written;
+      } catch (error) { lines.push(label + ": wheel write failed (" + error.message + ")"); continue; }
+    }
+    if (!goals.length) {
+      const v = gradeVerdict(afterWheels, seen);
+      balanced += v.balanced ? 1 : 0;
+      const f1 = afterWheels.frame || afterWheels;
+      lines.push(label + " [" + seen + "] " + before + " → " + wheelLine + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(afterWheels)) + " / whites " + round2(GRADE_STATS.whitesRB(afterWheels)) + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + needs);
+      continue;
+    }
+    m = afterWheels;
     const writers = {};
     for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
     let r;
@@ -828,7 +867,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     touched++;
     const v = gradeVerdict(r.after, r.after.region || seen);
     balanced += v.balanced ? 1 : 0;
-    const knobs = r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; ");
+    const knobs = (wheelLine ? wheelLine + "; " : "") + r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; ");
     lines.push(label + " [" + seen + "] " + before + " → " + knobs + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + (r.unsafe ? " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off" : "") + needs);
   }
   const secs = Math.round((Date.now() - t0) / 100) / 10;

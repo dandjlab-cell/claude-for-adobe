@@ -87,19 +87,21 @@ Sources: Larry Jordan on Van Hurkman's skin findings; the Adobe community neutra
 Eagles on balancing with the parade; Frame.io and Color Finale on the skin line and skin luma; Keith
 Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour section.
 
-## What the panel can drive today, against that list
+## What the panel drives today, against that list
 
-| Step | The right tool | Driveable now? |
+| Step | The tool | Driven by |
 |---|---|---|
-| black point / white point | Blacks / Whites (or Shadows / Highlights) sliders | writable, **not calibrated** - one sweep each |
-| shadow cast | Shadows wheel | **not yet** - pending the wheel write probe |
-| highlight cast | Highlights wheel | **not yet** - same gate; temperature is the weak stand-in |
-| midtones / skin | Midtones wheel, exposure | exposure calibrated; wheel pending |
-| contrast | Contrast | calibrated; cap an automatic pass at ±60 |
+| black point | Shadows wheel luma (lift) | `grade_sequence`, one-shot from the wheel calibration |
+| white point | Highlights wheel luma (gain) | same |
+| shadow cast | Shadows wheel pad | same - solved from the parade's blacks |
+| highlight cast | Highlights wheel pad | same - solved from the parade's whites |
+| midtones / skin | Midtones wheel, exposure | exposure calibrated; the Midtones pad not yet driven |
+| contrast | Contrast | calibrated; an automatic pass caps it at ±60 |
 | saturation | Saturation / Vibrance | writable, not calibrated |
 
-Until the wheels are writable, say plainly when a shot needs one ("blacks are blue by 6: needs the
-Shadows wheel") rather than reaching for temperature to fake it.
+The wheels are written live through QE by name (`Color Wheels & Match`, dot decimals) - the same
+door reads and writes `RGB Curves` and `HSL Secondary`, which are next. Temperature is no longer
+used for balance: it moves the white point only and cannot touch a shadow cast.
 
 ## Matching two shots
 
