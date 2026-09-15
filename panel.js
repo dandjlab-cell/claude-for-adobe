@@ -16,8 +16,8 @@ const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
-const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity } = require(path.join(extensionRoot, "src", "curves.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
@@ -935,8 +935,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         state = await confirmMeasure(); renders++; corrected = true;
         parts.push("balance restored: the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "% (source " + round2(baseline.clipped) + "% / " + round2(baseline.crushed) + "%)");
       }
-      // The one correction, if it is still free: each pad rescaled from what it actually did.
-      if (confirm && !corrected && padMoves.length) {
+      // The one correction, if it is still free, from the real reading: each pad rescaled from what
+      // it actually did, and the curve's bottom point re-solved from the black point it actually
+      // produced (the source decode and Premiere's render agree on the parade and the median, not on
+      // the 1% tail the curve is solved from: 16.1 -> 0.8 on one clip, 12.5 -> 8.6 on another). One
+      // write for both, one confirm.
+      if (confirm && !corrected) {
         const fb = afterTemp.frame || afterTemp, fa = state.frame || state, next = {}, notes = [];
         for (const w of padMoves) {
           const after = wheelCastAt(fa, w);
@@ -945,11 +949,20 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           if (n) { next[w] = { ...applied[w], hue: n.hue, sat: n.sat }; notes.push(w + " pad → " + round2(n.hue) + "°/" + round2(n.sat) + (n.capped ? " (cap)" : "")); }
           else notes.push(w + " pad is not the tool for what is left");
         }
-        if (Object.keys(next).length) {
-          applied = Object.assign({}, applied, next);
-          await ww.write(applied);
+        let curve2 = null;
+        if (lev) {
+          const p1 = fa.luma.p1, target = 4;
+          if (p1 > GRADE_ACCEPT.blackMax || p1 < 1) {
+            // Compose a second levels move on the first: x2 = x + ((p1 - target) / (100 - target)) * (1 - x).
+            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, lev.blackIn + ((p1 - target) / (100 - target)) * (1 - lev.blackIn)));
+            if (Math.abs(x2 - lev.blackIn) >= 0.005) { curve2 = x2; notes.push("curve black " + lev.blackIn.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
+          }
+        }
+        if (Object.keys(next).length || curve2 !== null) {
+          if (Object.keys(next).length) { applied = Object.assign({}, applied, next); await ww.write(applied); }
+          if (curve2 !== null) await cw.write(curveLevels(curve2, 1, currentCurves));
           state = await confirmMeasure(); renders++;
-          parts.push("nudged: " + notes.join(", "));
+          parts.push("corrected: " + notes.join(", "));
         } else if (notes.length) parts.push(notes.join(", "));
       }
     } catch (error) { lines.push(label + ": " + error.message); continue; }
