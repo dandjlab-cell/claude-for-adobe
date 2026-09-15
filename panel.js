@@ -949,7 +949,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       // agree on the parade and the median, not on the 1% tail). One write per pass, one confirm; a
       // second pass only if the confirm still shows a residual (the owner: perfect over instant), so
       // three renders a clip at most. Each pass scales from the values the previous pass wrote.
-      let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, padSolved = pads.wheels;
+      // Two "before" states: the pads were solved against afterTemp (predicted), the white balance
+      // against the frame as read - on the first pass each is judged against its own; from the
+      // second pass on, both against the state before the last write.
+      let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, wbBefore = m, padSolved = pads.wheels;
       let tempNow = temp ? temp.value : tempFrom, tintNow = temp && temp.tint !== null ? temp.tint : tintFrom, tempBase = tempFrom, tintBase = tintFrom;
       let tempWrote = !!(temp && temp.value !== tempFrom), tintWrote = !!(temp && temp.tint !== null); // what the last write moved
       let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? lev.predicted.luma.p1 : null;
@@ -969,7 +972,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         // correction already touched the whites (two corrections on one end are a guess).
         let temp2 = null, tint2 = null;
         if (temp && !next.highlights) {
-          const c0 = wheelCastAt(fb, "highlights"), c1 = wheelCastAt(fa, "highlights");
+          const c0 = wheelCastAt(wbBefore.frame || wbBefore, "highlights"), c1 = wheelCastAt(fa, "highlights");
           // Each axis scales its own knob from its own move, and only a knob the previous write
           // actually moved: the 22:28 run doubled a temperature to -55 because the pass before had
           // touched only the pad and the curve, the blue-red barely moved, and a 2-axis scale credited
@@ -1013,7 +1016,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           }
         }
         if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {
-          stateBefore = state;
+          stateBefore = state; wbBefore = state;
           tempWrote = temp2 !== null; tintWrote = tint2 !== null;
           if (temp2 !== null) { await tw.set(temp2); tempBase = tempNow; tempNow = temp2; }
           if (tint2 !== null) { await tiw.set(tint2); tintBase = tintNow; tintNow = tint2; }
