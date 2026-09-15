@@ -16,7 +16,7 @@ const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
 const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
-const { solveKnob: gradeSolveKnob } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
+const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -977,7 +977,15 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           // read, 1.6-2.4 after): Tint is solved from the real reading, from the model, one write.
           if (temp.tint === null && Math.abs(c1[1]) > 1.5) {
             const st = gradeSolveKnob(state, "tint", tintFrom, GRADE_STATS.whitesG, 0);
-            if (st && st.helps) { const tv = Math.round(Math.max(-50, Math.min(50, st.value)) * 100) / 100; if (Math.abs(tv - tintFrom) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); } }
+            if (st && st.helps) {
+              // The correction's write takes the last render, so it checks the predicted ceiling itself:
+              // Tint clips red or blue past +50 (its sweep), and C209 clipped 1.1% on the 22:17 run.
+              let tv = Math.max(-50, Math.min(50, st.value));
+              const tops = (x) => { const f = x.frame || x; return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
+              while (Math.abs(tv - tintFrom) > 1 && tops(gradePredict(state, "tint", tintFrom, tv)) > 98.5) tv = tintFrom + (tv - tintFrom) * 0.8;
+              tv = Math.round(tv * 100) / 100;
+              if (Math.abs(tv - tintFrom) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
+            }
           }
         }
         let curve2 = null;
