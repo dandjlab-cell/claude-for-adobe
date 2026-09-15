@@ -160,7 +160,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // Shot match (2026-09-16): a later cut of a graded file takes the first cut's WHOLE grade; if it would
   // clip or crush under it, the shot's tone is backed off to half on every cut so they still match.
   assert.match(seqTool, /if \(ref\) \{[\s\S]*?await writeGradeState\(at, track, region, ref\);[\s\S]*?for \(const t of ref\.cuts\) await writeGradeState\(t, track, region, ref\);/, "a later cut takes the reference state; a backoff is written to every earlier cut too");
-  assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders,/, "the first cut records its whole state");
+  assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders \};/, "the first cut records its whole state");
+  assert.match(seqTool, /readable\[Math\.floor\(\(readable\.length - 1\) \/ 2\)\]/, "a source cut more than once is graded from its median-whites cut");
   // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
   const loop = seqTool.slice(seqTool.indexOf("for (const c of clips)"));
   assert.doesNotMatch(loop, /\b(const|let) (balanced|touched|renders|lines|stopped)\b/, "no per-clip declaration shadows a tally the loop adds to");

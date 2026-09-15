@@ -800,6 +800,11 @@ async function writeGradeState(at, track, region, s) {
   for (const [p, v] of Object.entries(s.sliders || {})) if (GRADE_PARAMS[p] && isFinite(v)) await lumetriWriter(at, track, GRADE_PARAMS[p].lumetri, region).set(v);
 }
 
+function gradeStateSummary(s) {
+  const pads = s.wheels ? Object.keys(s.wheels).filter((w) => s.wheels[w].sat > 0.005).map((w) => w + " " + round2(s.wheels[w].hue) + "°/" + round2(s.wheels[w].sat)) : [];
+  return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.curves && s.curves.Master && s.curves.Master[0][0] > 0.005 ? ", curve black " + s.curves.Master[0][0].toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
+}
+
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
 // all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
 async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
@@ -860,8 +865,24 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   let tf; try { tf = await readTransforms(); } catch (error) { return err(card, error.message); }
   const snap = await readSnapshot(); // once for the run: the source reads map timeline time into each file through it
   if (snap.error) return err(card, snap.error);
-  const clips = tf.rows.filter((c) => c.track === "V" + track && !c.graphic).sort((a, b) => a.start - b.start);
-  if (!clips.length) return err(card, "no footage on V" + track);
+  const timelineOrder = tf.rows.filter((c) => c.track === "V" + track && !c.graphic).sort((a, b) => a.start - b.start);
+  if (!timelineOrder.length) return err(card, "no footage on V" + track);
+  const midOf = (c) => Math.round(((c.start + c.end) / 2) * 1000) / 1000, keyOf = (c) => c.name + "@" + c.start;
+  // A source cut more than once is graded ONCE, from the cut whose whites sit in the middle of the
+  // shot (the 01:19 run took the first cut, whose whites read -25 against -16.5 on the third, and the
+  // shared temperature left the third blue by 11 in the whites). Its cuts are read up front (a source
+  // decode each, no render) and the reference is graded before its siblings; rows are re-sorted to
+  // timeline order at the end.
+  const preread = {}, clips = [], bySource = {};
+  for (const c of timelineOrder) (bySource[c.name] = bySource[c.name] || []).push(c);
+  for (const group of Object.values(bySource)) {
+    if (group.length > 1 && read !== "premiere") {
+      for (const c of group) { const s0 = Date.now(); try { preread[keyOf(c)] = { m: await measureSourceAt(midOf(c), track, region, snap), ms: Date.now() - s0 }; } catch (_) {} }
+      const readable = group.filter((c) => preread[keyOf(c)]).sort((a, b) => GRADE_STATS.whitesRB(preread[keyOf(a)].m) - GRADE_STATS.whitesRB(preread[keyOf(b)].m));
+      if (readable.length) { const r = readable[Math.floor((readable.length - 1) / 2)]; clips.push(r, ...group.filter((c) => c !== r)); continue; }
+    }
+    clips.push(...group);
+  }
   const lines = [], t0 = Date.now();
   let renders = 0, balanced = 0, touched = 0, stopped = false;
   // The source decode is only a read of the timeline while it decodes the way Premiere does. On BRAW
@@ -910,7 +931,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // auto: decode the clip's own file (parity with Premiere's render verified on BRAW, 2026-09-15:
     // parade identical, median within 0.4) and fall back to a Premiere render only when that fails.
     try {
-      if ((read === "source" || read === "auto") && !graded) {
+      if (preread[keyOf(c)] && !graded) { m = preread[keyOf(c)].m; readMs += preread[keyOf(c)].ms; readFrom = "source"; }
+      else if ((read === "source" || read === "auto") && !graded) {
         try { m = await timed(() => measureSourceAt(at, track, region, snap), "read"); readFrom = "source"; }
         catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
         if (readFrom === "source" && read === "auto" && parity === null) {
@@ -946,6 +968,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             for (const t of ref.cuts) await writeGradeState(t, track, region, ref);
             await writeGradeState(at, track, region, ref);
             state = await confirmRef(); renders++;
+            ref.summary = gradeStateSummary(ref);
             parts.push("shot backed off on all " + (ref.cuts.length + 1) + " cuts: " + changed.join(", ") + " (this cut clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "%; the earlier cuts carry the same grade and are not re-read)");
           }
         }
@@ -1150,9 +1173,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       for (const g of goals) sliders[g.param] = await lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region).read();
       const wheels = wheelsErr ? null : (await ww.read()).wheels, curves = curvesErr ? null : (await cw.read()).curves, satNow = satErr ? [] : (await sw.read()).points;
       const tempNow = await tw.read(), tintNow = await tiw.read();
-      const padNote = wheels ? Object.keys(wheels).filter((w) => wheels[w].sat > 0.005).map((w) => w + " " + round2(wheels[w].hue) + "°/" + round2(wheels[w].sat)) : [];
-      matched[c.name] = { label, cuts: [at], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders,
-        summary: "temperature " + round2(tempNow) + ", tint " + round2(tintNow) + (padNote.length ? ", " + padNote.join(", ") : "") + (curves && curves.Master && curves.Master[0][0] > 0.005 ? ", curve black " + curves.Master[0][0].toFixed(2) : "") + (satNow.length ? ", sat roll-off" : "") + Object.entries(sliders).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("") };
+      matched[c.name] = { label, cuts: [at], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders };
+      matched[c.name].summary = gradeStateSummary(matched[c.name]);
     } catch (_) {}
     const took = tookOf();
     log("grade " + label + took);
@@ -1160,6 +1182,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
+  lines.sort((a, b) => { const ta = /@([\d.]+)s/.exec(a), tb = /@([\d.]+)s/.exec(b); return (ta ? Number(ta[1]) : 0) - (tb ? Number(tb[1]) : 0); }); // ponytail: the reference cut was graded first; the reader wants timeline order
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + "."
     + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
