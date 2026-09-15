@@ -2,9 +2,9 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe
-**Date:** 2026-09-09
-**Branch:** `fix/whisper-metal` (acceleration follow-up; not merged to main or released).
-**Previous session base:** `05c9950`, following `ec2670d` (prompt review). The previous fixes are on main; the acceleration changes are on the branch above. **The released zip is still 0.1.77** (see What's Next 3).
+**Date:** 2026-09-15
+**Branch:** `fix/whisper-metal` (not merged to main or released). **The released zip is still 0.1.77** (see What's Next 3).
+**Last commit:** `ae77cd0` (colour/scopes handoff). Two workstreams coexist on this branch — see "Working tree state" immediately below; the numeric header lines further down predate the colour work, so the top sections are canonical over anything numeric lower in this file.
 **Role:** BUILDER (make changes, run tests, ship releases; VERIFIER = reproduce and confirm without editing. Default here is BUILDER; confirm with the user before a release.)
 
 ---
@@ -166,7 +166,17 @@ The editor asked the panel to "see the scopes" to colour footage, and it got los
 
 **Answered by the probe:** the panel does NOT read Premiere's Lumetri Scopes panel; it measures Premiere's own rendered frame and computes the scopes itself, and those numbers match Lumetri. It CAN drive Premiere's colour tools through ExtendScript: a script added Lumetri Color via QE `addVideoEffect` and read back all 53 parameters live (Exposure is index 19). Setting a parameter (`property.setValue`) is written but was NOT confirmed live — the one run that would have set Exposure was abandoned before it dispatched (the bug now fixed). Next session: re-run "add Lumetri, set Exposure to 1, measure" on the sandbox and confirm the write plus the scope shift.
 
-Not committed to main; no release. Dev panel needs a reload to pick this up (host/premiere.jsx unchanged, so no Premiere restart).
+Not committed to main; no release. Dev panel needs a reload to pick this up (the colour commits did not touch `host/premiere.jsx`, so no Premiere restart for them — but see the working-tree note: the file shows Modified because of the *other* session's work).
+
+## Working tree state (READ before any git command)
+
+Branch `fix/whisper-metal` carries TWO independent workstreams:
+- **Colour / scopes + lost-Claude fixes** (this session): COMMITTED as `2cd371b`, `dab2098`, and handoff `ae77cd0`. Nothing of this work is uncommitted.
+- **Cut silences native rebuild** (a separate, parallel session): still UNCOMMITTED in the working tree — new `src/silence-rebuild.cjs`, `test/rebuild_host.test.cjs`, `test/silence_rebuild.test.cjs`, and edits to `panel.js`, `host/premiere.jsx`, `README.md`, `docs/codex-review-log.md`. Its narrative is the "Cut silences button native rebuild" and "…native rebuild batches" sections lower down.
+
+So `git status` is NOT clean, and that is expected. Do NOT commit those files with any colour/handoff change, and do NOT `git checkout`/`git stash` them away — that would destroy another session's in-progress work (and the stash stack is shared across worktrees). `host/premiere.jsx` and `panel.js` show Modified only because of the rebuild work; the colour commits are already in git history.
+
+**Healthy test counts:** the colour commits alone (at `dab2098`) run **190 tests, 189 pass, 1 skip**. With the rebuild session's uncommitted test files present in the tree it is **210 tests, 209 pass, 1 skip**. The single skip is always `whisper.test.cjs` (fetches `schemas.adobe.com`). Older numbers lower in this file (145, 154, 198) predate one or both workstreams.
 
 
 **The product loop being built this weekend is "make this a 9x16 video" from a raw talking-head bin.** It ran end to end once on 2026-09-07 on the user's test project (a folder with a TALKING HEAD bin and a BROLL bin; two BRAW clips, 388 s raw, 748 words). Result: a 1080x1920 sequence, footage filled and face-centred with read-backs, transcript from Whisper, 52 model-authored thoughts, `audio_cut` kept 12 pieces (79.8 s) with CHECK PASS. The user's verdict: **"there are still double moments here."**
@@ -207,7 +217,7 @@ The single most important next action is the 9:16 re-run (What's Next 1), and it
 
 ## Current State
 
-- `node --test test/*.test.cjs` -> **145 tests, 144 pass, 1 skip** (`whisper.test.cjs`, which fetches `schemas.adobe.com`). That is the healthy result; treat any other count as a real break. The privacy scan is part of the suite and of the pre-push hook.
+- `node --test test/*.test.cjs`: the current healthy count is in "Working tree state" above (190 at `dab2098`, 210 with the rebuild files); the single skip is always `whisper.test.cjs` (fetches `schemas.adobe.com`). The privacy scan is part of the suite and of the pre-push hook. (The 145 once quoted here predates the colour and rebuild work.)
 - Working end to end on the user's Mac (Apple Silicon, Premiere 26.3.2) on the dev panel: rough_cut to the indexed transcript, authored thoughts, audio_cut report and apply, Cut silences with the trace, morph_cut, multicam_switch, visible_at, sound_events, fill and face focus with read-backs, Copy chat, bug report, job bar, Stop.
 - **Not yet run in Premiere at all** (all three landed 2026-09-08, offline only): the doubles fix (`336637d`, unit tests + a replay against the real run's word timings), `place_broll` by clip name (`336637d`, no live call), and the restructured system prompt (`3049f17`/`ec2670d`, no live session). The dev panel has them: its extension folder symlinks this repo, so `src/` and the skills are always current and need no reinstall. **Premiere was already restarted on 2026-09-08 at 08:28 with `host/premiere.jsx` at `ec2670d`** (`host script loaded` in that day's log), so the re-run just needs the panel opened. Restart again only if the host script changes.
 - Also still unvalidated from before: Auto Reframe tracking pass on the survivors, captions on the 9:16 result, Codex agent inside the panel, caption band routes.
@@ -298,7 +308,7 @@ Private, per-machine notes in `~/.claude/projects/-Users-<you>-DevApps-claude-fo
 - Caption position is a Premiere track setting; the panel can create the track but not move the band.
 - Whisper cache key changed to `v4-whispercpp-fillers` (fillers kept); older caches recompute.
 - The user's Mac has a Homebrew ggml; the byte-patched `bin/libggml.0.dylib` is what keeps the bundled backends in use. Re-apply the patch when upgrading whisper.cpp.
-- One test skips offline: `test/whisper.test.cjs` fetches `https://schemas.adobe.com/transcript/v1.0.0`. A healthy full run is now **154 tests, 153 pass, 1 skip** (online or off; the skip is counted, not a failure). Any other number means something actually broke.
+- One test skips offline: `test/whisper.test.cjs` fetches `https://schemas.adobe.com/transcript/v1.0.0`; the skip is counted, not a failure. For the current healthy count see "Working tree state" (the 154 once quoted here predates the colour and rebuild work).
 - `AGENTS.md` was rewritten on 2026-09-05 to point here; the old prototype-era version (SPEC.md, Codex app-server) is gone. `docs/handoff.md` is canonical.
 
 ## Quick Start for Next Session
@@ -307,14 +317,14 @@ Private, per-machine notes in `~/.claude/projects/-Users-<you>-DevApps-claude-fo
 
 ```bash
 cd ~/DevApps/claude-for-adobe
-git status --short                      # expect clean (this handoff is committed at the end of every session; it only shows modified while one is being written)
+git status --short                      # NOT clean: the Cut silences rebuild session's files show modified/added (see "Working tree state"). The colour work is committed (2cd371b, dab2098, ae77cd0).
 git pull
 sh scripts/install.sh                   # dev panel + pre-push privacy hook. The panel symlinks this repo, so src/ and skills are always current;
                                         # restart Premiere ONLY if host/premiere.jsx changed (it did not since the 2026-09-08 08:28 load)
 node -e 'const {findRestarts}=require("./src/thoughts_authored.cjs");const mk=s=>s.split(" ").map((t,i)=>({text:t,start:i*0.3,end:i*0.3+0.25}));console.log(findRestarts(mk("and tight which makes decisions on what to keep and generates text on what parts and tight which makes decisions")))'  # prints one restart (cut 0 -> 4.5) since 336637d
 gh auth status                          # must show dandjlab-cell before any release
 claude --version                        # CLI present (the panel also accepts the desktop app's login)
-node --test test/*.test.cjs            # 145 tests, 144 pass, 1 skips offline; privacy.test.cjs scans the tree
+node --test test/*.test.cjs            # 210 pass-or-skip with the rebuild files present (190 at dab2098 alone); 1 whisper skip offline; privacy.test.cjs scans the tree
 # release: bump CSXS/manifest.xml AND package.json to X.Y.Z, then
 sh scripts/package.sh && gh release create vX.Y.Z dist/ClaudeForAdobe-X.Y.Z.zip dist/ClaudeForAdobe.zip --title "Claude for Adobe X.Y.Z" --notes "..."
 # end of every session: commit this file, so the next one on any machine reads the current state
