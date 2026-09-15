@@ -184,7 +184,8 @@ function goalsFor(m, region = "frame") {
   // C233 at a white point of 80-85 with nothing clipping.
   const wp = f.luma.p99;
   const whiteLow = (state) => frameOf(state).luma.p99 < ACCEPT.whiteMin;
-  if (wp < ACCEPT.whiteMin) {
+  // Fires within a point of the line too: C200 read 85.1, got no goal, and the curve left it at 84.7.
+  if (wp < ACCEPT.whiteMin + 1) {
     goals.push({ param: "whites", statistic: "whitePoint", target: 92, why: "white point " + round(wp) + " → 92" });
     goals.push({ param: "highlights", statistic: "whitePoint", target: 92, onlyIf: whiteLow, why: "Highlights finishes what Whites leaves" });
   } else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, why: "white point " + round(wp) + " → 93" });

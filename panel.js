@@ -956,8 +956,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       let tempNow = temp ? temp.value : tempFrom, tintNow = temp && temp.tint !== null ? temp.tint : tintFrom, tempBase = tempFrom, tintBase = tintFrom;
       let tempWrote = !!(temp && temp.value !== tempFrom), tintWrote = !!(temp && temp.tint !== null); // what the last write moved
       let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? lev.predicted.luma.p1 : null;
-      for (let pass = 0; confirm && !corrected && pass < 2; pass++) {
-        if (pass > 0 && gradeVerdict(state, state.region || seen).balanced) break;
+      // A backoff (planShot's or the balance restore) spent one render: it counts as the first pass,
+      // so one correction still follows it (22:51: C198 and C209 kept whites blue by 3.5-6.7 because the
+      // whites backoff ended the clip).
+      for (let pass = corrected ? 1 : 0; confirm && pass < 2; pass++) {
+        if (gradeVerdict(state, state.region || seen).balanced) break;
         const fb = stateBefore.frame || stateBefore, fa = state.frame || state, next = {}, notes = [];
         for (const w of Object.keys(padSolved)) {
           const after = wheelCastAt(fa, w);
