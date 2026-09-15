@@ -13,8 +13,11 @@ judgement below is a number you can measure and a number you can drive.
 
 One call: `grade_sequence`. It does the whole job deterministically - every footage clip on V1, read
 once, goals by rule (white balance first, then exposure into the band for what the subject is, then
-contrast only if flat or harsh), knobs from the calibration model, one confirm render per clip. Two
-renders a clip, under a minute for twenty. You decide nothing per shot; say the one-line plan, call
+contrast only if flat or harsh), knobs from the calibration model, one confirm render per clip. The read is
+decoded from the clip's own file (verified identical to Premiere's render on BRAW: parade to the
+decimal, median within 0.4), so only the confirm renders - about 0.7 s a clip, well under a minute
+for twenty; `confirm: false` makes it render-free at the price of taking the model's word. You
+decide nothing per shot; say the one-line plan, call
 it, then relay its table and the undo line (the grade is on the working copy; Discard copy removes
 all of it). Stop ends it after the current clip.
 
