@@ -927,8 +927,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const v = gradeVerdict(state, state.region || seen);
     balanced += confirm && v.balanced ? 1 : 0;
     const f1 = state.frame || state;
-    const hostMs = hostTime.ms - host0.ms - renderMs, hostCalls = hostTime.calls - host0.calls;
-    const took = " [" + ((Date.now() - clipT0) / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " other host calls " + (hostMs / 1000).toFixed(1) + "]";
+    const totalMs = Date.now() - clipT0, hostCalls = hostTime.calls - host0.calls;
+    const took = " [" + (totalMs / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " host calls, rest " + (Math.max(0, totalMs - readMs - renderMs) / 1000).toFixed(1) + "]";
     log("grade " + label + took);
     lines.push(label + " [" + seen + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
