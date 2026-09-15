@@ -53,23 +53,35 @@ const frameOf = (m) => m.frame || m;
 // move is scaled back until they stay off the floor.
 const FLOOR_MIN = 1.5;
 const channelFloor = (m) => { const f = frameOf(m); return Math.min(f.red.p1, f.green.p1, f.blue.p1); };
-function temperatureFor(m, from = 0) {
+// One axis of the white balance: the knob value that lines the whites up on `stat`, capped at half the
+// slider, scaled back until the predicted channel bottoms stay off the floor. null = no move.
+function balanceAxis(m, param, from, stat) {
+  const s = solveKnob(m, param, from, stat, 0);
+  if (!s || !s.helps) return null;
+  let value = Math.max(-TEMPERATURE_CAP, Math.min(TEMPERATURE_CAP, s.value)), predicted = predict(m, param, from, value), floored = false;
+  while (channelFloor(predicted) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); floored = true; }
+  if (Math.abs(value - from) <= 2) return null;
+  return { value, predicted, note: Math.abs(value) < Math.abs(s.value) - 1e-6 ? (floored ? " (held back: further would put a channel on the floor)" : " (capped at ±" + TEMPERATURE_CAP + ")") : "" };
+}
+// Temperature on blue-red, then Tint on green-magenta, solved on the state temperature predicts. Both
+// are gains on the top, both clip past +50 (their sweeps), both are the white balance. `tint` is null
+// when the green axis is already neutral.
+function temperatureFor(m, from = 0, tintFrom = 0) {
   const f = frameOf(m);
-  const whites = STATISTICS.whitesRB(f), blacks = STATISTICS.blacksRB(f);
-  if (Math.abs(whites) <= NEUTRAL) return null;
+  const whites = STATISTICS.whitesRB(f), blacks = STATISTICS.blacksRB(f), whitesG = STATISTICS.whitesG(f);
+  let temp = null;
   // Two lights (a warm top under blue blacks) are the pads' job - unless the whites' cast is more than
   // the Highlights pad can cover, when the white balance takes it and the Shadows pad mops up what
   // that does to the blacks (the 21:05 run left whites warm by 20 on two clips by skipping this).
-  if (Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) <= PAD_REACH) return null;
-  const s = solveKnob(m, "temperature", from, STATISTICS.whitesRB, 0);
-  if (!s || !s.helps) return null;
-  let value = Math.max(-TEMPERATURE_CAP, Math.min(TEMPERATURE_CAP, s.value)), predicted = predict(m, "temperature", from, value), floored = false;
-  while (channelFloor(predicted) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, "temperature", from, value); floored = true; }
-  if (Math.abs(value - from) <= 2) return null;
-  return {
-    value, predicted,
-    why: "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): white balance " + round(value) + (Math.abs(value) < Math.abs(s.value) - 1e-6 ? (floored ? " (held back: further would put a channel on the floor)" : " (capped at ±" + TEMPERATURE_CAP + ")") : ""),
-  };
+  const twoLights = Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) <= PAD_REACH;
+  if (Math.abs(whites) > NEUTRAL && !twoLights) temp = balanceAxis(m, "temperature", from, STATISTICS.whitesRB);
+  const afterTemp = temp ? temp.predicted : m;
+  const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
+  if (!temp && !tint) return null;
+  const why = [];
+  if (temp) why.push("whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
+  if (tint) why.push("whites " + (whitesG > 0 ? "green" : "magenta") + " by " + round(Math.abs(whitesG)) + ": tint " + round(tint.value) + tint.note);
+  return { value: temp ? temp.value : from, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : afterTemp, why: why.join("; ") };
 }
 
 // The casts left after white balance: each end of the parade neutralised with that end's wheel PAD

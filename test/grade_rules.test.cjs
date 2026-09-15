@@ -150,7 +150,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, currentCurves, m)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
   assert.ok(iPads > 0 && iPads < iLev && iLev < iGoals, "balance on the frame as read, the curve's black point on the balanced state, the sliders on the state after both");
   assert.match(seqTool, /if \(lev && h\.crushed > allow\.crushed\) \{ await cw\.write\(currentCurves \|\| \{\}\);/, "a crush rolls back the curve first, not the whole balance");
-  assert.match(seqTool, /if \(temp\) \{ await tw\.set\(tempFrom\); undone\.push\("temperature"\); \}/, "a clip rolls back the white balance and the pads");
+  assert.match(seqTool, /if \(temp\) \{ await tw\.set\(tempFrom\); if \(temp\.tint !== null\) await tiw\.set\(tintFrom\); undone\.push\("white balance"\); \}/, "a clip rolls back the white balance (both axes) and the pads");
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");
@@ -185,4 +185,16 @@ test("the curve's bottom point never passes the lowest channel bottom: a channel
   const lev = levelsFor(g);
   assert.ok(lev && Math.abs(lev.blackIn - 0.065) < 0.001, "held at (8 - 1.5) / 100: " + (lev && lev.blackIn));
   assert.match(lev.why, /held at the lowest channel bottom/);
+});
+
+test("the white balance has two axes: Temperature on blue-red, Tint on green-magenta, solved on the state temperature predicts", () => {
+  const greenTop = frame(5, 40, 90, [5, 5, 5], [86, 92, 86]); // whites green by 6, B-R neutral
+  const t = temperatureFor(greenTop);
+  assert.ok(t && t.value === 0 && t.tint !== null && t.tint > 0, "green whites: positive Tint (toward magenta), no temperature: " + JSON.stringify(t && { value: t.value, tint: t.tint }));
+  assert.ok(Math.abs(t.tint) <= TEMPERATURE_CAP);
+  assert.ok(Math.abs(t.predicted.green.p99 - (t.predicted.red.p99 + t.predicted.blue.p99) / 2) < 3, "the prediction lines the green up: " + t.predicted.green.p99);
+  const both = frame(5, 40, 90, [12, 8, 4], [96, 92, 84]); // warm at both ends and green on top
+  const b = temperatureFor(both);
+  assert.ok(b && b.value < 0 && b.tint !== null && b.tint > 0, "both axes move: " + JSON.stringify(b && { value: b.value, tint: b.tint }));
+  assert.match(b.why, /temperature .*; whites green by .*: tint/);
 });

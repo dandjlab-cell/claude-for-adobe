@@ -85,9 +85,9 @@ test("a knob never leaves its slider range, and a target past it is reported as 
 });
 
 test("an unswept knob gets one probe to measure its slope, then one write and the confirm", async () => {
-  // No calibration for 'tint' in the fixture; stand in with the exposure response so there is a slope to find.
+  // No calibration for 'vibrance' in the fixture; stand in with the exposure response so there is a slope to find.
   const host = premiereStandIn("exposure");
-  const r = await steer({ set: host.set, measure: host.measure, param: "tint", statistic: "brightness", target: 45, tolerance: 2 });
+  const r = await steer({ set: host.set, measure: host.measure, param: "vibrance", statistic: "brightness", target: 45, tolerance: 2 });
   assert.match(r.how, /probe/);
   assert.ok(r.renders <= MAX_RENDERS, "took " + r.renders);
   assert.equal(r.tested, false);
@@ -114,7 +114,7 @@ test("a whole shot in one go: every knob chosen from one reading, one confirm re
 
 test("a plan skips a knob it has no calibration for, and says so, rather than guessing", async () => {
   const host = premiereStandIn("exposure");
-  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "tint", target: 0 }, { param: "exposure", target: 45 }] });
+  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "vibrance", target: 0 }, { param: "exposure", target: 45 }] });
   assert.match(r.plan[0].skipped, /no calibration/);
   assert.equal(r.plan[1].hit, true);
 });
@@ -126,8 +126,8 @@ test("every reading taken is returned, so the panel can show its work", async ()
   for (const reading of r.readings) assert.ok(isFinite(reading.value) && isFinite(reading.stat));
 });
 
-test("the seven swept parameters are marked tested and the rest are not", () => {
-  assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["blacks", "contrast", "exposure", "highlights", "shadows", "temperature", "whites"]);
+test("the eight swept parameters are marked tested and the rest are not", () => {
+  assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["blacks", "contrast", "exposure", "highlights", "shadows", "temperature", "tint", "whites"]);
   const { SWEEPS } = require("../src/grade_model.cjs");
   for (const k of Object.keys(PARAMS)) assert.equal(!!SWEEPS[k], !!PARAMS[k].tested, k + ": tested means swept, and swept means tested");
 });

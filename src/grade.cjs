@@ -49,7 +49,7 @@ const STATISTICS = {
 // render to measure their local slope, then one write, then the confirm - same ceiling.
 const PARAMS = {
   temperature: { lumetri: "Temperature", steer: "whitesRB", range: [-100, 100], step: 25, tested: true },
-  tint: { lumetri: "Tint", steer: "whitesG", range: [-100, 100], step: 25, tested: false },
+  tint: { lumetri: "Tint", steer: "whitesG", range: [-100, 100], step: 25, tested: true },        // whites G-mid +29 -> -32 across the range; clips past +50 like temperature
   exposure: { lumetri: "Exposure", steer: "brightness", range: [-5, 5], step: 0.5, tested: true },
   contrast: { lumetri: "Contrast", steer: "spread", range: [-100, 100], step: 25, tested: true },
   highlights: { lumetri: "Highlights", steer: "whitePoint", range: [-100, 100], step: 25, tested: true }, // p99 58.8 -> 87.8, peak 95.7 at +100: never clips

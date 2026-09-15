@@ -857,12 +857,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Where the knobs are. A clip that already carries a balance (a temperature, a pad) is read from
     // Premiere's render, since its source pixels no longer describe it. A wheel read that fails means
     // the pads are left alone for this clip: writing "all neutral" over an unknown state is not a grade.
-    const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), cw = curveWriter(at, track);
-    let currentWheels = null, wheelsErr = null, tempFrom = 0, currentCurves = null, curvesErr = null;
+    const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), tiw = lumetriWriter(at, track, "Tint", region), cw = curveWriter(at, track);
+    let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
     try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
+    try { tintFrom = await tiw.read(); if (!isFinite(tintFrom)) tintFrom = 0; } catch (_) { tintFrom = 0; }
     try { currentCurves = (await cw.read()).curves; } catch (error) { curvesErr = error.message; }
-    const graded = tempFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves));
+    const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves));
 
     let m, readFrom = read;
     // auto: decode the clip's own file (parity with Premiere's render verified on BRAW, 2026-09-15:
@@ -884,7 +885,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    shares, then each end's wheel pad for what is left, solved on the state predicted after
     //    temperature. The casts are read here, before the tonal sliders, because a bottom pulled to the
     //    floor cannot be read. The sliders are solved on the state predicted after the pads.
-    const temp = gradeTemperatureFor(m, tempFrom);
+    const temp = gradeTemperatureFor(m, tempFrom, tintFrom);
     const afterTemp = temp ? temp.predicted : m;
     const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
     const padMoves = Object.keys(pads.wheels);
@@ -896,7 +897,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const afterLevels = lev ? lev.predicted : afterBalance;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...goals.needs);
-    if (temp) parts.push("temperature " + round2(temp.value) + " (" + temp.why + ")");
+    if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
 
@@ -914,7 +915,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false;
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
     try {
-      if (temp) await tw.set(temp.value);
+      if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
       if (padMoves.length) await ww.write(applied);
       if (lev) await cw.write(lev.curves);
       if (goals.length) {
@@ -933,7 +934,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         const h = gradeDamage(state), allow = gradeAllowance(baseline), undone = [];
         if (lev && h.crushed > allow.crushed) { await cw.write(currentCurves || {}); undone.push("curve"); }
         if (h.clipped > allow.clipped || !undone.length) {
-          if (temp) { await tw.set(tempFrom); undone.push("temperature"); }
+          if (temp) { await tw.set(tempFrom); if (temp.tint !== null) await tiw.set(tintFrom); undone.push("white balance"); }
           if (padMoves.length) { applied = Object.assign({}, currentWheels || {}); await ww.write(applied); undone.push("pads"); }
           if (lev && undone.indexOf("curve") < 0) { await cw.write(currentCurves || {}); undone.push("curve"); }
         }
@@ -958,7 +959,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         // the -24..-37 moves (whites still blue by 3-5 on the 21:50 run). Same least-squares scale as
         // the pads, t = -c0.d / d.d on the whites' cast, applied to the move; skipped when the pads'
         // correction already touched the whites (two corrections on one end are a guess).
-        let temp2 = null;
+        let temp2 = null, tint2 = null;
         if (temp && !next.highlights) {
           const c0 = wheelCastAt(m.frame || m, "highlights"), c1 = wheelCastAt(fa, "highlights");
           const d = [c1[0] - c0[0], c1[1] - c0[1]], dd = d[0] * d[0] + d[1] * d[1];
@@ -966,7 +967,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             const t = -(c0[0] * d[0] + c0[1] * d[1]) / dd;
             if (t > 0 && t < 3) {
               const v = Math.round((tempFrom + t * (temp.value - tempFrom)) * 100) / 100;
-              if (Math.abs(v - temp.value) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(temp.value) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
+              if (temp.value !== tempFrom && Math.abs(v - temp.value) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(temp.value) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
+              if (temp.tint !== null) { const tv = Math.round((tintFrom + t * (temp.tint - tintFrom)) * 100) / 100; if (Math.abs(tv - temp.tint) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(temp.tint) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
             }
           }
         }
@@ -988,8 +990,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             if (Math.abs(x2 - lev.blackIn) >= 0.005) { curve2 = x2; notes.push("curve black " + lev.blackIn.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
           }
         }
-        if (Object.keys(next).length || curve2 !== null || temp2 !== null) {
+        if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {
           if (temp2 !== null) await tw.set(temp2);
+          if (tint2 !== null) await tiw.set(tint2);
           if (Object.keys(next).length) { applied = Object.assign({}, applied, next); await ww.write(applied); }
           if (curve2 !== null) await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor));
           state = await confirmMeasure(); renders++;
