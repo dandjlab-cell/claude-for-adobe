@@ -53,18 +53,30 @@ function isIdentity(curves) {
   return true;
 }
 
-// The Master curve as a levels move: black input at blackIn, white input at whiteIn (0..1).
-function levels(blackIn = 0, whiteIn = 1, current = null) {
+// The Master curve as a levels move: black input at blackIn, white input at whiteIn (0..1). With an
+// `anchor` (0..1, a luma the picture should keep - the frame's median), the curve is PINNED there and
+// again at 0.8, so only the toe below the anchor moves: a two-point line is a global stretch (the
+// sweep's median went 41.6 -> 36 at x 0.10), which is not how a colourist sets a black point.
+function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
   const out = Object.assign({}, current || {});
-  out.Master = [[Math.max(0, Math.min(0.5, blackIn)), 0], [Math.max(0.5, Math.min(1, whiteIn)), 1]];
+  const x = Math.max(0, Math.min(0.5, blackIn)), w = Math.max(0.5, Math.min(1, whiteIn));
+  const pts = [[x, 0]];
+  if (anchor !== null && anchor > x + 0.05 && anchor < w - 0.05) {
+    pts.push([anchor, anchor]);
+    if (anchor < 0.7 && w > 0.9) pts.push([0.8, 0.8]);
+  }
+  pts.push([w, 1]);
+  out.Master = pts;
   return out;
 }
 
-// The bottom point that puts a black point (luma p1, 0-100) at `target`, on the straight line. The soft
-// toe measured live leaves it a touch higher than the line says (3.1 for 2.3), which is inside the
-// accepted band, and the confirm reports what it actually did.
-function blackInFor(p1, target = 4) {
+// The bottom point that puts a black point (luma p1, 0-100) at `target`. Unanchored, on the straight
+// line to (1,1): x = (p1 - t) / (100 - t). Anchored at A (0-100), on the line from (x, 0) to (A, A):
+// x = A (p1 - t) / (A - t). The soft toe measured live leaves it a touch higher than the line says
+// (3.1 for 2.3), inside the accepted band, and the confirm reports what it actually did.
+function blackInFor(p1, target = 4, anchor = null) {
   if (!(p1 > target)) return 0;
+  if (anchor !== null) { const A = anchor * 100; if (A > target + 5 && p1 < A) return Math.max(0, Math.min(0.5, (A * (p1 - target) / (A - target)) / 100)); }
   return Math.max(0, Math.min(0.5, (p1 - target) / (100 - target)));
 }
 // The top point that puts a white point at `target` without pushing the peak past 100: output = in / x,
@@ -77,9 +89,13 @@ function whiteInFor(p99, max, target = 92) {
 // Predict a measurement after the levels move: every luma and channel level maps through the line,
 // clamped to 0..100; casts and clip shares are left as they are (a neutral op moves both channels
 // together; the confirm reads the truth).
-function predictLevels(m, blackIn = 0, whiteIn = 1) {
-  const X = blackIn * 100, W = whiteIn * 100;
-  const map = (v) => (isFinite(v) ? Math.max(0, Math.min(100, (v - X) / ((W - X) / 100))) : v);
+function predictLevels(m, blackIn = 0, whiteIn = 1, anchor = null) {
+  const X = blackIn * 100, W = whiteIn * 100, A = anchor !== null ? anchor * 100 : null;
+  const map = (v) => {
+    if (!isFinite(v)) return v;
+    if (A !== null && A > X + 5 && W >= 90) return v >= A ? v : Math.max(0, (v - X) * A / (A - X)); // pinned at the anchor: above it, untouched
+    return Math.max(0, Math.min(100, (v - X) / ((W - X) / 100)));
+  };
   const move = (f) => {
     for (const k of ["min", "p1", "p50", "p99", "max"]) if (f.luma && k in f.luma) f.luma[k] = map(f.luma[k]);
     for (const c of ["red", "green", "blue"]) if (f[c]) for (const k of ["mean", "p1", "p99"]) if (k in f[c]) f[c][k] = map(f[c][k]);

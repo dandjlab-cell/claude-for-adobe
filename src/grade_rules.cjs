@@ -91,16 +91,19 @@ function padsFor(m, current = null) {
 // written before the sliders, which are then solved on the state it predicts. An automatic pass stops
 // at x = 0.25: a black point above ~28 is not a lifted black, it is a picture with no black in it.
 const LEVELS_CAP = 0.25;
+// The curve is pinned at the frame's median (kept inside 0.3..0.6) and at 0.8, so the move is a toe
+// pull, not a global stretch: the midtones and the top stay where they are.
 function levelsFor(m, current = null) {
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
   const target = BLACK_POINT[1] - 1;
-  const want = blackInFor(bp, target);
+  const anchor = Math.max(0.3, Math.min(0.6, f.luma.p50 / 100));
+  const want = blackInFor(bp, target, anchor);
   const blackIn = Math.min(LEVELS_CAP, want);
   return {
-    blackIn, curves: levels(blackIn, 1, current), predicted: predictLevels(m, blackIn, 1),
-    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + (want > blackIn ? " (capped at " + LEVELS_CAP + ")" : ""),
+    blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
+    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (want > blackIn ? " (capped at " + LEVELS_CAP + ")" : ""),
   };
 }
 

@@ -39,6 +39,20 @@ test("the top point is output = input / x to the decimal, and never past the pea
   assert.ok(Math.abs(whiteInFor(80, 85, 92) - 0.87) < 0.001, "with room, x = p99 / target");
 });
 
+test("an anchored bottom point is a toe pull: the median and the top stay, the black point lands", () => {
+  const m = { luma: { min: 2.4, p1: 16.1, p50: 41.6, p99: 75.7, max: 91.4 }, red: { mean: 50, p1: 9.4, p99: 74.1 }, green: { mean: 39, p1: 7.8, p99: 76.1 }, blue: { mean: 29, p1: 4.7, p99: 76.1 } };
+  const a = 0.416;
+  const x = blackInFor(16.1, 4, a);
+  assert.ok(x > 0.13 && x < 0.14, "steeper below the anchor than the global line (0.126): " + x.toFixed(3));
+  const p = predictLevels(m, x, 1, a);
+  assert.ok(Math.abs(p.luma.p1 - 4) < 0.05, "p1 " + p.luma.p1.toFixed(2));
+  assert.equal(p.luma.p50, 41.6, "the median is pinned");
+  assert.equal(p.luma.p99, 75.7, "the top is untouched");
+  assert.equal(p.red.p99, 74.1);
+  assert.equal(format(levels(x, 1, null, a)).split(";")[0], "Master:4:0.13,0.00,0.42,0.42,0.80,0.80,1.00,1.00,");
+  assert.deepEqual(levels(0.1, 1, null, 0.12).Master, [[0.1, 0], [1, 1]], "an anchor too close to the bottom point is dropped");
+});
+
 test("levels() composes onto an existing set of curves", () => {
   const cur = parse(READ);
   cur.Red = [[0, 0], [0.5, 0.6], [1, 1]];

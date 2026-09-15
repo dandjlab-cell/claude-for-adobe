@@ -66,9 +66,12 @@ test("a lifted black point is the curve's job: the Master bottom point, solved e
   const f = frame(10, 40, 90, [10, 10, 10], [90, 90, 90]);
   assert.equal([...goalsFor(f, "frame")].some((x) => x.param === "blacks" || x.param === "shadows"), false, "no slider is asked to find a black point it may not reach (12 -> 1 on one clip, 12 -> 10 on the next)");
   const lev = levelsFor(f);
-  assert.ok(lev && Math.abs(lev.blackIn - (10 - 4) / 96) < 0.001, "x = (p1 - 4) / 96: " + lev.blackIn.toFixed(3));
+  assert.equal(lev.anchor, 0.4, "pinned at the frame's median");
+  assert.ok(lev && Math.abs(lev.blackIn - (40 * (10 - 4) / (40 - 4)) / 100) < 0.001, "x = A (p1 - 4) / (A - 4) below the anchor: " + lev.blackIn.toFixed(3));
   assert.ok(Math.abs(lev.predicted.luma.p1 - 4) < 0.01, "and the prediction lands on 4");
-  assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [1, 1]]);
+  assert.equal(lev.predicted.luma.p50, 40, "the median does not move: the curve is a toe pull, not a stretch");
+  assert.equal(lev.predicted.luma.p99, 90);
+  assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [0.4, 0.4], [0.8, 0.8], [1, 1]], "four points: bottom, the median pin, a pin at 0.8, the top corner - the colourists' three-to-four");
   const far = levelsFor(frame(40, 60, 90, [40, 40, 40], [90, 90, 90]));
   assert.equal(far.blackIn, LEVELS_CAP, "a black point of 40 is a picture with no black: the automatic pass stops at the cap");
   assert.equal(levelsFor(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), null, "already at the black point: no curve");

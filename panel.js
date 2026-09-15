@@ -951,16 +951,19 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         }
         let curve2 = null;
         if (lev) {
-          const p1 = fa.luma.p1, target = 4;
+          const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
           if (p1 > GRADE_ACCEPT.blackMax || p1 < 1) {
-            // Compose a second levels move on the first: x2 = x + ((p1 - target) / (100 - target)) * (1 - x).
-            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, lev.blackIn + ((p1 - target) / (100 - target)) * (1 - lev.blackIn)));
+            // Compose a second toe pull on the first, below the same anchor: the extra bottom point in
+            // the post-curve domain is A (p1 - t) / (A - t); back through the first curve that is
+            // x2 = x + xAdd * (a - x) / a.
+            const xAdd = (A * (p1 - target) / (A - target)) / 100;
+            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, lev.blackIn + xAdd * (a - lev.blackIn) / a));
             if (Math.abs(x2 - lev.blackIn) >= 0.005) { curve2 = x2; notes.push("curve black " + lev.blackIn.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
           }
         }
         if (Object.keys(next).length || curve2 !== null) {
           if (Object.keys(next).length) { applied = Object.assign({}, applied, next); await ww.write(applied); }
-          if (curve2 !== null) await cw.write(curveLevels(curve2, 1, currentCurves));
+          if (curve2 !== null) await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor));
           state = await confirmMeasure(); renders++;
           parts.push("corrected: " + notes.join(", "));
         } else if (notes.length) parts.push(notes.join(", "));
