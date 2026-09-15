@@ -13,7 +13,7 @@ const { STATISTICS } = require("./grade.cjs");
 const BANDS = { face: [53, 66], subject: [40, 55], frame: [40, 55] };
 const SPREAD = { flat: 55, harsh: 85, target: 70 };
 const WHITES_TOLERANCE = 1.5;   // whites within this of aligned are aligned
-const WHITE_CEILING = 92;       // luma p99 above this is heading for a clip
+const WHITE_CEILING = 95;       // luma p99 above this is heading for a clip (the sweep clipped nothing until 99.6)
 const BLACK_FLOOR = 4;          // luma p1 below this is heading for a crush
 
 // One shot's goals, in colourist order, from its measurement and which region it is. Each goal names

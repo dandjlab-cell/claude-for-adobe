@@ -55,7 +55,7 @@ test("goals come in colourist order: white balance, exposure, contrast", () => {
 test("the verdict names what is still off, in words, and is silent when balanced", () => {
   const good = m([10, 47, 80], [10, 80], [10, 80], [10, 80.5]);
   assert.deepEqual(verdict(good, "subject"), { balanced: true, notes: [] });
-  const clipped = m([2, 47, 95], [2, 95], [2, 95], [2, 95], { clipped: { red: 3, green: 0, blue: 0 } });
+  const clipped = m([2, 47, 97], [2, 97], [2, 97], [2, 97], { clipped: { red: 3, green: 0, blue: 0 } });
   const v = verdict(clipped, "subject");
   assert.equal(v.balanced, false);
   assert.ok(v.notes.some((n) => /clipped 3/.test(n)) && v.notes.some((n) => /near clipping/.test(n)) && v.notes.some((n) => /near crushing/.test(n)), v.notes.join(" | "));

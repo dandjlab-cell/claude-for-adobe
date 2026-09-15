@@ -142,11 +142,19 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 // A whole shot in one go: read the scopes once, choose every knob from the model, write them all, then
 // ONE confirm render for the lot. goals: [{ param, target, statistic? }] in the order a colourist works
 // (white balance, then exposure, then contrast). Each knob is solved on the state predicted after the
-// knobs before it, so their interaction is accounted for as far as the model can.
+// knobs before it. A target the knob cannot reach inside its calibrated range is taken as far as the
+// knob goes only if that helps, and reported as partial - never mistaken for a hit. A brightness move
+// that the model says will push the FRAME's white point past the ceiling is capped there before it is
+// written. If the confirm still shows the frame clipped or crushed, the brightness knobs are backed off
+// to neutral and confirmed once more - safety spends the third render, not a nudge.
+const WHITE_CEILING = 95; // the sweep clipped nothing until p99 reached 99.6; 92 blocked moves that were safe
+const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites", "shadows", "blacks"]);
 async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null }) {
   const before = measured || await measure(); // a caller that has just read the scopes passes the reading
+  let renders = measured ? 1 : 2;
   let state = before;
   const plan = [];
+  const frameWhite = (m) => (m.frame || m).luma.p99;
   for (const g of goals) {
     const spec = PARAMS[g.param];
     if (!spec) throw new Error("unknown parameter: " + g.param);
@@ -154,22 +162,39 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     const readStat = STATISTICS[statName];
     if (!readStat) throw new Error("unknown statistic: " + statName);
     const from = spec.neutral || 0;
+    const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)) };
     const s = SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null;
-    if (!s) { plan.push({ param: g.param, statistic: statName, target: g.target, skipped: SWEEPS[g.param] ? "target beyond the swept range" : "no calibration for " + g.param }); continue; }
-    const value = clampTo(spec.range, s.value);
-    const predicted = predict(state, g.param, from, value);
-    plan.push({ param: g.param, statistic: statName, target: g.target, value, before: round(readStat(state)), predicted: round(readStat(predicted)) });
+    if (!s) { plan.push({ ...entry, skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
+    if (s.partial && !s.helps) { plan.push({ ...entry, skipped: "beyond the knob's range and the range end does not help" }); continue; }
+    let value = clampTo(spec.range, s.value), note = s.partial ? "partial: as far as the knob goes" : "";
+    let predicted = predict(state, g.param, from, value);
+    // Cap a brightness move by where the model says the frame's white point lands.
+    if (BRIGHTNESS_KNOBS.has(g.param) && frameWhite(predicted) > WHITE_CEILING && frameWhite(state) <= WHITE_CEILING) {
+      const cap = solveKnob(state, g.param, from, frameWhite, WHITE_CEILING);
+      if (cap && cap.bracketed && Math.abs(cap.value - from) < Math.abs(value - from)) {
+        value = clampTo(spec.range, cap.value); predicted = predict(state, g.param, from, value);
+        note = "capped: the white point would have passed " + WHITE_CEILING;
+      }
+    }
+    plan.push({ ...entry, value, predicted: round(readStat(predicted)), note });
     state = predicted;
   }
   for (const p of plan) if (p.value !== undefined) p.readBack = Number(await set(p.value, p.param));
-  const after = await measure();
-  for (const p of plan) if (p.value !== undefined) {
-    p.achieved = round(STATISTICS[p.statistic](after));
-    p.residual = round(p.achieved - p.target);
-    p.hit = Math.abs(p.achieved - p.target) <= tolerance;
+  let after = await measure();
+  const judge = (m) => { for (const p of plan) if (p.value !== undefined) { p.achieved = round(STATISTICS[p.statistic](m)); p.residual = round(p.achieved - p.target); p.hit = Math.abs(p.achieved - p.target) <= tolerance; } };
+  judge(after);
+  let harm = damage(after), backedOff = false;
+  if (unsafe(harm, guard)) {
+    // Never leave damage: the brightness knobs go back to neutral, the confirm is repeated.
+    for (const p of plan) if (p.value !== undefined && BRIGHTNESS_KNOBS.has(p.param)) {
+      const spec = PARAMS[p.param];
+      p.readBack = Number(await set(spec.neutral || 0, p.param)); p.value = spec.neutral || 0;
+      p.note = "backed off: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
+    }
+    after = await measure(); renders++;
+    judge(after); harm = damage(after); backedOff = true;
   }
-  const harm = damage(after);
-  return { before, after, plan, renders: measured ? 1 : 2, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, guard) };
+  return { before, after, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, guard), backedOff };
 }
 
 const round = (n) => Math.round(Number(n) * 100) / 100;

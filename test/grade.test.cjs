@@ -160,3 +160,47 @@ test("unknown parameters and statistics are refused", async () => {
   await assert.rejects(() => steer({ set: host.set, measure: host.measure, param: "exposure", statistic: "mood", target: 1 }), /unknown statistic/);
   await assert.rejects(() => steer({ set: host.set, measure: host.measure, param: "exposure", target: NaN }), /target must be a number/);
 });
+
+// --- the three bugs from the first live grade_sequence run (2026-09-15) -----------------------------
+const { predict, solveKnob } = require("../src/grade_model.cjs");
+
+// A subject reading with the whole frame attached, the way the panel measures a region.
+function withFrame(m) {
+  const frame = JSON.parse(JSON.stringify(m));
+  frame.red.p99 = 84; frame.green.p99 = 85; frame.blue.p99 = 86; // whites blue by 2 on the frame
+  return { ...m, frame };
+}
+
+test("the model predicts the FRAME as well as the subject, so white balance can be solved", () => {
+  const m = withFrame(premiereStandIn("temperature").measure());
+  const whitesRB = (x) => { const f = x.frame || x; return f.blue.p99 - f.red.p99; };
+  const flat = whitesRB(predict(m, "temperature", 0, 50)) === whitesRB(m);
+  assert.equal(flat, false, "the frame's whites must move with temperature; a flat curve sent every clip to +-100");
+  const s = solveKnob(m, "temperature", 0, whitesRB, 0);
+  assert.equal(s.bracketed, true);
+  assert.ok(s.value > 0 && s.value < 15, "whites blue by 2 is a small warm move, got " + s.value.toFixed(1));
+});
+
+test("a target beyond the knob's range is flagged partial, not applied at the range end as if it were a hit", () => {
+  const m = premiereStandIn("exposure").measure(); // brightness 36.9 at 0
+  const s = solveKnob(m, "exposure", 0, (x) => x.luma.p50, 95);
+  assert.equal(s.partial, true);
+  assert.equal(s.helps, true, "the range end still moves the right way");
+  assert.ok(s.predicted < 70, "and the model says honestly where it lands: " + s.predicted.toFixed(1));
+});
+
+test("a whole-shot plan backs the brightness knobs off when the confirm shows the frame clipped", async () => {
+  // Stand-in whose confirm always reports the frame clipped: the plan must not leave that on the clip.
+  const base = premiereStandIn("exposure");
+  let writes = [];
+  const host = {
+    set: (v) => { writes.push(v); return base.set(v); },
+    measure: () => Object.assign(base.measure(), { clipped: { red: 40, green: 0, blue: 0 } }),
+  };
+  const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "exposure", target: 45 }] });
+  assert.equal(r.backedOff, true);
+  assert.equal(r.plan[0].value, 0, "exposure went back to neutral");
+  assert.match(r.plan[0].note, /backed off/);
+  assert.equal(r.renders, 3, "safety spent the third render");
+  assert.equal(writes[writes.length - 1], 0, "the last thing written is the safe value");
+});

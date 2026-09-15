@@ -44,14 +44,22 @@ const scales = (param, key) => pickSpace(clean(SWEEPS[param].values.map((v, i) =
 function predict(m, param, from, to) {
   if (!SWEEPS[param]) return m; // no calibration: no prediction, the caller renders instead
   const out = JSON.parse(JSON.stringify(m));
-  for (const key of Object.keys(TRACKED)) {
-    const cur = get(m, key);
-    if (!isFinite(cur)) continue;
-    const a = calib(param, key, from), b = calib(param, key, to);
-    if (a === null || b === null) continue;
-    const next = (scales(param, key) && a > 0 && cur > 0) ? cur * (b / a) : cur + (b - a);
-    set(out, key, Math.max(-50, Math.min(100, next)));
-  }
+  const move = (src, dst) => {
+    for (const key of Object.keys(TRACKED)) {
+      const cur = get(src, key);
+      if (!isFinite(cur)) continue;
+      const a = calib(param, key, from), b = calib(param, key, to);
+      if (a === null || b === null) continue;
+      const next = (scales(param, key) && a > 0 && cur > 0) ? cur * (b / a) : cur + (b - a);
+      set(dst, key, Math.max(-50, Math.min(100, next)));
+    }
+  };
+  move(m, out);
+  // A region reading carries the whole frame alongside it, and the frame is what white balance and the
+  // clipping guard read. It moves with the knob too - the first live run predicted the subject only,
+  // so the frame's whites stayed flat in the model, never crossed zero, and every temperature went to
+  // the end of its range.
+  if (m.frame) { out.frame = JSON.parse(JSON.stringify(m.frame)); move(m.frame, out.frame); }
   return out;
 }
 
@@ -67,7 +75,13 @@ function solveKnob(m, param, from, readStat, target) {
   }
   const r = solveFor(curve, target);
   if (!r) return null;
-  return { value: Math.max(lo, Math.min(hi, r.value)), bracketed: r.bracketed, reliable: r.reliable !== false };
+  const value = Math.max(lo, Math.min(hi, r.value));
+  // Not bracketed: the knob cannot reach the target inside its calibrated range. The end of the range
+  // is still the best it can do IF it moves the right way; the caller decides whether to take a
+  // partial move, and must not mistake it for a hit.
+  const now = readStat(m), atEnd = readStat(predict(m, param, from, value));
+  const helps = Math.abs(atEnd - target) < Math.abs(now - target);
+  return { value, bracketed: r.bracketed, reliable: r.reliable !== false, partial: !r.bracketed, helps, predicted: atEnd };
 }
 
 module.exports = { predict, solveKnob, calib, RANGE, TRACKED, SWEEPS };

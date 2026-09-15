@@ -766,8 +766,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance } = 
     touched++;
     const v = gradeVerdict(r.after, r.after.region || seen);
     balanced += v.balanced ? 1 : 0;
-    const knobs = r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + ")").join("; ");
-    lines.push(label + " [" + seen + "] " + before + " → " + knobs + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + (r.unsafe ? " WARNING clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "%" : ""));
+    const knobs = r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; ");
+    lines.push(label + " [" + seen + "] " + before + " → " + knobs + (v.balanced ? " ✓" : " — " + v.notes.join("; ")) + (r.unsafe ? " WARNING still clipped " + round2(r.clipped) + "% / crushed " + round2(r.crushed) + "% after backing off" : ""));
   }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.unshift("Graded V" + track + " by " + region + ": " + clips.length + " clips, " + touched + " changed, " + balanced + " balanced, " + renders + " renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + ".");
