@@ -51,8 +51,11 @@ already moved from 74 to 79.6 before contrast was touched at all.)
    over 85 is aggressive. Watch `clipped` and `crushed`: 0% is the goal, and `grade` refuses to pass
    0.5% clipped or 1% crushed by default. Getting a target by blowing highlights is not a win.
 3. **White balance** — temperature then tint, on the FACE. Neutral is cast 0, but **skin is not
-   neutral**: a healthy face reads warm, roughly Cr +4 to +10. Driving a face's warmth to 0 makes a
-   corpse. Drive a grey card or a white wall to 0; drive a face to a warm target.
+   neutral**: a healthy face reads warm. Driving a face's warmth to 0 makes a corpse. Drive a grey
+   card or a white wall to 0; drive a face to a warm target. The right warm number for skin on this
+   scale has NOT been measured yet — calibrate it by measuring a face the editor agrees looks right
+   (`scopes`, region face) and use that Cr as the target, rather than a figure from memory. Until
+   then, matching to a reference shot is safer than an absolute warmth target.
 4. **Saturation / vibrance** — last, and gently.
 
 ## Matching two shots
