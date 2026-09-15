@@ -237,3 +237,14 @@ test("the tonal ends are the frame's even when a subject was measured", () => {
   assert.equal(STATISTICS.spread(subject), 78);
   assert.equal(STATISTICS.brightness(subject), 40, "brightness is the subject's: that is what a face is exposed by");
 });
+
+test("a channel at 0 is damage as a floor, not as a saturated object's missing channel", () => {
+  const { damage } = require("../src/grade.cjs");
+  const base = { luma: { p1: 20, p50: 45, p99: 88 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0 };
+  // C228: the red of a blue cloth at 0 on 2.8% of the frame - the object's colour, no damage.
+  assert.equal(damage({ ...base, floor: { red: 2.77, green: 0, blue: 0 } }).crushed, 0);
+  // C227 @5.63: blue at 0 across the parade bottom - a floor.
+  assert.equal(damage({ ...base, floor: { red: 0, green: 0, blue: 56.74 } }).crushed, 56.74);
+  // Luma crushed is damage at any share.
+  assert.equal(damage({ ...base, crushed: 1.3, floor: { red: 0, green: 0, blue: 0 } }).crushed, 1.3);
+});

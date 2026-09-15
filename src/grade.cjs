@@ -74,10 +74,17 @@ const PARAMS = {
 // has destroyed picture. Judged on the WHOLE frame even when steering by the subject - pushing a small
 // subject up two stops blows the room behind it, and a subject-only reading would never see that.
 const GUARD = { clipped: 0.5, crushed: 1.0 };
+// A channel at 0 is crushed too when it is a FLOOR (C187, 21:26: a pad painting the crushed shadows;
+// C227 @5.63, 00:48: blue at 0 on 57% of the frame) - but a saturated object has no room in one channel
+// by nature (C228, 01:00: the red of a blue cloth at 0 on 2.8% of the frame, and the guard threw away
+// the black-point curve for it, leaving the shot with no black at all). The line between the two is the
+// share: a floor is broad, an object's channel is a few percent.
+// ponytail: one share line; a luma-band test of the floored pixels if a large saturated object ever fools it.
+const FLOOR_SHARE = 5;
 const damage = (m) => {
   const f = m.frame || m; // measureRegion attaches the whole-frame numbers when a region was measured
-  const floor = f.floor ? Math.max(f.floor.red, f.floor.green, f.floor.blue) : 0; // a channel at 0 is crushed too (C187, 21:26)
-  return { clipped: Math.max(f.clipped.red, f.clipped.green, f.clipped.blue), crushed: Math.max(f.crushed, floor) };
+  const floor = f.floor ? Math.max(f.floor.red, f.floor.green, f.floor.blue) : 0;
+  return { clipped: Math.max(f.clipped.red, f.clipped.green, f.clipped.blue), crushed: Math.max(f.crushed, floor > FLOOR_SHARE ? floor : 0) };
 };
 const unsafe = (d, guard) => d.clipped > guard.clipped || d.crushed > guard.crushed;
 // Damage the shot arrived with is not the grade's doing: a source that already clips 1.7% of a window
