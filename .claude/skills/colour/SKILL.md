@@ -13,8 +13,9 @@ judgement below is a number you can measure and a number you can drive.
 
 One call: `grade_sequence`. It does the whole job deterministically, on the working copy - every
 footage clip on V1, read once, the canon by rule: white balance (Temperature, only when the whole
-parade shares a cast) and each end's wheel pad for what is left, then Whites to the white point,
-Contrast only if flat or harsh, Blacks to the black point last, Exposure only for a face's skin.
+parade shares a cast) and each end's wheel pad for what is left, the black point set exactly with
+the Master curve's bottom point, then Whites to the white point with Highlights finishing, Contrast
+only if flat or harsh, Blacks only to lift crushed blacks, Exposure only for a face's skin.
 Knobs from the calibration model, written as one set and confirmed once; then one correction (a
 rollback of what damaged the frame beyond what the source had, else a direction-aware pad nudge)
 and one confirm of that - two renders a clip. The read is decoded from the clip's own file
@@ -84,8 +85,9 @@ broadcast conventions the scopes were built around:
   the line → match shots (waveform first, then parade, then vectorscope) → only then the look.
   Balance every shot to neutral before any look, even when the look is meant to be warm.
   The panel cancels the casts BEFORE it moves the black point: the pad model reads the parade's
-  bottoms, and once Blacks has put the black point at 4 a warm bottom's blue channel is on the floor
-  and nothing reads linearly there. Blacks, Whites and Contrast do not tint, so the balance holds.
+  bottoms as pixels (the darkest 3%), and once the black point sits at 4 a warm bottom's blue channel
+  is on the floor and nothing reads linearly there. The tonal moves are equal-channel operations, so
+  the balance is expected to hold; the confirm reads the casts again rather than assuming it.
 - Everything above is judged on the **whole frame** except skin, which is judged on the **face**.
   A subject's own spread says nothing about contrast - a bottle is naturally flat.
 
