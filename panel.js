@@ -618,7 +618,7 @@ async function scopesTool({ seconds = [], solo_track, region = "frame", source =
 
 // One frame measured the way `scopes` measures it, as numbers rather than a report: Premiere's own
 // render of the composite at that time. The grade loop calls this after every write.
-async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPlayhead = false } = {}) {
+async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPlayhead = false, keep = false } = {}) {
   const base = path.join(os.tmpdir(), "claude-for-adobe-grade-" + Date.now().toString(36));
   const raw = await host("frames", JSON.stringify([seconds]), base, "", keepPlayhead ? "1" : "");
   if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
@@ -628,7 +628,7 @@ async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPla
   if (!src) throw new Error("frame export failed at " + seconds + "s (" + ok + ")");
   // One export, then decode as many regions as needed: a face or subject costs no extra render.
   try { return measureRegion(src, region, reuse); }
-  finally { try { fs.rmSync(src, { force: true }); } catch (_) {} }
+  finally { if (!keep) { try { fs.rmSync(src, { force: true }); } catch (_) {} } } // keep: the caller wants the PNG (the skin step learns its key from it) and removes it
 }
 
 // Measure a rendered frame by region. "frame" is the whole picture; "face" is Vision's biggest face box (skin
@@ -1222,14 +1222,20 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       //    the confirmed frame, HSL Tint solved to put the keyed hue on the line, HSL Saturation into the
       //    band, one confirm read on the hand/face box. Only when Vision saw skin; never on a matched cut
       //    (the reference's HSL state is copied).
-      if (confirm && !ref) {
-        const f1s = state.frame || state, src1 = f1s.src || (state.src);
-        const vis = src1 ? (f1s.vision || visionAll(src1)) : null, key = vis && src1 ? skinKeyFor(src1, vis) : null;
+      const seenVision = (m.frame || m).vision || m.vision;
+      if (confirm && !ref && seenVision && ((seenVision.faces || []).length || (seenVision.hands || []).length)) {
+        // One render of the confirmed picture, kept on disk: Vision's boxes on it, the key from them,
+        // the skin pixels' own numbers (measureFrameAt deletes its PNG otherwise, and the key must be
+        // learned from the frame the correction is judged on, not from the first read).
+        const skinRegion = (seenVision.faces || []).length ? "face" : "hands";
+        let skinNow = null;
+        try { skinNow = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true, keep: true }), "render"); renders++; } catch (error) { needs.push("skin: " + error.message); }
+        const src1 = skinNow && (skinNow.frame || skinNow).src, vis = skinNow && (skinNow.vision || (skinNow.frame && skinNow.frame.vision));
+        const key = src1 && vis ? skinKeyFor(src1, vis) : null;
         const boxes = vis ? [...((vis.faces || [])), ...((vis.hands || []))] : [];
-        if (boxes.length && key && src1) {
+        if (src1) { try { fs.rmSync(src1, { force: true }); } catch (_) {} }
+        if (skinNow && boxes.length && key) {
           try {
-            const skinRegion = vis.faces && vis.faces.length ? "face" : "hands";
-            const skinNow = measureRegion(src1, skinRegion);
             if (skinNow.region === skinRegion) {
               const sk = gradeSkinFor(skinNow);
               const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
@@ -1248,7 +1254,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
               }
             }
           } catch (error) { needs.push("skin: " + error.message); }
-        }
+        } else if (skinNow && boxes.length && !key) needs.push("skin: " + skinRegion + " seen but too few skin-coloured pixels in the box to learn a key");
       }
     } catch (error) { lines.push(label + ": " + error.message); continue; }
 

@@ -250,3 +250,15 @@ test("skin inside the HSL key: Tint puts the keyed hue on the line, Saturation o
   const onLine = { ...hands, cast: { cb: -5.5, cr: 8.4 }, saturation: { p50: 30, p99: 40 } }; // 123 deg, 30
   assert.equal(skinFor(onLine), null, "nothing to do");
 });
+
+test("a dark subject is lifted with Shadows toward 40, capped by the frame's black point; the verdict names it", () => {
+  const f = frame(5, 45, 90, [5, 5, 5], [90, 90, 90]);
+  const hand = frame(12, 22, 48, [12, 12, 12], [48, 48, 48]); // the hand and cloth of C222 at 00:00:01:11
+  const g = goalsFor(withSubject(f, hand), "subject");
+  const sh = [...g].find((x) => x.param === "shadows");
+  assert.ok(sh && sh.statistic === "brightness" && sh.target === 40 && typeof sh.ceiling === "function", JSON.stringify([...g]));
+  assert.equal(sh.ceiling({ frame: { luma: { p1: 7 } } }), true);
+  assert.equal(sh.ceiling({ frame: { luma: { p1: 9 } } }), false);
+  assert.ok(verdict(withSubject(f, hand), "subject").notes.some((n) => /subject luma 22 dark/.test(n)));
+  assert.equal([...goalsFor(withSubject(f, frame(20, 45, 70, [20, 20, 20], [70, 70, 70])), "subject")].some((x) => x.param === "shadows"), false, "a subject at 45 is not dark");
+});

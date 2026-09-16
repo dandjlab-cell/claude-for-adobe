@@ -227,6 +227,14 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
         note = "capped: the white point would have passed " + WHITE_CEILING;
       }
     }
+    // A goal's own ceiling: a predicate on the predicted state the move must keep true (a dark subject
+    // lifted with Shadows keeps the frame's black point under 8). Scaled back like the white balance.
+    if (g.ceiling && !g.ceiling(predicted)) {
+      let v = value, tries = 0;
+      while (!g.ceiling(predict(state, g.param, from, v)) && Math.abs(v - from) > 1 && tries++ < 12) v = from + (v - from) * 0.8;
+      if (Math.abs(v - from) <= 1) { plan.push({ ...entry, skipped: "held: any move would pass its own ceiling" }); continue; }
+      value = Math.round(v * 100) / 100; predicted = predict(state, g.param, from, value); note = (note ? note + "; " : "") + "held back at its ceiling";
+    }
     plan.push({ ...entry, value, predicted: round(readStat(predicted)), note });
     state = predicted;
   }

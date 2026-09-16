@@ -27,6 +27,11 @@ const ACCEPT = { blackMax: BLACK_POINT[1] + 1, whiteMin: WHITE_POINT[0] - 3, whi
 const SKIN_LUMA = [40, 70];      // a face: light skin 60-70, dark skin 40-60; alive around 60-65
 const SKIN_HUE = [116, 126];     // the vectorscope skin line, 123 at centre
 const SKIN_SAT = [20, 50];       // percent of the vectorscope radius; ~30 reads natural on Rec.709
+// A hand or a product is what the shot is about: it has no canonical band, but a subject whose median
+// luma sits under SUBJECT_DARK while the frame is balanced is "objectively very dark where it matters"
+// (the owner, 2026-09-16 12:15, C222: the frame ticked, the hand and cloth sat at 15-30). Lifted with
+// Shadows (a dark-areas control) toward SUBJECT_LUMA, capped where the frame's black point would pass 8.
+const SUBJECT_DARK = 35, SUBJECT_LUMA = 40, SUBJECT_BLACK_MAX = 8;
 // harsh was 85 - which the targets themselves exceed (black 4, white 92 = 88), so Contrast -60 fired on
 // five clips of the 21:05 run and lifted the black points the curve had just set. Harsh is past the
 // canon's own range.
@@ -185,6 +190,13 @@ function goalsFor(m, region = "frame") {
     if (sat < SKIN_SAT[0] || sat > SKIN_SAT[1]) needs.push("skin saturation " + round(sat) + "% (20-50): Saturation");
   }
 
+  // 1b. A dark subject (a hand, a product) is lifted with Shadows - after the white point, on the
+  //     state the sliders before it predict; the cap is the frame's black point.
+  if (region === "subject" && m.frame && m.luma) {
+    const luma = STATISTICS.brightness(m);
+    if (luma < SUBJECT_DARK) goals.push({ param: "shadows", statistic: "brightness", target: SUBJECT_LUMA, ceiling: (state) => frameOf(state).luma.p1 <= SUBJECT_BLACK_MAX, why: "subject luma " + round(luma) + " is dark where it matters → " + SUBJECT_LUMA + " with Shadows (black point kept ≤ " + SUBJECT_BLACK_MAX + ")" });
+  }
+
   // 2. White point: Whites, then Highlights for what Whites leaves. Whites clips past about +50, so
   //    an automatic pass caps it there; Highlights (a bright-areas control that never clipped in its
   //    sweep, +100 = p99 75.7 -> 87.8) finishes, capped at 60 - a shot that needs more is a taste
@@ -239,6 +251,7 @@ function verdict(after, region = "frame") {
     if (luma < SKIN_LUMA[0] || luma > SKIN_LUMA[1]) notes.push("face luma " + round(luma) + " outside 40-70");
     if (hue < SKIN_HUE[0] || hue > SKIN_HUE[1]) notes.push("skin hue " + round(hue) + "° off the line");
   }
+  if (region === "subject" && after.frame && after.luma && STATISTICS.brightness(after) < SUBJECT_DARK) notes.push("subject luma " + round(STATISTICS.brightness(after)) + " dark where it matters (under " + SUBJECT_DARK + ")");
   return { balanced: !notes.length, notes };
 }
 
