@@ -166,7 +166,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // boxes first, and a key that took the room is tightened once, else skin is skipped on that clip.
   assert.match(panel, /const SKIN_WRITE = true;/, "skin writes are on");
   assert.ok(seqTool.indexOf("skinSpills(cov, boxShare)") > 0 && seqTool.indexOf("skinSpills(cov, boxShare)") < seqTool.indexOf("await hw.correction(hslPadText(sk.pad));"), "the spill check runs before the wheel is written");
-  assert.match(seqTool, /skinKeyFor\(src1, vis, \{ tight: true \}\)/, "one tighter key before giving up");
+  assert.match(seqTool, /if \(spill \|\| thin\) \{ await hw\.writeKey\(EMPTY_HSL_KEY\);/, "a key that spills or catches only an outline is emptied, not graded");
   assert.match(panel, /await h\.correction\(hslPadText\(s\.hsl\.pad\)\);/, "a matched cut takes the reference's wheel too");
   assert.doesNotMatch(seqTool, /hw\.tint\(/, "HSL Tint is never written for skin (a magenta wash, 12:21)");
   assert.match(seqTool, /readable\[Math\.floor\(\(readable\.length - 1\) \/ 2\)\]/, "a source cut more than once is graded from its median-whites cut");
@@ -262,13 +262,17 @@ test("skin inside the HSL key: the Midtones pad rotates the keyed hue onto the l
   const hue = Math.atan2(sk.predicted.cast.cr, sk.predicted.cast.cb) * 180 / Math.PI;
   assert.ok(hue >= SKIN_HUE[0] && hue <= SKIN_HUE[1], "predicted hue on the line: " + hue.toFixed(1));
   assert.equal(sk.saturation, null, "saturation 19 is a point under the band: not worth the knob");
-  const pale = skinFor({ ...hands, saturation: { p50: 14, p99: 20 } }); // C222, 14:12: 200 took it to 28
-  assert.ok(pale.saturation !== null && pale.saturation > 180 && pale.saturation <= 200 && pale.pad, "saturation 14: HSL Saturation near its top, and the pad still decided on the measured hue: " + JSON.stringify(pale));
+  // C222, 14:45: Saturation 198 on a hand at 14 made it bright pink. Under the band is reported, not boosted.
+  const pale = skinFor({ ...hands, saturation: { p50: 14, p99: 20 } });
+  assert.equal(pale.saturation, null, "a pale hand is never boosted: " + JSON.stringify(pale));
+  assert.ok(pale.why.some((w) => /under the band: left alone/.test(w)) && pale.pad, "it is said, and the hue is still put on the line");
+  const loud = skinFor({ ...hands, saturation: { p50: 62, p99: 80 } });
+  assert.ok(loud.saturation !== null && loud.saturation < 100 && loud.saturation >= 50, "over the band comes down: " + JSON.stringify(loud));
   const inBand = skinFor({ ...hands, saturation: { p50: 30, p99: 40 } });
   assert.ok(inBand.saturation === null && Math.abs(Math.hypot(inBand.predicted.cast.cr, inBand.predicted.cast.cb) - Math.hypot(5.6, 4.9)) < 0.01, "the pad alone is a rotation: the radius is kept");
-  const far = { ...hands, cast: { cb: -14, cr: 2 } }; // 172 deg at twice the radius: beyond the pad's cap
+  const far = { ...hands, cast: { cb: -28, cr: 4 } }; // 172 deg at four times the radius: beyond the pad's cap
   const fk = skinFor(far);
-  assert.ok(fk.pad.sat === 0.6 && fk.why.some((w) => /as far as the pad goes/.test(w)), JSON.stringify(fk));
+  assert.ok(fk.pad.sat === 0.3 && fk.why.some((w) => /as far as the pad goes/.test(w)), JSON.stringify(fk));
   const onLine = { ...hands, cast: { cb: -5.5, cr: 8.4 }, saturation: { p50: 30, p99: 40 } }; // 123 deg, 30
   assert.equal(skinFor(onLine), null, "nothing to do");
 });

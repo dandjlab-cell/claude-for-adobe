@@ -293,10 +293,14 @@ function satCurveFor(m, current = null) {
 // got -14.5; C209 0.39 for -8.2 got -24), so the matrix is scaled by 2.5; the confirm's secant covers the rest.
 // ponytail: one 2x2 from one key; the pad is absolute from neutral (the skin step never runs on a matched
 // cut) - add `from.pad` if a second pass ever has to build on a first.
-const HSL_PAD = { m: [[-1.5, -8.0], [11.0, -5.0]], cap: 0.6 };
-// HSL Saturation inside a key: the sweep (thin key again) said it barely moves a hand; on a real key 200
-// doubled the keyed saturation (C222 14 -> 28, C233 15 -> 24, 14:12). A straight gain, corrected on the confirm.
-const HSL_SAT_GAIN = 0.8, HSL_SAT_RANGE = [50, 200];
+// Cap 0.3, not 0.6: at the cap, on a key that had caught only the rims of two hands, those rims went
+// bright pink (the owner's mask screenshot, 14:50). A balance is not a look here either.
+const HSL_PAD = { m: [[-1.5, -8.0], [11.0, -5.0]], cap: 0.3 };
+// HSL Saturation inside a key: a straight gain (0.8 per 100 points, measured 14:12), and it is only ever
+// allowed DOWN. Saturation 198 on a hand at 14 made it bright pink (the owner's screenshot, 14:45):
+// amplifying a pale hand amplifies whatever tint it carries, and pale skin is an exposure and white-balance
+// problem, not a saturation one. Under the band is reported, never boosted; over it is pulled back.
+const HSL_SAT_GAIN = 0.8, HSL_SAT_RANGE = [50, 100];
 const SKIN_SAT_TARGET = 25, SKIN_SAT_TOL = 3, SKIN_HUE_TARGET = (SKIN_HUE[0] + SKIN_HUE[1]) / 2 + 2; // 123: the line's centre
 function skinFor(m, from = { saturation: 100 }) {
   const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
@@ -306,14 +310,13 @@ function skinFor(m, from = { saturation: 100 }) {
   if (!hueOff && !satOff) return null;
   const out = { pad: null, saturation: null, why: [], predicted: m };
   let state = m;
-  if (satOff) {
-    const target = sat < SKIN_SAT[0] ? SKIN_SAT_TARGET : SKIN_SAT[1] - 5;
-    const v = Math.max(HSL_SAT_RANGE[0], Math.min(HSL_SAT_RANGE[1], 100 + (target / Math.max(1, sat) - 1) / HSL_SAT_GAIN * 100));
+  if (satOff && sat > SKIN_SAT[1]) {
+    const v = Math.max(HSL_SAT_RANGE[0], Math.min(HSL_SAT_RANGE[1], 100 + ((SKIN_SAT[1] - 5) / Math.max(1, sat) - 1) / HSL_SAT_GAIN * 100));
     out.saturation = Math.round(v * 100) / 100;
     const satPredicted = sat * (1 + HSL_SAT_GAIN * (v - 100) / 100);
     state = { ...m, saturation: { ...m.saturation, p50: satPredicted } };
-    out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (v === HSL_SAT_RANGE[1] || v === HSL_SAT_RANGE[0] ? " (as far as it goes: " + round(satPredicted) + ")" : ""));
-  }
+    out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (v === HSL_SAT_RANGE[0] ? " (as far as it goes: " + round(satPredicted) + ")" : ""));
+  } else if (satOff) out.why.push("saturation " + round(sat) + " is under the band: left alone (boosting a pale hand only amplifies its tint)");
   // The pad is decided on the MEASURED hue (14:12: C222's pad was skipped because the saturation sweep's
   // predicted cast put the hue in the band; the render said 136.9 deg).
   const hueNow = hue;
@@ -330,6 +333,7 @@ function skinFor(m, from = { saturation: 100 }) {
     out.why.push("hue " + round(hueNow) + "° → Midtones pad " + round(padHue) + "°/" + padSat.toFixed(2) + (partial ? " (as far as the pad goes: " + round(STATISTICS.skinHue(state)) + "°)" : ""));
   }
   if (out.pad === null && out.saturation === null) return null;
+  if (out.pad === null) out.why.length = out.why.length; // saturation-only is a real move; a why-only result is not
   out.predicted = state;
   return out;
 }

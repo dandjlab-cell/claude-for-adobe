@@ -1273,34 +1273,23 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 // The mask view against Vision's boxes before anything is corrected: a key that has taken the
                 // room (C223, 12:18: the whole kitchen went pink) is tightened once, else skin is skipped here.
                 const boxShare = boxes.reduce((sum, b) => sum + Math.max(0, b.box[2] - b.box[0]) * Math.max(0, b.box[3] - b.box[1]), 0);
-                let keyText = key.text, spill = null, thin = null, maskFail = null;
-                for (let pass = 0; pass < 2; pass++) {
-                  await hw.writeKey(keyText); await hw.showMask(true);
-                  // Show Mask is a view toggle through the DOM, not a QE parameter: an export within a second of it
-                  // returned the plain picture as "100% keyed" on every clip (13:15, 13:56, 14:12, 14:21 - a playhead
-                  // nudge changed nothing), while the same key by hand read 3-4% seconds later. It reaches the
-                  // export on Premiere's own schedule: wait, retry once, else the software estimate below.
-                  let cov = null, estimated = false;
-                  try {
-                    for (let t = 0; t < 2 && cov === null; t++) {
-                      await new Promise((r) => setTimeout(r, t ? 3000 : 1500)); // no playhead nudge: it jittered the monitor and did not bring the mask (14:21)
-                      const mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++;
-                      const c = mv && mv.region === "keyed" ? mv.coverage : 0;
-                      if (c < 0.98) cov = c;
-                    }
-                  } finally { await hw.showMask(false); }
-                  // No mask view: the key's coverage by this file's own HSL on the confirmed frame stands in.
-                  if (cov === null) { const est = pass === 0 ? key.estimated : skinKeyCoverage(decodeRgb(src1), (skinKeyFor(src1, vis, { tight: true }) || key).key); cov = est; estimated = true; maskFail = "mask view unread (Show Mask did not reach the render): spill estimated at " + round2(est * 100) + "%"; }
-                  spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame" + (estimated ? " (estimated)" : "") + " against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
+                // No tightening pass any more: the tightened key caught the rims of the hands and nothing else,
+                // and a rim is the worst thing to colour (14:50). A key that spills is skipped, and so is a key
+                // that lights far less than the skin it was learned from - a thin key grades an outline.
+                let keyText = key.text, spill = null, thin = null;
+                {
+                  await hw.writeKey(keyText);
+                  // The coverage is computed here, from the key over the confirmed frame, not from Lumetri's mask
+                  // view: four runs (13:15 through 14:41) never got the mask into an export, however long the pass
+                  // waited or wherever the playhead was, and it cost two renders and 4.5 s a clip. Premiere's own
+                  // mask lit 3-4% where this estimate said 8% (14:02) - inside the rule's margin.
+                  const cov = key.estimated;
+                  spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
                   // The mirror check: a key that lights well under the skin it was learned from grades half an arm
                   // (the owner's eyedropper key, 13:30: its lightness topped at 0.50 on a brighter graded arm).
-                  thin = !spill && key.expected > 0 && cov < 0.5 * key.expected ? "thin key: lights " + round2(cov * 100) + "% of the frame, the boxes hold about " + round2(key.expected * 100) + "% skin" : null;
-                  if (!spill) break;
-                  const tight = pass === 0 ? skinKeyFor(src1, vis, { tight: true }) : null;
-                  if (!tight) break;
-                  keyText = tight.text;
+                  thin = !spill && key.expected > 0 && cov < 0.5 * key.expected ? "the key lights " + round2(cov * 100) + "% of the frame where the " + skinRegion + " hold about " + round2(key.expected * 100) + "% skin: it would colour an outline" : null;
                 }
-                if (spill) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: " + spill + (keyText !== key.text ? " even tightened" : "") + " (key " + keyText + "); skipped on this clip"); }
+                if (spill || thin) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: " + (spill || thin) + " (key " + keyText + "); skipped on this clip"); }
                 else {
                   await hw.correction(hslPadText(sk.pad));
                   if (sk.saturation !== null) await hw.saturation(sk.saturation);
@@ -1312,11 +1301,21 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                   // One correction from the real move: the wheel was measured on one key, and another key's
                   // pixels turn more or less per unit of pad. The pad's saturation is rescaled by what this
                   // write actually rotated (the secant); a pad that turned the hue the wrong way comes off.
-                  let pad2 = null, sat2 = null;
-                  if (sk.pad && Math.abs(hueAfter - hue0) > 1 && (hueAfter < GRADE_SKIN_HUE[0] || hueAfter > GRADE_SKIN_HUE[1])) {
-                    const k = (target - hue0) / (hueAfter - hue0);
-                    if (k < 0) { pad2 = { hue: sk.pad.hue, sat: 0 }; notes.push("the pad turned the hue the wrong way (" + hue0.toFixed(1) + " → " + hueAfter + "°): off"); }
-                    else { pad2 = { hue: sk.pad.hue, sat: Math.round(Math.min(GRADE_HSL_PAD.cap, sk.pad.sat * k) * 1000) / 1000 }; notes.push("pad " + sk.pad.sat.toFixed(2) + " → " + pad2.sat.toFixed(2) + " (hue read " + hueAfter + "°)"); }
+                  // The wheel's strength varies about six-fold between keys (14:41: 55°/unit on one hand, 10° on
+                  // another), so the first write is a guess and the clip's own response is measured: rescale from
+                  // what it did, clamped, and go again until the hue is in the band or two tries are spent.
+                  let pad2 = null, sat2 = null, padNow = sk.pad, hueLast = hueAfter;
+                  for (let t = 0; t < 2 && padNow && (hueLast < GRADE_SKIN_HUE[0] || hueLast > GRADE_SKIN_HUE[1]); t++) {
+                    if (Math.abs(hueLast - hue0) <= 1) break;
+                    const k = (target - hue0) / (hueLast - hue0);
+                    if (k < 0) { pad2 = { hue: padNow.hue, sat: 0 }; notes.push("the pad turned the hue the wrong way (" + hue0.toFixed(1) + " → " + hueLast + "°): off"); break; }
+                    const next = { hue: padNow.hue, sat: Math.round(Math.max(0, Math.min(GRADE_HSL_PAD.cap, sk.pad.sat * Math.max(0.2, Math.min(5, k)))) * 1000) / 1000 };
+                    if (Math.abs(next.sat - padNow.sat) < 0.005) break;
+                    await hw.correction(hslPadText(next));
+                    const re = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                    const h2 = Math.round(GRADE_STATS.skinHue(re) * 10) / 10;
+                    notes.push("pad " + padNow.sat.toFixed(2) + " → " + next.sat.toFixed(2) + " (hue read " + hueLast + "° → " + h2 + "°)");
+                    padNow = next; pad2 = next; hueLast = h2; after = re; hueAfter = h2; satAfter = round2(re.saturation.p50);
                   }
                   // A saturation boost on near-grey skin swings its hue (C222, 14:12 and 14:21: in the band before,
                   // 136.9 deg after Saturation 198): with no pad written, one is solved from the confirmed read.
@@ -1338,12 +1337,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                   }
                   if (pad2 !== null || sat2 !== null) {
                     if (pad2 !== null) { await hw.correction(hslPadText(pad2)); hsl.pad = pad2.sat > 0 ? pad2 : null; }
+                    else if (hsl.pad && padNow) hsl.pad = padNow.sat > 0 ? padNow : null;
                     if (sat2 !== null) { await hw.saturation(sat2); hsl.saturation = sat2; }
                     after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
                     hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
                   }
                   const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + (key.masked ? "" : " (no person mask: boxes alone)") + (thin ? " (" + thin + ")" : "") + (maskFail ? " (" + maskFail + ")" : "") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (key.masked ? "" : " (no person mask: boxes alone)") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
                   state = after.frame ? { ...after.frame, region: "frame" } : state;
                 }
               }
