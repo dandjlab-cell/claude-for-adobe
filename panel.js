@@ -1181,7 +1181,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (confirm && (gradeUnsafe(gradeDamage(state), gradeAllowance(baseline)) || nearClip)) {
           const h = gradeDamage(state), allow = gradeAllowance(baseline), changed = [];
           if (nearClip) h.clipped = Math.max(h.clipped, allow.clipped + 0.01);
-          const half = (p) => { if (ref.sliders[p]) { ref.sliders[p] = Math.round(ref.sliders[p] / 2 * 100) / 100; changed.push(p + " → " + ref.sliders[p]); } };
+          // A white point past the band is scaled back to the band's top, not halved: halving took C193's
+          // sibling from 97.6 to 84.3 (22:35, "lacks depth") for a cut that needed 93. Real clipping still halves.
+          const w0 = (m.frame || m).luma.p99, w1 = (state.frame || state).luma.p99;
+          const k = nearClip && !(gradeDamage(state).clipped > allow.clipped) && w1 > w0 + 1 ? Math.max(0.4, Math.min(0.95, (GRADE_ACCEPT.whiteMax - 2 - w0) / (w1 - w0))) : 0.5;
+          const half = (p) => { if (ref.sliders[p]) { ref.sliders[p] = Math.round(ref.sliders[p] * k * 100) / 100; changed.push(p + " → " + ref.sliders[p] + (k !== 0.5 ? " (scaled to land at " + (GRADE_ACCEPT.whiteMax - 2) + ")" : "")); } };
           if (h.clipped > allow.clipped) for (const p of ["whites", "highlights", "exposure", "contrast"]) half(p);
           if (h.crushed > allow.crushed) {
             if (ref.curves && ref.curves.Master && ref.curves.Master[0][0] > 0.005) { ref.curves.Master[0][0] = Math.round(ref.curves.Master[0][0] / 2 * 100) / 100; changed.push("curve black → " + ref.curves.Master[0][0].toFixed(2)); }
