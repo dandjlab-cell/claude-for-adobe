@@ -26,7 +26,14 @@ const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing tr
 const ACCEPT = { blackMax: BLACK_POINT[1] + 1, whiteMin: WHITE_POINT[0] - 3, whiteMax: WHITE_POINT[1] };
 const SKIN_LUMA = [40, 70];      // a face: light skin 60-70, dark skin 40-60; alive around 60-65
 const SKIN_HUE = [116, 126];     // the vectorscope skin line, 123 at centre
-const SKIN_SAT = [20, 50];       // percent of the vectorscope radius; ~30 reads natural on Rec.709
+// Percent of the vectorscope radius; ~30 reads natural on Rec.709. The band is a rule of thumb for skin in
+// general (hands are arguably the better reference: no makeup), and it is ASYMMETRIC in what it means. All
+// skin tones differ "in saturation and brightness but not in hue" (Van Hurkman, Color Correction Handbook
+// ch.5) - which is why one line serves every complexion, and why genuinely pale skin legitimately sits low
+// on it. Under the band is therefore a reading, not a fault; over it is a fault. When pale skin IS wrong the
+// order of remedy is white balance, then contrast (which raises perceived saturation without a saturation
+// control), and saturation last and modestly - never a boost inside a key.
+const SKIN_SAT = [20, 50];
 // A hand or a product is what the shot is about: it has no canonical band, but a subject whose median
 // luma sits under SUBJECT_DARK while the frame is balanced is "objectively very dark where it matters"
 // (the owner, 2026-09-16 12:15, C222: the frame ticked, the hand and cloth sat at 15-30). Lifted with
@@ -192,7 +199,8 @@ function goalsFor(m, region = "frame") {
     if (luma < SKIN_LUMA[0] || luma > SKIN_LUMA[1]) goals.push({ param: "exposure", statistic: "brightness", target: luma < SKIN_LUMA[0] ? SKIN_LUMA[0] + 5 : SKIN_LUMA[1] - 5, why: "face luma " + round(luma) + " (40-70)" });
     const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
     if (hue < SKIN_HUE[0] || hue > SKIN_HUE[1]) needs.push("skin hue " + round(hue) + "° off the skin line (116-126): Midtones wheel");
-    if (sat < SKIN_SAT[0] || sat > SKIN_SAT[1]) needs.push("skin saturation " + round(sat) + "% (20-50): Saturation");
+    if (sat > SKIN_SAT[1]) needs.push("skin saturation " + round(sat) + "% (over the 20-50 band): Saturation");
+    else if (sat < SKIN_SAT[0]) needs.push("skin saturation " + round(sat) + "% reads under the 20-50 band - pale skin sits low on the line legitimately, so this is a reading, not a fault; if it looks lifeless the tool is contrast in the skin's range, not saturation");
   }
 
   // 1b. A dark subject (a hand, a product) is lifted with Shadows - after the white point, on the
