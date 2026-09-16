@@ -875,6 +875,8 @@ function hslWriter(at, track) {
     readCorrection: () => qe("Correction", ""), correction: (text) => qe("Correction", text),
     tint: (v) => idx(102, "Tint", v === undefined ? "" : String(v)), saturation: (v) => idx(105, "Saturation", v === undefined ? "" : String(v)), temperature: (v) => idx(101, "Temperature", v === undefined ? "" : String(v)),
     showMask: (on) => idx(88, "Show Mask", on ? "true" : "false"),
+    // Refine (read 15:05): 94 is the sub-group header, 95 Denoise, 96 Blur, both numeric and 0 by default.
+    denoise: (v) => idx(95, "Denoise", v === undefined ? "" : String(v)), blur: (v) => idx(96, "Blur", v === undefined ? "" : String(v)),
   };
 }
 
