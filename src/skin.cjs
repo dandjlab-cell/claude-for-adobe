@@ -18,19 +18,24 @@ function hsl(r, g, b) {
 const PRIOR = { hueMax: 0.14, sat: [0.10, 0.75], light: [0.15, 0.85] };
 
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * p)))];
-// One axis: plateau = p10..p90, feather = p2..p98 (tight: p25..p75 / p10..p90, for a key that spilled), as
-// centre / inner / outer; hue is unwrapped around 0 first. `floor` cuts the low edge (saturation: below
-// 0.18 the key takes the room's greys and beiges with the hand - C223, 2026-09-16).
-function axis(values, wrap, tight = false, floor = -Infinity) {
+// One axis: plateau = p5..p95, feather = p1..p99 widened by `margin` (tight: p25..p75 / p10..p90, no
+// margin, for a key that spilled), as centre / inner / outer; hue is unwrapped around 0 first. `floor`
+// cuts the low edge (saturation: below 0.18 the key takes the room's greys and beiges with the hand -
+// C223, 2026-09-16). The margin is Premiere's: a key at the pixels' own p2-p98 lit 3-4% of the frame
+// where the hands were 5-6% and patchy in the mask view (14:02, "it could have gone farther") - Lumetri's
+// H/S/L are not this file's HSL to the decimal.
+function axis(values, wrap, tight = false, floor = -Infinity, margin = 0) {
   const v = values.map((x) => (wrap && x > 0.5 ? x - 1 : x)).sort((a, b) => a - b);
-  const [pa, pb] = tight ? [0.25, 0.10] : [0.10, 0.02];
-  const lo = pct(v, pa), hi = pct(v, 1 - pa), lo2 = Math.max(floor, pct(v, pb)), hi2 = pct(v, 1 - pb);
+  const [pa, pb] = tight ? [0.25, 0.10] : [0.05, 0.01];
+  const m = tight ? 0 : margin;
+  const lo = pct(v, pa) - m / 2, hi = pct(v, 1 - pa) + m / 2, lo2 = Math.max(floor, pct(v, pb) - m), hi2 = pct(v, 1 - pb) + m;
   // Symmetric about the feather's centre (the text has one centre), the plateau as wide as fits both its edges.
   let centre = (lo2 + hi2) / 2, outer = Math.max(0.03, (hi2 - lo2) / 2), inner = Math.max(0.01, Math.min(outer - 0.02, hi - centre, centre - lo));
   if (wrap && centre < 0) centre += 1;
   return [centre, inner, outer].map((n) => Math.round(n * 1000) / 1000);
 }
 const SAT_FLOOR = 0.18;
+const MARGIN = { H: 0.01, S: 0.04, L: 0.04 };
 
 // The mask view against Vision's boxes: a key that lights up much more of the frame than the boxes cover
 // has taken the room (C223: the whole kitchen went pink). coverage and boxShare are frame fractions.
@@ -56,7 +61,7 @@ function skinKeyFrom(rgb, width, height, boxes, { minPixels = 200, tight = false
     }
   }
   if (H.length < minPixels) return null;
-  const key = { H: axis(H, true, tight), S: axis(S, false, tight, SAT_FLOOR), L: axis(L, false, tight) };
+  const key = { H: axis(H, true, tight, -Infinity, MARGIN.H), S: axis(S, false, tight, SAT_FLOOR, MARGIN.S), L: axis(L, false, tight, -Infinity, MARGIN.L) };
   return { key, text: formatKey(key), pixels: H.length, share: Math.round((H.length / Math.max(1, inBoxes)) * 1000) / 10 };
 }
 
