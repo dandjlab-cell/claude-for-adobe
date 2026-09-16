@@ -1276,16 +1276,14 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 let keyText = key.text, spill = null, thin = null, maskFail = null;
                 for (let pass = 0; pass < 2; pass++) {
                   await hw.writeKey(keyText); await hw.showMask(true);
-                  // Show Mask is a view toggle through the DOM, not a QE parameter, and it does not invalidate the
-                  // frame Premiere last drew: with the playhead already parked on this frame the export returned
-                  // the plain picture as "100% keyed" on every clip (13:15, 13:56, 14:12 even after 0.9 s), while
-                  // the same key by hand read 3-4% because that scopes call moved the playhead there fresh. So the
-                  // playhead is nudged off the frame first; a whole-frame read is still retried once.
+                  // Show Mask is a view toggle through the DOM, not a QE parameter: an export within a second of it
+                  // returned the plain picture as "100% keyed" on every clip (13:15, 13:56, 14:12, 14:21 - a playhead
+                  // nudge changed nothing), while the same key by hand read 3-4% seconds later. It reaches the
+                  // export on Premiere's own schedule: wait, retry once, else the software estimate below.
                   let cov = null, estimated = false;
                   try {
                     for (let t = 0; t < 2 && cov === null; t++) {
-                      try { await host("playhead", String(Math.round((at + 0.5 * (t + 1)) * 254016000000))); } catch (_) {}
-                      await new Promise((r) => setTimeout(r, t ? 3000 : 1500));
+                      await new Promise((r) => setTimeout(r, t ? 3000 : 1500)); // no playhead nudge: it jittered the monitor and did not bring the mask (14:21)
                       const mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++;
                       const c = mv && mv.region === "keyed" ? mv.coverage : 0;
                       if (c < 0.98) cov = c;
