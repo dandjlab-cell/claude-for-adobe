@@ -29,10 +29,10 @@ test("a low white point is Whites, never Exposure and never a subject brightness
   const g = goalsFor(withSubject(f, frame(7, 21, 51, [7, 7, 6], [57, 50, 51])), "subject");
   assert.deepEqual([...g].map((x) => x.param), ["shadows", "whites", "highlights"], "a dark subject is lifted with Shadows (2026-09-16), then Whites, then Highlights finishes what the +50 cap leaves");
   assert.ok([...g].every((x) => x.param !== "exposure"), "never Exposure for a subject: it lifts the blacks with it");
-  assert.equal(g[0].cap, undefined, "no fixed cap: the slider runs to 100, the model's ceiling check and the clip guard decide (22:50)");
-  assert.equal(g[1].cap, undefined);
-  assert.equal(g[1].onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "Highlights is skipped once the white point is in the band");
-  assert.equal(g[1].onlyIf(frame(5, 40, 80, [5, 5, 5], [80, 80, 80])), true);
+  assert.equal(g[1].cap, undefined, "no fixed cap: the slider runs to 100, the model's ceiling check and the clip guard decide (22:50)");
+  assert.equal(g[2].cap, undefined);
+  assert.equal(g[2].onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "Highlights is skipped once the white point is in the band");
+  assert.equal(g[2].onlyIf(frame(5, 40, 80, [5, 5, 5], [80, 80, 80])), true);
 });
 
 test("a whole-shot plan skips a conditional goal the earlier knobs made unnecessary", async () => {
