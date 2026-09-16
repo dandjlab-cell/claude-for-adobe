@@ -318,3 +318,15 @@ test("a long grade returns: it pauses at a time budget and says how to continue,
   assert.match(seqTool, /call grade_sequence again with start_at=/, "the result says exactly how to continue");
   assert.match(panel, /const gradeMatched = new Map\(\);/, "the shot match is kept between calls, or a resumed run regrades a later cut from scratch");
 });
+
+test("nothing the grade footer reads is declared inside the clip loop's try block (22:08: 'resumeAt is not defined' killed a run before a write)", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const t = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  const tryIdx = t.indexOf("  try {\n  for (const c of clips) {"), finIdx = t.indexOf("} finally { if (playheadBefore !== null)");
+  assert.ok(tryIdx > 0 && finIdx > tryIdx, "the loop's try/finally is where expected");
+  const inside = t.slice(tryIdx, finIdx), after = t.slice(finIdx);
+  const declared = [...inside.matchAll(/^\s{2}(?:let|const) (\w+)/gm)].map((m) => m[1]);
+  const leaked = declared.filter((n) => new RegExp("\\b" + n + "\\b").test(after));
+  assert.deepEqual(leaked, [], "declared at the try's top level and read after it: " + leaked.join(", "));
+});

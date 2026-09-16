@@ -1095,10 +1095,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   gradeMatched.set(matchKey(), matched);
   // The playhead follows the clip being graded and goes back to where the editor had it when the run
   // ends - not to the clip and back on every render, which read as a bug.
-  let playheadBefore = null;
+  let playheadBefore = null, resumeAt = null; // resumeAt is read after the loop's try/finally: declared here (22:08: "resumeAt is not defined")
   try { const raw = await host("playhead", ""); if (raw.indexOf("OK") === 0) playheadBefore = raw.split(COL)[1]; } catch (_) {}
   try {
-  let resumeAt = null;
   for (const c of clips) {
     if (cancelRequested) { stopped = true; break; }
     if (c.start + 0.001 < Number(start_at || 0)) continue; // a resumed run picks up where the last one stopped
