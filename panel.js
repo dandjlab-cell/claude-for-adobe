@@ -745,6 +745,56 @@ function biggestFaceBox(file) {
 // not Premiere's render - no Lumetri, no sequence colour management - so it is the READ before a grade,
 // never the confirm after one, and whether it agrees with Premiere's own render is checked once per
 // footage type (scopes source:true against scopes at the same time) before it is trusted.
+// Where in this clip the skin actually shows. The graded frame is the clip's midpoint, and a hand can be
+// hidden there and wide open a second later (C228, 16:06: a cloth over the hand at the sampled frame, the
+// hand clear at the next cut point). So when the midpoint finds no face or hand, a few more times across
+// the clip are decoded FROM THE SOURCE FILE - no Premiere render, no playhead move - and Vision run on
+// each; the first that finds skin gives the skin step its time. Returns null when the clip has none.
+async function findSkinTime(start, end, track, snapshot) {
+  const span = end - start;
+  if (!(span > 0.2)) return null;
+  // Vision reads stills, not video - but bin/ocr takes many files in one call and prints a line each, so
+  // the candidates are decoded first and looked at together: one process, one model load, not five.
+  const times = [], pngs = [];
+  for (const f of [0.15, 0.35, 0.65, 0.85]) {
+    const t = Math.round((start + span * f) * 1000) / 1000;
+    try { const png = sourcePngAt(t, track, snapshot); if (png) { times.push(t); pngs.push(png); } } catch (_) { /* a time the decoder cannot reach */ }
+  }
+  try {
+    const seen = visionAllMany(pngs);
+    let best = null;
+    for (let i = 0; i < seen.length; i++) {
+      const v = seen[i];
+      if (!v) continue;
+      const boxes = [...((v.faces || [])), ...((v.hands || []))];
+      if (!boxes.length) continue;
+      const area = boxes.reduce((sum, b) => sum + Math.max(0, b.box[2] - b.box[0]) * Math.max(0, b.box[3] - b.box[1]), 0);
+      if (!best || area > best.area) best = { at: times[i], vision: v, area }; // the frame that shows the most skin
+    }
+    return best;
+  } finally { for (const p of pngs) { try { fs.rmSync(p, { force: true }); } catch (_) {} } }
+}
+
+// Every detector on several images in ONE bin/ocr call: one line of JSON per file, in order.
+function visionAllMany(files) {
+  if (!files.length || !fs.existsSync(OCR_BIN)) return [];
+  try {
+    const out = require("node:child_process").execFileSync(OCR_BIN, files, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const lines = out.split("\n").filter(Boolean);
+    return files.map((_, i) => { try { const v = JSON.parse(lines[i] || "null"); return v && !v.error ? v : null; } catch (_) { return null; } });
+  } catch (_) { return []; }
+}
+
+// One frame of the clip under `seconds`, decoded from its own file to a PNG the caller must delete.
+function sourcePngAt(seconds, track, snapshot) {
+  const c = snapshot && snapshot.clips.find((k) => k.track === "V" + track && seconds >= k.start && seconds < k.end && k.mediaPath);
+  if (!c) return null;
+  const f = sourceFrameRgb(c.mediaPath, toSourceSeconds(seconds, c.start, c.inPoint, c.speed), { maxWidth: 0 });
+  const png = path.join(os.tmpdir(), "claude-for-adobe-skinhunt-" + Date.now().toString(36) + ".png");
+  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
+  return w.status === 0 ? png : null;
+}
+
 async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = null) {
   const snap = snapshot || await readSnapshot(); // a sequence run passes its one snapshot: no re-read per clip
   if (snap.error) throw new Error(snap.error);
@@ -1275,14 +1325,19 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       //    the confirmed frame, HSL Tint solved to put the keyed hue on the line, HSL Saturation into the
       //    band, one confirm read on the hand/face box. Only when Vision saw skin; never on a matched cut
       //    (the reference's HSL state is copied).
-      const seenVision = (m.frame || m).vision || m.vision;
+      let seenVision = (m.frame || m).vision || m.vision, skinAt = at;
+      // No skin on the graded frame is not "no skin in the shot": look elsewhere in the clip first.
+      if (confirm && !ref && !(seenVision && ((seenVision.faces || []).length || (seenVision.hands || []).length))) {
+        const found = await timed(() => findSkinTime(c.start, c.end, track, snap), "read");
+        if (found) { skinAt = found.at; seenVision = found.vision; parts.push("skin found at " + skinAt + "s, not on the graded frame"); }
+      }
       if (confirm && !ref && seenVision && ((seenVision.faces || []).length || (seenVision.hands || []).length)) {
         // One render of the confirmed picture, kept on disk: Vision's boxes on it, the key from them,
         // the skin pixels' own numbers (measureFrameAt deletes its PNG otherwise, and the key must be
         // learned from the frame the correction is judged on, not from the first read).
         const skinRegion = (seenVision.faces || []).length ? "face" : "hands";
         let skinNow = null;
-        try { skinNow = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true, keep: true }), "render"); renders++; } catch (error) { needs.push("skin: " + error.message); }
+        try { skinNow = await timed(() => measureFrameAt(skinAt, { region: skinRegion, keepPlayhead: true, keep: true }), "render"); renders++; } catch (error) { needs.push("skin: " + error.message); }
         const src1 = skinNow && (skinNow.frame || skinNow).src, vis = skinNow && (skinNow.vision || (skinNow.frame && skinNow.frame.vision));
         const key = src1 && vis ? skinKeyFor(src1, vis) : null;
         const boxes = vis ? [...((vis.faces || [])), ...((vis.hands || []))] : [];
@@ -1313,7 +1368,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 let shift = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, Math.sign(want) * Math.max(SKIN_HUE_MIN, Math.abs(want)))), hueLast = hue0, best = 0;
                 for (let t = 0; t < 3; t++) {
                   await hc.write(hueBump(centre, shift));
-                  const re = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                  const re = await timed(() => measureFrameAt(skinAt, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
                   const h2 = Math.round(GRADE_STATS.skinHue(re) * 10) / 10;
                   notes.push("curve " + shift.toFixed(3) + " → " + h2 + "°");
                   after = re; hueLast = h2; best = shift;
@@ -1332,7 +1387,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 if (Math.abs(hueLast - target) > Math.abs(hue0 - target)) {
                   await hc.write([]); best = 0;
                   notes.push("it read " + hueLast + "°, further off than " + round2(hue0) + "°: removed");
-                  after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                  after = await timed(() => measureFrameAt(skinAt, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
                   hueLast = Math.round(GRADE_STATS.skinHue(after) * 10) / 10;
                 }
                 if (best) hsl = { hueCurve: { centre, shift: best } };

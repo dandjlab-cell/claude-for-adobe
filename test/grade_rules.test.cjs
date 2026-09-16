@@ -168,6 +168,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // Skin is corrected with a Hue vs Hue bump, not an HSL key: the colourists' hierarchy puts the curve
   // above the qualifier, and masks - the other candidate - have no scripting surface at all (15:30).
   assert.match(seqTool, /const hc = hueCurveWriter\(at, track, "Hue vs Hue"\);/, "the skin tool is the hue curve");
+  // A hand can be hidden on the graded frame and open a second later (C228, 16:06), so a clip with no skin
+  // on that frame is searched elsewhere - decoded from its own file, all candidates read in one Vision call.
+  assert.match(seqTool, /const found = await timed\(\(\) => findSkinTime\(c\.start, c\.end, track, snap\), "read"\);/, "a clip with no skin on the graded frame is searched");
+  assert.match(panel, /function visionAllMany\(files\)/, "several frames go to Vision in one call");
   assert.match(seqTool, /await hc\.write\(hueBump\(centre, shift\)\);/, "a bump on the skin's own hue, pinned back to zero either side");
   assert.match(seqTool, /further off than[\s\S]*?await hc\.write\(\[\]\)|await hc\.write\(\[\]\); best = 0;/, "a move that made it worse is removed");
   assert.match(panel, /if \(s\.hsl && s\.hsl\.hueCurve\) await hueCurveWriter\(at, track, "Hue vs Hue"\)/, "a matched cut takes the reference's skin curve");
