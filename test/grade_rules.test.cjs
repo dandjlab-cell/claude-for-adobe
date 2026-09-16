@@ -229,8 +229,13 @@ test("the saturation roll-off skips a coloured end and a curve the clip already 
 });
 
 test("mixed light beyond the pads' reach: temperature splits the difference, the pads take each end", () => {
-  // C227 @5.63, 2026-09-16: whites warm by 25, blacks blue by 5.5 - a specular-only balance went to -83.
-  const f = frame(12, 40, 68, [4, 7, 9.5], [80, 72, 55]); // blacks B-R +5.5, whites B-R -25
+  // C227 @5.63, 2026-09-16: whites warm by 25, blacks blue by 5.5 - a specular-only balance went to -83,
+  // and (13:15) the split went to -47 and the oak turned pale: a top beyond COLOURED over blacks leaning
+  // the other way is an object's colour, no white balance. Mixed light is a top between the pads' reach
+  // and COLOURED.
+  const oak = temperatureFor(frame(12, 40, 68, [4, 7, 9.5], [80, 67.5, 55])); // blacks B-R +5.5, whites B-R -25, green neutral
+  assert.ok(oak && oak.sceneColour && oak.value === 0 && /object's colour/.test(oak.why), JSON.stringify(oak && { v: oak.value, why: oak.why }));
+  const f = frame(12, 40, 68, [4, 7, 9.5], [80, 72, 63]); // blacks B-R +5.5, whites B-R -17
   const t = temperatureFor(f);
   assert.ok(t && /mixed light/.test(t.why), t && t.why);
   assert.ok(t.value < 0 && t.value > -45, "cooler, but nowhere near the specular-only solution: " + t.value);

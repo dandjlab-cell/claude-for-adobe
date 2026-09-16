@@ -94,11 +94,16 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   // Both ends the same way by more than COLOURED is the scene, not the light (an oak table and hands,
   // C227 @4.44, 2026-09-16 01:33: whites -25, blacks -27; a -83 temperature made the wood grey-beige
   // and the skin pale). The C187 rule, applied to the white balance as well: left alone, said out loud.
-  const sceneColour = Math.sign(whites) === Math.sign(blacks) && Math.abs(whites) > COLOURED && Math.abs(blacks) > COLOURED;
+  // Whites beyond COLOURED under blacks that lean the OTHER way are an object too (the oak's sheen over
+  // a blue cloth, C227 @5.63, 13:15: "mixed light" split it to -47 and the whole shot went pale): only
+  // blacks that lean the same way by less than COLOURED make a warm top the light. The pads take the
+  // blacks; a coloured top gets no pad either.
+  const sceneColour = Math.abs(whites) > COLOURED && (Math.sign(whites) !== Math.sign(blacks) || Math.abs(blacks) > COLOURED);
   if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColour) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
   const afterTemp = temp ? temp.predicted : m;
   const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
-  if (!temp && !tint) return sceneColour ? { value: from, tint: null, predicted: m, why: "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own colour, not the light - no white balance (neutralising it would drain the objects)", sceneColour: true } : null;
+  const sceneWhy = Math.sign(whites) === Math.sign(blacks) ? "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own colour, not the light" : "whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " over blacks that lean the other way: the brightest pixels are an object's colour (a sheen, a lamp), not the light";
+  if (!temp && !tint) return sceneColour ? { value: from, tint: null, predicted: m, why: sceneWhy + " - no white balance (neutralising it would drain the objects)", sceneColour: true } : null;
   const why = [];
   if (temp) why.push(mixed ? "mixed light (whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + ", blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(Math.abs(blacks)) + "): temperature " + round(temp.value) + " splits the difference, the pads take each end" + temp.note
     : "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);

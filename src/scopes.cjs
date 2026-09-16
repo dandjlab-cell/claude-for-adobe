@@ -126,9 +126,12 @@ function decodeRgb(png, box) {
   return r.stdout;
 }
 
-// A mask image (8-bit grey, same size as the frame, white = keep) as one byte per pixel.
-function decodeGray(png) {
-  const r = spawnSync(FFMPEG, ["-v", "error", "-i", png, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], { maxBuffer: 64 * 1024 * 1024 });
+// A mask image (8-bit grey, same size as the frame, white = keep) as one byte per pixel; `box` crops it
+// with the same expression decodeRgb uses, so a cropped frame and a cropped mask line up pixel for pixel.
+function decodeGray(png, box) {
+  const crop = box ? ["-vf", "crop=iw*" + clamp01(box.x1 - box.x0) + ":ih*" + clamp01(box.y1 - box.y0) +
+    ":iw*" + clamp01(box.x0) + ":ih*" + clamp01(box.y0)] : [];
+  const r = spawnSync(FFMPEG, ["-v", "error", "-i", png, "-frames:v", "1", ...crop, "-f", "rawvideo", "-pix_fmt", "gray", "-"], { maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0 || !r.stdout || !r.stdout.length) throw new Error("ffmpeg could not decode the mask: " + String(r.stderr || "").trim().slice(0, 200));
   return r.stdout;
 }

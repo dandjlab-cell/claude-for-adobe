@@ -686,15 +686,32 @@ function visionAll(file) {
 }
 // The skin key learned from the hand and face boxes on one exported frame (src/skin.cjs): each box is
 // decoded as its own crop, so no frame geometry is needed - the crop IS the box.
+// The skin key is learned from the pixels inside Vision's hand/face boxes that are ALSO on Vision's person
+// mask: a hand box on an oak table is mostly table, and oak passes the skin prior (13:15: every learned
+// key lit the whole frame). Without a person mask the boxes alone are used, and the spill check decides.
 function skinKeyFor(src, vision, opts = {}) {
   const boxes = vision ? [...((vision.faces || []).map((f) => f.box)), ...((vision.hands || []).map((h) => h.box))].map((b) => ({ x0: b[0], y0: b[1], x1: b[2], y1: b[3] })) : [];
   if (!boxes.length) return null;
-  try { const all = Buffer.concat(boxes.map((b) => decodeRgb(src, b))); return skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }], opts); } catch (_) { return null; }
+  const person = personMask(src);
+  try {
+    const crops = [];
+    for (const b of boxes) {
+      let rgb = decodeRgb(src, b);
+      if (person) { try { rgb = maskRgb(rgb, decodeGray(person.mask, b)); } catch (_) { continue; } } // no person in this box: not skin
+      crops.push(rgb);
+    }
+    const all = Buffer.concat(crops);
+    const k = skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }], opts);
+    return k && Object.assign(k, { masked: !!person });
+  } catch (_) { return null; }
+  finally { if (person) { try { fs.rmSync(person.mask, { force: true }); } catch (_) {} } }
 }
-function subjectMask(file) {
+function personMask(file) { return visionMask(file, "--person"); }
+function subjectMask(file) { return visionMask(file, "--subject"); }
+function visionMask(file, flag) {
   let entry = null;
   try {
-    const out = require("node:child_process").execFileSync(OCR_BIN, ["--subject", file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = require("node:child_process").execFileSync(OCR_BIN, [flag, file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     entry = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
   } catch (_) { return null; }
   if (!entry || !entry.mask || !(entry.coverage > 0)) return null;
@@ -1264,7 +1281,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                   if (!tight) break;
                   keyText = tight.text;
                 }
-                if (spill) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: " + spill + (keyText !== key.text ? " even tightened" : "") + "; skipped on this clip"); }
+                if (spill) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: " + spill + (keyText !== key.text ? " even tightened" : "") + " (key " + keyText + "); skipped on this clip"); }
                 else {
                   await hw.correction(hslPadText(sk.pad));
                   if (sk.saturation !== null) await hw.saturation(sk.saturation);
@@ -1295,7 +1312,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                     hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
                   }
                   const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + (key.masked ? "" : " (no person mask: boxes alone)") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
                   state = after.frame ? { ...after.frame, region: "frame" } : state;
                 }
               }
