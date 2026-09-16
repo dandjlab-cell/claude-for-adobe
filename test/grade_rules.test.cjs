@@ -162,6 +162,13 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(seqTool, /if \(ref\) \{[\s\S]*?await writeGradeState\(at, track, region, ref\);[\s\S]*?for \(const t of ref\.cuts\) await writeGradeState\(t, track, region, ref\);/, "a later cut takes the reference state; a backoff is written to every earlier cut too");
   assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders, hsl \};/, "the first cut records its whole state, the HSL key included");
   assert.match(seqTool, /const sk = gradeSkinFor\(skinNow\);/, "skin is solved on the hand/face box of the confirmed frame");
+  // 12:54: the key's Midtones wheel carries the skin rotation; the mask view is checked against Vision's
+  // boxes first, and a key that took the room is tightened once, else skin is skipped on that clip.
+  assert.match(panel, /const SKIN_WRITE = true;/, "skin writes are on");
+  assert.ok(seqTool.indexOf("skinSpills(cov, boxShare)") > 0 && seqTool.indexOf("skinSpills(cov, boxShare)") < seqTool.indexOf("await hw.correction(hslPadText(sk.pad));"), "the spill check runs before the wheel is written");
+  assert.match(seqTool, /skinKeyFor\(src1, vis, \{ tight: true \}\)/, "one tighter key before giving up");
+  assert.match(panel, /await h\.correction\(hslPadText\(s\.hsl\.pad\)\);/, "a matched cut takes the reference's wheel too");
+  assert.doesNotMatch(seqTool, /hw\.tint\(/, "HSL Tint is never written for skin (a magenta wash, 12:21)");
   assert.match(seqTool, /readable\[Math\.floor\(\(readable\.length - 1\) \/ 2\)\]/, "a source cut more than once is graded from its median-whites cut");
   // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
   const loop = seqTool.slice(seqTool.indexOf("for (const c of clips)"));
@@ -239,14 +246,23 @@ test("a frame warm at both ends by more than 20 is the scene's colour: no white 
   assert.match(t.why, /scene's own colour/);
 });
 
-test("skin inside the HSL key: Tint puts the keyed hue on the line, Saturation only when out of the band", () => {
+test("skin inside the HSL key: the Midtones pad rotates the keyed hue onto the line, Saturation only when out of the band", () => {
   const { skinFor, SKIN_HUE } = require("../src/grade_rules.cjs");
   // C227's hands, 2026-09-16: Cb -4.9 / Cr 5.6 = 131 deg, saturation 19 - just off both.
   const hands = { luma: { min: 9.4, p1: 13.3, p50: 44.7, p99: 72.9, max: 75.3 }, red: { mean: 53.7, p1: 26.3, p99: 74.5 }, green: { mean: 43.1, p1: 10.6, p99: 72.2 }, blue: { mean: 35.8, p1: 1.6, p99: 78.4 }, saturation: { p50: 19, p99: 32 }, cast: { cb: -4.9, cr: 5.6 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0 };
   const sk = skinFor(hands);
-  assert.ok(sk && sk.tint !== null && sk.tint > 40 && sk.tint < 80, "tint about +60 from the sweep: " + JSON.stringify(sk));
+  // The 12:54 calibration: the pad at 270 deg / 0.25 took exactly these hands from 131 to 123 deg.
+  assert.ok(sk && sk.pad && sk.pad.hue > 250 && sk.pad.hue < 300 && sk.pad.sat > 0.15 && sk.pad.sat < 0.4, "a small magenta-side pad: " + JSON.stringify(sk));
   const hue = Math.atan2(sk.predicted.cast.cr, sk.predicted.cast.cb) * 180 / Math.PI;
   assert.ok(hue >= SKIN_HUE[0] && hue <= SKIN_HUE[1], "predicted hue on the line: " + hue.toFixed(1));
+  assert.equal(sk.saturation, null, "saturation 19 is a point under the band: not worth the knob");
+  const pale = skinFor({ ...hands, saturation: { p50: 12, p99: 20 } });
+  assert.ok(pale.saturation !== null && pale.saturation > 100, "saturation 12: HSL Saturation up: " + JSON.stringify(pale));
+  const inBand = skinFor({ ...hands, saturation: { p50: 30, p99: 40 } });
+  assert.ok(inBand.saturation === null && Math.abs(Math.hypot(inBand.predicted.cast.cr, inBand.predicted.cast.cb) - Math.hypot(5.6, 4.9)) < 0.01, "the pad alone is a rotation: the radius is kept");
+  const far = { ...hands, cast: { cb: -7, cr: 1 } }; // 172 deg: beyond the pad's cap
+  const fk = skinFor(far);
+  assert.ok(fk.pad.sat === 0.6 && fk.why.some((w) => /as far as the pad goes/.test(w)), JSON.stringify(fk));
   const onLine = { ...hands, cast: { cb: -5.5, cr: 8.4 }, saturation: { p50: 30, p99: 40 } }; // 123 deg, 30
   assert.equal(skinFor(onLine), null, "nothing to do");
 });

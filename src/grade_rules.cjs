@@ -274,32 +274,51 @@ function satCurveFor(m, current = null) {
 }
 
 // Skin, inside an HSL Secondary key (2026-09-16): the keyed pixels' hue onto the vectorscope's skin
-// line with HSL Tint (the hue knob inside the key - Temperature only warms), their saturation into the
-// canon's band with HSL Saturation. `m` is the measurement of the skin pixels (Vision's hand or face box
-// on the confirmed render); `from` is where the knobs are. null = already on the line.
-const SKIN_SAT_TARGET = 25;
-function skinFor(m, from = { tint: 0, saturation: 100 }) {
+// line with the key's own Midtones colour wheel (a rotation of the keyed colour; HSL Tint was a magenta
+// wash over every keyed pixel - the owner, 12:21), their saturation into the canon's band with HSL
+// Saturation. `m` is the measurement of the skin pixels (Vision's hand or face box on the confirmed
+// render); `from.saturation` is where that knob is. null = already on the line.
+//
+// The wheel, measured 12:54 on C227's hands inside their key: the Midtones pad at saturation 0.25 on
+// 0 / 90 / 180 / 270 deg moved the keyed mean (Cb, Cr) by (-0.3, +1.3) (-0.8, -0.3) (0, -0.9) (+0.8, +0.7)
+// on the -50..50 scale: 0 deg is red (+Cr), 90 deg yellow (-Cb), a linear wheel under 2 points a channel.
+// Per unit of pad saturation, with x = sat cos(hue), y = sat sin(hue): [dCb, dCr] = HSL_PAD.m · [x, y].
+// ponytail: one 2x2 from one key; the pad is absolute from neutral (the skin step never runs on a matched
+// cut) - add `from.pad` if a second pass ever has to build on a first.
+const HSL_PAD = { m: [[-0.6, -3.2], [4.4, -2.0]], cap: 0.6 };
+const SKIN_SAT_TARGET = 25, SKIN_SAT_TOL = 3, SKIN_HUE_TARGET = (SKIN_HUE[0] + SKIN_HUE[1]) / 2 + 2; // 123: the line's centre
+function skinFor(m, from = { saturation: 100 }) {
   const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
-  const hueOff = hue < SKIN_HUE[0] || hue > SKIN_HUE[1], satOff = sat < SKIN_SAT[0] || sat > SKIN_SAT[1];
+  // Saturation gets a margin: the knob reaches 3 points on a hand at full slider (its sweep), so a 1-point
+  // shortfall is not worth Saturation 200.
+  const hueOff = hue < SKIN_HUE[0] || hue > SKIN_HUE[1], satOff = sat < SKIN_SAT[0] - SKIN_SAT_TOL || sat > SKIN_SAT[1] + SKIN_SAT_TOL;
   if (!hueOff && !satOff) return null;
-  const out = { tint: null, saturation: null, why: [], predicted: m };
+  const out = { pad: null, saturation: null, why: [], predicted: m };
   let state = m;
-  if (hueOff) {
-    const t = solveKnob(m, "hslTint", from.tint, STATISTICS.skinHue, (SKIN_HUE[0] + SKIN_HUE[1]) / 2 + 2); // 123: the line's centre
-    if (t && t.helps) { out.tint = Math.round(t.value * 100) / 100; state = predict(m, "hslTint", from.tint, out.tint); out.why.push("hue " + round(hue) + "° → tint " + round(out.tint) + (t.partial ? " (as far as it goes: " + round(t.predicted) + "°)" : "")); }
-    else out.why.push("hue " + round(hue) + "° is beyond what HSL Tint reaches");
+  // Saturation first (its sweep drags the hue a little), the pad on what that leaves.
+  if (satOff) {
+    const target = sat < SKIN_SAT[0] ? SKIN_SAT_TARGET : SKIN_SAT[1] - 5;
+    const sv = solveKnob(m, "hslSaturation", from.saturation, STATISTICS.saturation, target);
+    if (sv && sv.helps) { out.saturation = Math.round(sv.value * 100) / 100; state = predict(m, "hslSaturation", from.saturation, out.saturation); out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (sv.partial ? " (as far as it goes)" : "")); }
   }
-  const satNow = STATISTICS.saturation(state);
-  if (satNow < SKIN_SAT[0] || satNow > SKIN_SAT[1]) {
-    const target = satNow < SKIN_SAT[0] ? SKIN_SAT_TARGET : SKIN_SAT[1] - 5;
-    const sv = solveKnob(state, "hslSaturation", from.saturation, STATISTICS.saturation, target);
-    if (sv && sv.helps) { out.saturation = Math.round(sv.value * 100) / 100; state = predict(state, "hslSaturation", from.saturation, out.saturation); out.why.push("saturation " + round(satNow) + " → " + round(out.saturation) + (sv.partial ? " (as far as it goes)" : "")); }
+  const hueNow = STATISTICS.skinHue(state);
+  if (hueNow < SKIN_HUE[0] || hueNow > SKIN_HUE[1]) {
+    // The same radius at the target angle; the pad that moves (Cb, Cr) there is the inverse of the wheel.
+    const r = Math.hypot(state.cast.cb, state.cast.cr), t = SKIN_HUE_TARGET * Math.PI / 180;
+    const d = [r * Math.cos(t) - state.cast.cb, r * Math.sin(t) - state.cast.cr];
+    const [[a, b], [c, e]] = HSL_PAD.m, det = a * e - b * c;
+    let x = (e * d[0] - b * d[1]) / det, y = (a * d[1] - c * d[0]) / det, padSat = Math.hypot(x, y), partial = false;
+    if (padSat > HSL_PAD.cap) { partial = true; x *= HSL_PAD.cap / padSat; y *= HSL_PAD.cap / padSat; padSat = HSL_PAD.cap; }
+    let padHue = Math.atan2(y, x) * 180 / Math.PI; if (padHue < 0) padHue += 360;
+    out.pad = { hue: Math.round(padHue * 10) / 10, sat: Math.round(padSat * 1000) / 1000 };
+    state = { ...state, cast: { cb: state.cast.cb + a * x + b * y, cr: state.cast.cr + c * x + e * y } };
+    out.why.push("hue " + round(hueNow) + "° → Midtones pad " + round(padHue) + "°/" + padSat.toFixed(2) + (partial ? " (as far as the pad goes: " + round(STATISTICS.skinHue(state)) + "°)" : ""));
   }
-  if (out.tint === null && out.saturation === null) return null;
+  if (out.pad === null && out.saturation === null) return null;
   out.predicted = state;
   return out;
 }
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, HSL_PAD, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };

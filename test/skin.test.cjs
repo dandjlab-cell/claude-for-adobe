@@ -25,6 +25,18 @@ test("a skin box yields a tight key with outer >= inner on every axis; a grey ri
   assert.equal(skinKeyFrom(rgb, w, h, [{ x0: 0, y0: 0, x1: 0.05, y1: 0.05 }]), null, "too few pixels: no key");
 });
 
+test("a tight key sits inside the loose one; saturation never keys below the floor; a key wider than twice the boxes spills", () => {
+  const { spills, SAT_FLOOR } = require("../src/skin.cjs");
+  const w = 40, h = 40, rgb = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) { rgb[i * 3] = 170 + (i % 40); rgb[i * 3 + 1] = 120 + (i % 20); rgb[i * 3 + 2] = 100 + (i % 10); }
+  const box = [{ x0: 0, y0: 0, x1: 1, y1: 1 }];
+  const loose = skinKeyFrom(rgb, w, h, box, { minPixels: 50 }), tight = skinKeyFrom(rgb, w, h, box, { minPixels: 50, tight: true });
+  for (const ax of ["H", "S", "L"]) assert.ok(tight.key[ax][1] <= loose.key[ax][1] && tight.key[ax][2] <= loose.key[ax][2], ax + " tight " + tight.key[ax] + " loose " + loose.key[ax]);
+  assert.ok(loose.key.S[0] - loose.key.S[2] >= SAT_FLOOR - 0.001, "sat feather floor: " + loose.key.S);
+  assert.equal(spills(0.30, 0.05), true);
+  assert.equal(spills(0.08, 0.05), false);
+});
+
 test("the mask view's grey is dropped, everything else is the selection", () => {
   const k = keyedPixels(Buffer.from([184, 184, 184, 183, 185, 184, 200, 150, 120, 10, 10, 10]));
   assert.equal(k.rgb.length / 3, 2);
