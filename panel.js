@@ -840,6 +840,8 @@ function gradeStateSummary(s) {
   return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.curves && s.curves.Master && s.curves.Master[0][0] > 0.005 ? ", curve black " + s.curves.Master[0][0].toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
 }
 
+// Skin writes are off until the HSL Secondary wheels are drivable: HSL Tint is a wash toward magenta.
+const SKIN_WRITE = false;
 // HSL Secondary: the key through QE by name, the correction scalars and Show Mask by property index.
 function hslWriter(at, track) {
   const qe = async (value) => { const raw = await host("lumetriQE", String(at), String(track), "HSL Secondary", value); if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4)); return raw.split(COL)[1]; };
@@ -1241,6 +1243,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
               const sk = gradeSkinFor(skinNow);
               const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
               if (!sk) parts.push("skin: " + skinRegion + " on the line (hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + ")");
+              // Report only until the HSL Secondary wheels are drivable (the owner, 12:21: HSL Tint pinked every
+              // keyed pixel - a wash, not a rotation; the Midtones wheel inside the key is the tool).
+              else if (!SKIN_WRITE) parts.push("skin: " + boxes.length + " " + skinRegion + " hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + " (off the line; the HSL wheel correction is not wired yet - nothing written)");
               else {
                 const hw = hslWriter(at, track);
                 await hw.writeKey(key.text);
