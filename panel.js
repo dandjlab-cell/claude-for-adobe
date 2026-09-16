@@ -1048,8 +1048,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       if ((!w || !h) && c.mediaPath) { const d = mediaDims(c.mediaPath); if (d) { w = d.w; h = d.h; } }
       visibleBy[k] = visibleFraction({ srcW: w, srcH: h, frameW: tf.w, frameH: tf.h, x: c.x, y: c.y, scale: c.scale });
     }
-    return visibleBy[k];
+    return cropOff ? null : visibleBy[k];
   };
+  let cropOff = null; // set by the parity guard when the Motion crop turns out not to match Premiere
   const preread = {}, clips = [], bySource = {};
   for (const c of timelineOrder) (bySource[c.name] = bySource[c.name] || []).push(c);
   for (const group of Object.values(bySource)) {
@@ -1082,7 +1083,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const at = Math.round(((c.start + c.end) / 2) * 1000) / 1000;
     // What the timeline shows of this clip's source: Motion scale and position decide it, and every source
     // read below is cropped to it. null = all of the source is on screen.
-    const visible = visibleFor(c);
+    const visible = visibleFor(c); // null once cropOff is set
     const label = c.name + " @" + at + "s";
     const clipT0 = Date.now(), host0 = { ...hostTime };
     let renderMs = 0, readMs = 0;
@@ -1119,7 +1120,21 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (readFrom === "source" && read === "auto" && parity === null) {
           const p = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++;
           const a = m.frame || m, b = p.frame || p;
-          const off = Math.max(Math.abs(a.luma.p50 - b.luma.p50), ...["red", "green", "blue"].map((ch) => Math.abs(a[ch].mean - b[ch].mean)));
+          const gap = (x, y) => Math.max(Math.abs(x.luma.p50 - y.luma.p50), ...["red", "green", "blue"].map((ch) => Math.abs(x[ch].mean - y[ch].mean)));
+          let off = gap(a, b);
+          // The Motion crop is a claim about which source pixels are on screen, and it can be wrong: footage
+          // conformed to the frame on import reads scale 100 against its full 6K size, and cropping by that
+          // would measure the middle third of a picture that is showing whole (the owner, 16:30). If the
+          // cropped read disagrees with Premiere and the uncropped one agrees, the crop was the mistake -
+          // drop it for the run and say so, rather than falling back to a render per clip.
+          if (off > PARITY_MAX && visible) {
+            const whole = await timed(() => measureSourceAt(at, track, region, snap, null), "read");
+            const offWhole = gap(whole.frame || whole, b);
+            if (offWhole <= PARITY_MAX) {
+              cropOff = "the clips' Motion scale says part of the source is off screen, but the whole frame is what Premiere renders (conformed on import): source reads are uncropped";
+              m = whole; off = offWhole;
+            }
+          }
           parity = { off: Math.round(off * 10) / 10, clip: c.name };
           if (off > PARITY_MAX) { read = "premiere"; m = p; readFrom = "premiere"; }
         }
@@ -1456,7 +1471,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.sort((a, b) => { const ta = /@([\d.]+)s/.exec(a), tb = /@([\d.]+)s/.exec(b); return (ta ? Number(ta[1]) : 0) - (tb ? Number(tb[1]) : 0); }); // ponytail: the reference cut was graded first; the reader wants timeline order
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + "."
-    + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
+    + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
   lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
   card.done(lines.join("\n"), true);
