@@ -107,7 +107,7 @@ function readings(m) {
 
 function report(m, label) {
   return [
-    (label ? label + ": " : "") + "luma 0-100: min " + m.luma.min + ", p1 " + m.luma.p1 + ", median " + m.luma.p50 + ", p99 " + m.luma.p99 + ", max " + m.luma.max,
+    (label ? label + ": " : "") + "luma 0-100: min " + m.luma.min + ", p1 " + m.luma.p1 + (m.luma.p10 !== undefined ? ", p10 " + m.luma.p10 : "") + ", median " + m.luma.p50 + (m.luma.p90 !== undefined ? ", p90 " + m.luma.p90 : "") + ", p99 " + m.luma.p99 + ", max " + m.luma.max,
     "parade means R " + m.red.mean + " G " + m.green.mean + " B " + m.blue.mean + "; p1-p99 R " + m.red.p1 + "-" + m.red.p99 + ", G " + m.green.p1 + "-" + m.green.p99 + ", B " + m.blue.p1 + "-" + m.blue.p99,
     "clipped at 255: R " + m.clipped.red + "% G " + m.clipped.green + "% B " + m.clipped.blue + "%; at the luma floor " + m.crushed + "% (pure black " + m.pureBlack + "%); channel at 0: R " + m.floor.red + "% G " + m.floor.green + "% B " + m.floor.blue + "%",
     "vectorscope: saturation median " + m.saturation.p50 + ", p99 " + m.saturation.p99 + " (% of a 127.5 Cb/Cr radius: pure red is about 103, pure green about 119); mean Cb " + m.cast.cb + ", Cr " + m.cast.cr + " (-50..50)",

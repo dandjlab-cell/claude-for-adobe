@@ -965,7 +965,7 @@ const SKIN_WRITE = true;
 // 128.3 -> 122.7). That is far steadier than the HSL wheel's six-fold spread, so the first write is a
 // solved guess rather than a probe, and the confirm still rescales it. The cap keeps the move small: "if
 // the trace sits past the skin tone line toward magenta, you've gone too far".
-const SKIN_HUE_GAIN = 220, SKIN_HUE_MIN = 0.008, SKIN_HUE_CAP = 0.12;
+const SKIN_HUE_GAIN = 220, SKIN_HUE_MIN = 0.008, SKIN_HUE_CAP = 0.12, SKIN_HUE_DONE = 2;
 // HSL Secondary: the key and its wheels ("Correction") through QE by name, the scalars and Show Mask by
 // property index.
 function hslWriter(at, track) {
@@ -1441,7 +1441,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                   const h2 = Math.round(GRADE_STATS.skinHue(re) * 10) / 10;
                   notes.push("curve " + shift.toFixed(3) + " → " + h2 + "°");
                   after = re; hueLast = h2; best = shift;
-                  if (h2 >= GRADE_SKIN_HUE[0] && h2 <= GRADE_SKIN_HUE[1]) break;
+                  // Close to the target, not merely inside the band: C198's face landed at 119.5 - in band, at the
+                  // red end of it - and still read pink to the owner (19:38). Within 2 degrees of 123 is done.
+                  if (Math.abs(h2 - target) <= SKIN_HUE_DONE) break;
                   if (Math.abs(h2 - hue0) <= 0.5) { // no response: double it
                     if (Math.abs(shift) >= SKIN_HUE_CAP) { notes.push("at the curve's cap"); break; }
                     shift = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, shift * 2));
@@ -1487,7 +1489,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (_) {}
     const took = tookOf();
     log("grade " + label + took);
-    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
+    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;

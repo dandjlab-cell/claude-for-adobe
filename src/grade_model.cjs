@@ -55,6 +55,18 @@ function predict(m, param, from, to) {
     }
   };
   move(m, out);
+  // p10 / p90 (the body of the picture, 19:40) are not in the sweeps: carry each along between the
+  // tracked percentiles it sits between, keeping its relative position. A contrast move that widens
+  // p1-p99 widens the body in proportion; a levels move that pulls p1 pulls p10 part of the way.
+  const carry = (src, dst) => {
+    const f = src.luma, g = dst.luma;
+    if (!f || !g || f.p10 === undefined || f.p90 === undefined) return;
+    const lerp = (x, a0, a1, b0, b1) => (a1 - a0 > 0.5 ? b0 + (x - a0) / (a1 - a0) * (b1 - b0) : b0 + (b1 - b0) / 2);
+    g.p10 = lerp(f.p10, f.p1, f.p50, g.p1, g.p50);
+    g.p90 = lerp(f.p90, f.p50, f.p99, g.p50, g.p99);
+  };
+  carry(m, out);
+  if (m.frame && out.frame) carry(m.frame, out.frame);
   // A region reading carries the whole frame alongside it, and the frame is what white balance and the
   // clipping guard read. It moves with the knob too - the first live run predicted the subject only,
   // so the frame's whites stayed flat in the model, never crossed zero, and every temperature went to

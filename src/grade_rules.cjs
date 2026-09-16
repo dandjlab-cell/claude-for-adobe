@@ -256,7 +256,7 @@ function goalsFor(m, region = "frame") {
 // After the confirm: balanced, or what is still off - in the canon's words. The same thresholds the
 // goals use (ACCEPT), both cast axes the pads solve, and the spread the footer promises.
 function verdict(after, region = "frame") {
-  const notes = [];
+  const notes = [], hints = [];
   const f = frameOf(after);
   if (f.luma.p1 > ACCEPT.blackMax) notes.push("black point " + round(f.luma.p1) + " lifted");
   if (f.luma.p99 < ACCEPT.whiteMin) notes.push("white point " + round(f.luma.p99) + " low");
@@ -272,8 +272,12 @@ function verdict(after, region = "frame") {
   // The ends can be neutral while the middle is not: C198 @17.2 (the owner, 19:38, "she's too pink") ended
   // with whites 0.8 and blacks 4.7 and red above green and blue through the whole body of the parade. Named
   // here; the tool for it is the Midtones wheel, which has no calibration yet (What's Next 6).
+  // 22:14: the band's median is the OBJECTS in the midtones - "warm by 53" was the oak, "34" the copper
+  // pans - so it is a reading, not a verdict: it never fails the balance, and past COLOURED it is the
+  // scene and not said at all. Named in a hint, not a note, until a measure that separates a cast from
+  // the objects exists (the midtone tint at the same luma across channels, judged on the subject).
   const mid = f.bands && f.bands.midtones;
-  if (mid && mid.rb !== null && (Math.abs(mid.rb) > MIDTONE_CAST || Math.abs(mid.g) > MIDTONE_CAST)) notes.push("midtones " + (Math.abs(mid.rb) > MIDTONE_CAST ? (mid.rb > 0 ? "blue" : "warm") + " by " + round(Math.abs(mid.rb)) : "") + (Math.abs(mid.rb) > MIDTONE_CAST && Math.abs(mid.g) > MIDTONE_CAST ? ", " : "") + (Math.abs(mid.g) > MIDTONE_CAST ? (mid.g > 0 ? "green" : "magenta") + " by " + round(Math.abs(mid.g)) : "") + " while the ends are neutral (Midtones wheel: not yet calibrated, not corrected)");
+  if (mid && mid.rb !== null && Math.max(Math.abs(mid.rb), Math.abs(mid.g)) > MIDTONE_CAST && Math.max(Math.abs(mid.rb), Math.abs(mid.g)) <= COLOURED) hints.push("midtones " + (Math.abs(mid.rb) > MIDTONE_CAST ? (mid.rb > 0 ? "blue" : "warm") + " by " + round(Math.abs(mid.rb)) : "") + (Math.abs(mid.rb) > MIDTONE_CAST && Math.abs(mid.g) > MIDTONE_CAST ? ", " : "") + (Math.abs(mid.g) > MIDTONE_CAST ? (mid.g > 0 ? "green" : "magenta") + " by " + round(Math.abs(mid.g)) : "") + " (a reading of the middle band, objects included; not judged)");
   const clipped = Math.max(f.clipped.red, f.clipped.green, f.clipped.blue);
   if (clipped > 0.5) notes.push("clipped " + round(clipped) + "%");
   if (f.crushed > 1) notes.push("crushed " + round(f.crushed) + "%");
@@ -283,7 +287,7 @@ function verdict(after, region = "frame") {
     if (hue < SKIN_HUE[0] || hue > SKIN_HUE[1]) notes.push("skin hue " + round(hue) + "° off the line");
   }
   if (region === "subject" && after.frame && after.luma && STATISTICS.brightness(after) < SUBJECT_DARK) notes.push("subject luma " + round(STATISTICS.brightness(after)) + " dark where it matters (under " + SUBJECT_DARK + ")");
-  return { balanced: !notes.length, notes };
+  return { balanced: !notes.length, notes, hints };
 }
 
 // The colourists' cleanup, after the balance: saturation rolled off in the deepest shadows and the
