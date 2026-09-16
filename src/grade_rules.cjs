@@ -31,7 +31,7 @@ const SKIN_SAT = [20, 50];       // percent of the vectorscope radius; ~30 reads
 // luma sits under SUBJECT_DARK while the frame is balanced is "objectively very dark where it matters"
 // (the owner, 2026-09-16 12:15, C222: the frame ticked, the hand and cloth sat at 15-30). Lifted with
 // Shadows (a dark-areas control) toward SUBJECT_LUMA, capped where the frame's black point would pass 8.
-const SUBJECT_DARK = 35, SUBJECT_LUMA = 40, SUBJECT_BLACK_MAX = 8;
+const SUBJECT_DARK = 35, SUBJECT_LUMA = 40, SUBJECT_BLACK_MAX = 8, SUBJECT_SHADOWS_CAP = 30;
 // harsh was 85 - which the targets themselves exceed (black 4, white 92 = 88), so Contrast -60 fired on
 // five clips of the 21:05 run and lifted the black points the curve had just set. Harsh is past the
 // canon's own range.
@@ -194,7 +194,10 @@ function goalsFor(m, region = "frame") {
   //     state the sliders before it predict; the cap is the frame's black point.
   if (region === "subject" && m.frame && m.luma) {
     const luma = STATISTICS.brightness(m);
-    if (luma < SUBJECT_DARK) goals.push({ param: "shadows", statistic: "brightness", target: SUBJECT_LUMA, ceiling: (state) => frameOf(state).luma.p1 <= SUBJECT_BLACK_MAX, why: "subject luma " + round(luma) + " is dark where it matters → " + SUBJECT_LUMA + " with Shadows (black point kept ≤ " + SUBJECT_BLACK_MAX + ")" });
+    // Shadows lifts every dark area: +51 on C220 (12:18) took the subject to 57 and the picture went flat
+    // (the owner: "lost any dynamism"). The balance: never past +30, and scaled back while the frame's
+    // spread would fall under the flat line or its black point past 8.
+    if (luma < SUBJECT_DARK) goals.push({ param: "shadows", statistic: "brightness", target: SUBJECT_LUMA, cap: SUBJECT_SHADOWS_CAP, ceiling: (state) => { const f2 = frameOf(state); return f2.luma.p1 <= SUBJECT_BLACK_MAX && STATISTICS.spread(f2) >= SPREAD.flat; }, why: "subject luma " + round(luma) + " is dark where it matters → " + SUBJECT_LUMA + " with Shadows (≤ " + SUBJECT_SHADOWS_CAP + "; black point ≤ " + SUBJECT_BLACK_MAX + ", spread ≥ " + SPREAD.flat + ")" });
   }
 
   // 2. White point: Whites, then Highlights for what Whites leaves. Whites clips past about +50, so

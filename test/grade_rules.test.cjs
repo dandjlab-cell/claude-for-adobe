@@ -257,8 +257,10 @@ test("a dark subject is lifted with Shadows toward 40, capped by the frame's bla
   const g = goalsFor(withSubject(f, hand), "subject");
   const sh = [...g].find((x) => x.param === "shadows");
   assert.ok(sh && sh.statistic === "brightness" && sh.target === 40 && typeof sh.ceiling === "function", JSON.stringify([...g]));
-  assert.equal(sh.ceiling({ frame: { luma: { p1: 7 } } }), true);
-  assert.equal(sh.ceiling({ frame: { luma: { p1: 9 } } }), false);
+  assert.equal(sh.cap, 30, "never past +30: +51 flattened C220");
+  assert.equal(sh.ceiling({ frame: { luma: { p1: 7, p99: 88 } } }), true);
+  assert.equal(sh.ceiling({ frame: { luma: { p1: 9, p99: 88 } } }), false, "the black point");
+  assert.equal(sh.ceiling({ frame: { luma: { p1: 7, p99: 58 } } }), false, "the spread");
   assert.ok(verdict(withSubject(f, hand), "subject").notes.some((n) => /subject luma 22 dark/.test(n)));
   assert.equal([...goalsFor(withSubject(f, frame(20, 45, 70, [20, 20, 20], [70, 70, 70])), "subject")].some((x) => x.param === "shadows"), false, "a subject at 45 is not dark");
 });
