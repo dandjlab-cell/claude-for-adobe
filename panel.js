@@ -17,7 +17,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resiz
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, HSL_PAD: GRADE_HSL_PAD, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, keyedPixels, spills: skinSpills, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -1275,13 +1275,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 let keyText = key.text, spill = null, thin = null, maskFail = null;
                 for (let pass = 0; pass < 2; pass++) {
                   await hw.writeKey(keyText); await hw.showMask(true);
-                  // Show Mask is a view toggle through the DOM, not a QE parameter: an export a few ms after it
-                  // read the plain picture as "100% keyed" on every clip (13:15, 13:56), while the same key by hand
-                  // read 3-4% seconds later. Settle, and a whole-frame read is a mask that did not render: once more.
+                  // Show Mask is a view toggle through the DOM, not a QE parameter, and it does not invalidate the
+                  // frame Premiere last drew: with the playhead already parked on this frame the export returned
+                  // the plain picture as "100% keyed" on every clip (13:15, 13:56, 14:12 even after 0.9 s), while
+                  // the same key by hand read 3-4% because that scopes call moved the playhead there fresh. So the
+                  // playhead is nudged off the frame first; a whole-frame read is still retried once.
                   let cov = null;
                   try {
                     for (let t = 0; t < 2 && cov === null; t++) {
-                      await new Promise((r) => setTimeout(r, t ? 900 : 400));
+                      try { await host("playhead", String(Math.round((at + 0.5 * (t + 1)) * 254016000000))); } catch (_) {}
+                      await new Promise((r) => setTimeout(r, t ? 600 : 200));
                       const mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++;
                       const c = mv && mv.region === "keyed" ? mv.coverage : 0;
                       if (c < 0.98) cov = c;
@@ -1315,10 +1318,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                     if (k < 0) { pad2 = { hue: sk.pad.hue, sat: 0 }; notes.push("the pad turned the hue the wrong way (" + hue0.toFixed(1) + " → " + hueAfter + "°): off"); }
                     else { pad2 = { hue: sk.pad.hue, sat: Math.round(Math.min(GRADE_HSL_PAD.cap, sk.pad.sat * k) * 1000) / 1000 }; notes.push("pad " + sk.pad.sat.toFixed(2) + " → " + pad2.sat.toFixed(2) + " (hue read " + hueAfter + "°)"); }
                   }
+                  // The same secant on HSL Saturation: the gain is one number from two hands (14:12).
+                  const sat0 = skinNow.saturation.p50;
+                  if (sk.saturation !== null && Math.abs(satAfter - sat0) > 1 && (satAfter < GRADE_SKIN_SAT[0] || satAfter > GRADE_SKIN_SAT[1])) {
+                    const satTarget = sat0 < GRADE_SKIN_SAT[0] ? GRADE_SKIN_SAT_TARGET : GRADE_SKIN_SAT[1] - 5, ks = (satTarget - sat0) / (satAfter - sat0);
+                    if (ks > 0) { sat2 = Math.round(Math.max(GRADE_HSL_SAT_RANGE[0], Math.min(GRADE_HSL_SAT_RANGE[1], 100 + (sk.saturation - 100) * ks)) * 100) / 100; notes.push("saturation " + round2(sk.saturation) + " → " + round2(sat2) + " (read " + satAfter + ")"); }
+                  }
                   if (confirm && gradeUnsafe(gradeDamage(after), gradeAllowance(baseline))) {
                     const h = gradeDamage(after);
                     if (pad2 === null && sk.pad) { pad2 = { hue: sk.pad.hue, sat: Math.round(sk.pad.sat / 2 * 1000) / 1000 }; notes.push("pad halved to " + pad2.sat.toFixed(2)); }
-                    if (sk.saturation !== null) { sat2 = Math.round((100 + (sk.saturation - 100) / 2) * 100) / 100; notes.push("saturation halved to " + sat2); }
+                    if (sk.saturation !== null) { sat2 = Math.round((100 + ((sat2 === null ? sk.saturation : sat2) - 100) / 2) * 100) / 100; notes.push("saturation halved to " + sat2); }
                     notes.push("the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "%");
                   }
                   if (pad2 !== null || sat2 !== null) {

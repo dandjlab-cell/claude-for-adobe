@@ -288,9 +288,15 @@ function satCurveFor(m, current = null) {
 // 0 / 90 / 180 / 270 deg moved the keyed mean (Cb, Cr) by (-0.3, +1.3) (-0.8, -0.3) (0, -0.9) (+0.8, +0.7)
 // on the -50..50 scale: 0 deg is red (+Cr), 90 deg yellow (-Cb), a linear wheel under 2 points a channel.
 // Per unit of pad saturation, with x = sat cos(hue), y = sat sin(hue): [dCb, dCr] = HSL_PAD.m · [x, y].
+// That key was the thin eyedropper one (3-4% of the frame): on the pass's own keys, which cover the hand,
+// the first live run (14:12) rotated 2.5-3x further per unit of pad on every clip (C223 0.23 for -5.7 deg
+// got -14.5; C209 0.39 for -8.2 got -24), so the matrix is scaled by 2.5; the confirm's secant covers the rest.
 // ponytail: one 2x2 from one key; the pad is absolute from neutral (the skin step never runs on a matched
 // cut) - add `from.pad` if a second pass ever has to build on a first.
-const HSL_PAD = { m: [[-0.6, -3.2], [4.4, -2.0]], cap: 0.6 };
+const HSL_PAD = { m: [[-1.5, -8.0], [11.0, -5.0]], cap: 0.6 };
+// HSL Saturation inside a key: the sweep (thin key again) said it barely moves a hand; on a real key 200
+// doubled the keyed saturation (C222 14 -> 28, C233 15 -> 24, 14:12). A straight gain, corrected on the confirm.
+const HSL_SAT_GAIN = 0.8, HSL_SAT_RANGE = [50, 200];
 const SKIN_SAT_TARGET = 25, SKIN_SAT_TOL = 3, SKIN_HUE_TARGET = (SKIN_HUE[0] + SKIN_HUE[1]) / 2 + 2; // 123: the line's centre
 function skinFor(m, from = { saturation: 100 }) {
   const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
@@ -300,13 +306,17 @@ function skinFor(m, from = { saturation: 100 }) {
   if (!hueOff && !satOff) return null;
   const out = { pad: null, saturation: null, why: [], predicted: m };
   let state = m;
-  // Saturation first (its sweep drags the hue a little), the pad on what that leaves.
   if (satOff) {
     const target = sat < SKIN_SAT[0] ? SKIN_SAT_TARGET : SKIN_SAT[1] - 5;
-    const sv = solveKnob(m, "hslSaturation", from.saturation, STATISTICS.saturation, target);
-    if (sv && sv.helps) { out.saturation = Math.round(sv.value * 100) / 100; state = predict(m, "hslSaturation", from.saturation, out.saturation); out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (sv.partial ? " (as far as it goes)" : "")); }
+    const v = Math.max(HSL_SAT_RANGE[0], Math.min(HSL_SAT_RANGE[1], 100 + (target / Math.max(1, sat) - 1) / HSL_SAT_GAIN * 100));
+    out.saturation = Math.round(v * 100) / 100;
+    const satPredicted = sat * (1 + HSL_SAT_GAIN * (v - 100) / 100);
+    state = { ...m, saturation: { ...m.saturation, p50: satPredicted } };
+    out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (v === HSL_SAT_RANGE[1] || v === HSL_SAT_RANGE[0] ? " (as far as it goes: " + round(satPredicted) + ")" : ""));
   }
-  const hueNow = STATISTICS.skinHue(state);
+  // The pad is decided on the MEASURED hue (14:12: C222's pad was skipped because the saturation sweep's
+  // predicted cast put the hue in the band; the render said 136.9 deg).
+  const hueNow = hue;
   if (hueNow < SKIN_HUE[0] || hueNow > SKIN_HUE[1]) {
     // The same radius at the target angle; the pad that moves (Cb, Cr) there is the inverse of the wheel.
     const r = Math.hypot(state.cast.cb, state.cast.cr), t = SKIN_HUE_TARGET * Math.PI / 180;
@@ -326,4 +336,4 @@ function skinFor(m, from = { saturation: 100 }) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, HSL_PAD, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
