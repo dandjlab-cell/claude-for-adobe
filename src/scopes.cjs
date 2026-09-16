@@ -53,7 +53,10 @@ function measure(rgb) {
   const to100 = (v) => Math.round(v / 255 * 1000) / 10;
   const share = (c) => Math.round(c / n * 10000) / 100;
   const low = hy[0] + hy[1]; // at the floor, the mirror of a channel at 255: dark is fine, clipped is not
-  const luma = { min: to100(pct(hy, 0)), p1: to100(pct(hy, 1)), p50: to100(pct(hy, 50)), p99: to100(pct(hy, 99)), max: to100(pct(hy, 100)) };
+  // p10 and p90 describe the BODY of the picture. p1-p99 can look wide on a frame that reads flat, because
+  // one specular and one dark corner satisfy it while everything else sits squeezed in the middle (C193 at
+  // 15.39s, the owner 19:35: black 4.3 and white 92.9 by the numbers, "flat-ish" to the eye).
+  const luma = { min: to100(pct(hy, 0)), p1: to100(pct(hy, 1)), p10: to100(pct(hy, 10)), p50: to100(pct(hy, 50)), p90: to100(pct(hy, 90)), p99: to100(pct(hy, 99)), max: to100(pct(hy, 100)) };
   const chan = (h, s) => ({ mean: to100(s / n), p1: to100(pct(h, 1)), p99: to100(pct(h, 99)) });
   // A band is a set of luma codes; its cast is the median over the paired-pixel histograms of those codes.
   // codes: [[code, weight], ...]; a weight under 1 takes that share of the code's pixels (the boundary

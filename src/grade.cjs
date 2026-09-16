@@ -32,6 +32,10 @@ const STATISTICS = {
   blackPoint: (m) => (m.frame || m).luma.p1,
   whitePoint: (m) => (m.frame || m).luma.p99,
   spread: (m) => { const f = m.frame || m; return f.luma.p99 - f.luma.p1; },
+  // The body of the picture, not its two extremes: one specular and one dark corner can make p1-p99 look
+  // wide while everything the eye reads sits squeezed in the middle (C193 @15.39, 19:35 - ends 4.3 to 92.9,
+  // and still "flat-ish"). Falls back to the ends on an older reading that has no p10/p90.
+  body: (m) => { const f = m.frame || m; return f.luma.p90 !== undefined ? f.luma.p90 - f.luma.p10 : (f.luma.p99 - f.luma.p1) * 0.7; },
   // The parade-whites statistics read the WHOLE FRAME even when a subject was measured (`frame` is
   // attached by the panel): a red product's brightest pixels are red, which is its colour, not the
   // light. White surfaces and specular hits anywhere in the room are what line up when it is neutral.

@@ -42,8 +42,12 @@ const SUBJECT_DARK = 35, SUBJECT_LUMA = 40, SUBJECT_BLACK_MAX = 8, SUBJECT_SHADO
 // harsh was 85 - which the targets themselves exceed (black 4, white 92 = 88), so Contrast -60 fired on
 // five clips of the 21:05 run and lifted the black points the curve had just set. Harsh is past the
 // canon's own range.
-const SPREAD = { flat: 55, harsh: 93, target: 70 };
+// `flat`/`harsh`/`target` judge the ends (p1-p99). `bodyFlat` judges the middle 80% of the picture, which
+// is what "flat-ish" means to the eye: C193 @15.39 ended with its ends at 4.3 and 92.9 - a spread of 88,
+// nominally perfect - while the body sat inside 40 points. A specular and a dark corner satisfy the ends.
+const SPREAD = { flat: 55, harsh: 93, target: 70, bodyFlat: 45, bodyTarget: 52 };
 const NEUTRAL = 1.5;             // parade ends within this of each other are neutral
+const MIDTONE_CAST = 4;          // the middle band this far off neutral is a cast the eye sees as a tint (pink skin, green walls)
 const TEMPERATURE_CAP = 50;      // a balance is not a look: half the slider
 const PAD_REACH = 12;            // about what a pad at its cap (0.3) cancels, from the 21:00 sweep (6.5 per 0.15)
 const COLOURED = 20;             // a parade end this far off neutral is an object's colour (a red-orange surface in shadow), not the light
@@ -163,12 +167,15 @@ function levelsFor(m, current = null, asRead = null) {
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
-  // The darkest pixels a coloured surface (a red-orange object in shadow: B-R -20 and more) are not a
-  // black to be put at 4: a master curve cannot lower a luma that comes from one channel and only
-  // crushes the other two (C187, 21:26 - green and blue on the floor, red untouched, then the pad
-  // tinted the floor blue). Left alone; padsFor says why.
+  // The darkest pixels of a coloured surface (a red-orange object in shadow: B-R -20 and more) are not a
+  // black to be put at 4: a master curve cannot lower a luma that comes from one channel without crushing
+  // the other two (C187, 21:26 - green and blue on the floor, red untouched, then the pad tinted the floor
+  // blue). Until 19:40 that meant no curve at all, and C187 stayed at a black point of 23.5 and read flat
+  // (the owner's parade: blue's bottom at 10, red's at 28, nothing under 10). The floor cap below is the
+  // real protection - the bottom point never passes the lowest channel - so a coloured bottom is now pulled
+  // as far as that allows and no further, and the row says so.
   const cast = castAt(frameOf(asRead || m), "shadows");
-  if (Math.hypot(cast[0], cast[1]) > COLOURED) return null;
+  const coloured = Math.hypot(cast[0], cast[1]) > COLOURED;
   const target = BLACK_POINT[1] - 1;
   const anchor = Math.max(0.3, Math.min(0.6, f.luma.p50 / 100));
   const want = blackInFor(bp, target, anchor);
@@ -180,7 +187,7 @@ function levelsFor(m, current = null, asRead = null) {
   if (blackIn < 0.02) return null;
   return {
     blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
-    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
+    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (coloured ? " (a coloured bottom: only as far as its lowest channel allows)" : "") + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
   };
 }
 
@@ -230,8 +237,10 @@ function goalsFor(m, region = "frame") {
   } else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, why: "white point " + round(wp) + " → 93" });
 
   // 3. Contrast, on the FRAME's spread, only when flat or harsh, never past +-60.
-  const spread = STATISTICS.spread(f);
+  const spread = STATISTICS.spread(f), body = STATISTICS.body(f);
   if (spread < SPREAD.flat || spread > SPREAD.harsh) goals.push({ param: "contrast", statistic: "spread", target: SPREAD.target, cap: 60, why: "frame spread " + round(spread) + " is " + (spread < SPREAD.flat ? "flat" : "harsh") });
+  // Ends fine, middle compressed: the picture reads flat even though the black and white points are right.
+  else if (body < SPREAD.bodyFlat) goals.push({ param: "contrast", statistic: "body", target: SPREAD.bodyTarget, cap: 40, why: "the ends are set (spread " + round(spread) + ") but the middle 80% of the picture spans only " + round(body) + ": it reads flat" });
 
   // 4. Black point: a LIFTED one is the curve's job (levelsFor, written before these sliders are
   //    solved), not a slider's - Blacks is a toe control and Shadows a dark-areas control, and which
@@ -257,8 +266,14 @@ function verdict(after, region = "frame") {
     if (Math.abs(rb) > NEUTRAL) notes.push(label + " " + (rb > 0 ? "blue" : "warm") + " by " + round(rb) + (wheel === "shadows" ? " (Shadows wheel)" : ""));
     if (Math.abs(g) > NEUTRAL) notes.push(label + " " + (g > 0 ? "green" : "magenta") + " by " + round(Math.abs(g)));
   }
-  const spread = STATISTICS.spread(f);
+  const spread = STATISTICS.spread(f), body = STATISTICS.body(f);
   if (spread < SPREAD.flat || spread > SPREAD.harsh) notes.push("spread " + round(spread) + " " + (spread < SPREAD.flat ? "flat" : "harsh"));
+  else if (body < SPREAD.bodyFlat) notes.push("the middle of the picture spans only " + round(body) + " (ends are fine): reads flat");
+  // The ends can be neutral while the middle is not: C198 @17.2 (the owner, 19:38, "she's too pink") ended
+  // with whites 0.8 and blacks 4.7 and red above green and blue through the whole body of the parade. Named
+  // here; the tool for it is the Midtones wheel, which has no calibration yet (What's Next 6).
+  const mid = f.bands && f.bands.midtones;
+  if (mid && mid.rb !== null && (Math.abs(mid.rb) > MIDTONE_CAST || Math.abs(mid.g) > MIDTONE_CAST)) notes.push("midtones " + (Math.abs(mid.rb) > MIDTONE_CAST ? (mid.rb > 0 ? "blue" : "warm") + " by " + round(Math.abs(mid.rb)) : "") + (Math.abs(mid.rb) > MIDTONE_CAST && Math.abs(mid.g) > MIDTONE_CAST ? ", " : "") + (Math.abs(mid.g) > MIDTONE_CAST ? (mid.g > 0 ? "green" : "magenta") + " by " + round(Math.abs(mid.g)) : "") + " while the ends are neutral (Midtones wheel: not yet calibrated, not corrected)");
   const clipped = Math.max(f.clipped.red, f.clipped.green, f.clipped.blue);
   if (clipped > 0.5) notes.push("clipped " + round(clipped) + "%");
   if (f.crushed > 1) notes.push("crushed " + round(f.crushed) + "%");

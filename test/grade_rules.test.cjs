@@ -73,7 +73,14 @@ test("a lifted black point is the curve's job: the Master bottom point, solved e
   assert.equal(lev.predicted.luma.p99, 90);
   assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [0.4, 0.4], [0.8, 0.8], [1, 1]], "four points: bottom, the median pin, the 0.8 pin, the top corner");
   const colouredShadow = frame(20, 45, 90, [30, 12, 4], [90, 90, 90]); // B-R -26 at the bottom: a red-orange surface, not a black
-  assert.equal(levelsFor(colouredShadow), null, "a coloured dark surface is not put at 4: the curve would only crush its other two channels");
+  // 19:40: a coloured bottom is no longer refused outright (C187 stayed at 23.5 and read flat); it is pulled
+  // as far as its lowest channel allows - here blue's bottom at 4 leaves no room at all, so still no curve.
+  const lev1 = levelsFor(colouredShadow);
+  assert.ok(!lev1 || lev1.blackIn <= 0.03, "a coloured dark surface whose lowest channel is already near the floor gets at most a token curve: " + JSON.stringify(lev1 && lev1.blackIn));
+  const room = frame(24, 45, 90, [32, 16, 8], [90, 90, 90]); // C187-like: warm bottom (B-R -24), but blue has room down to 4
+  const lev2 = levelsFor(room);
+  assert.ok(lev2 && lev2.blackIn > 0.02 && /coloured bottom/.test(lev2.why), "a coloured bottom with room is pulled as far as its lowest channel allows: " + JSON.stringify(lev2 && { b: lev2.blackIn, why: lev2.why }));
+  assert.ok(lev2.blackIn <= (8 - 1.5) / 100 + 1e-9, "and never past the lowest channel");
   const far = levelsFor(frame(40, 60, 90, [40, 40, 40], [90, 90, 90]));
   assert.equal(far.blackIn, LEVELS_CAP, "a black point of 40 is a picture with no black: the automatic pass stops at the cap");
   assert.equal(levelsFor(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), null, "already at the black point: no curve");
@@ -199,7 +206,8 @@ test("a parade end more than 20 off neutral is a coloured surface: no pad, no cu
   const pads = padsFor(f);
   assert.equal(pads.wheels.shadows, undefined, "no Shadows pad on an object's colour");
   assert.ok(pads.needs.some((n) => /the scene's own colour/.test(n)), pads.needs.join(" | "));
-  assert.equal(levelsFor(f, null, f), null, "and no black-point curve: it would only crush the other two channels");
+  const lev = levelsFor(f, null, f);
+  assert.ok(!lev || lev.blackIn <= 0.03, "and at most a token black-point curve when its lowest channel is already at 4");
 });
 
 test("the curve's bottom point never passes the lowest channel bottom: a channel a pad has taken to 3 is not crushed by the curve", () => {
