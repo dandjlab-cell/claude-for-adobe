@@ -44,3 +44,16 @@ test("fitRegion caps the scale and reports when the region cannot fit", () => {
   assert.equal(inside(roiInFrame(t, { x0: 0, y0: 0, x1: 1920, y1: 1080 }), target), false);
   assert.ok(blankCanvas({ srcW: 1920, srcH: 1080, frameW: 1080, frameH: 1920, x: 0.5, y: 0.5, scale: 56.25 }).top > 0.3);
 });
+
+test("the visible source window: scale and position decide which source pixels the timeline shows", () => {
+  const { visibleFraction } = require("../src/frame.cjs");
+  const base = { srcW: 3840, srcH: 2160, frameW: 1920, frameH: 1080, x: 0.5, y: 0.5 };
+  assert.equal(visibleFraction({ ...base, scale: 50 }), null, "4K at 50% in a 1080 frame: all of it, no crop");
+  const full = visibleFraction({ ...base, scale: 100 });
+  assert.ok(Math.abs(full.x0 - 0.25) < 0.001 && Math.abs(full.x1 - 0.75) < 0.001, "at 100% the middle half is on screen: " + JSON.stringify(full));
+  const tight = visibleFraction({ ...base, scale: 150 });
+  assert.ok(tight.x1 - tight.x0 < full.x1 - full.x0, "150% shows less than 100%");
+  const left = visibleFraction({ ...base, scale: 100, x: 0.3 });
+  assert.ok(left.x0 > full.x0, "pushing the clip left moves the window right through the source");
+  assert.equal(visibleFraction({ ...base, scale: 100, srcW: 0 }), null, "no source size: no crop");
+});

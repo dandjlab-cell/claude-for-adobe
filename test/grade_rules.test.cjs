@@ -154,7 +154,9 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(seqTool, /if \(tint2 === null && !tintWrote && Math\.abs\(c1\[1\]\) > 1\.5\) \{/, "the correction can introduce Tint for a green residual that only appeared after the temperature move");
   assert.match(seqTool, /const tT = tempWrote \? scale1\(c0\[0\], c1\[0\]\) : null;/, "temperature is rescaled from blue-red alone, and only if the last write moved it");
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
-  assert.match(seqTool, /measureSourceAt\(at, track, region, snap\)/, "one snapshot per run, not one per clip");
+  assert.match(seqTool, /measureSourceAt\(at, track, region, snap, visible\)/, "one snapshot per run, and every source read cropped to what the timeline shows");
+  // Motion scale and position decide which source pixels are on screen: a clip past 100% hides some.
+  assert.match(seqTool, /const visible = visibleFor\(c\);/, "each clip's visible window is computed once");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");
   assert.match(seqTool, /if \(temp && !next\.highlights\) \{/, "the correction scales the white balance from the real reading, unless the Highlights pad was already corrected");
   // Shot match (2026-09-16): a later cut of a graded file takes the first cut's WHOLE grade; if it would
@@ -170,7 +172,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(seqTool, /const hc = hueCurveWriter\(at, track, "Hue vs Hue"\);/, "the skin tool is the hue curve");
   // A hand can be hidden on the graded frame and open a second later (C228, 16:06), so a clip with no skin
   // on that frame is searched elsewhere - decoded from its own file, all candidates read in one Vision call.
-  assert.match(seqTool, /const found = await timed\(\(\) => findSkinTime\(c\.start, c\.end, track, snap\), "read"\);/, "a clip with no skin on the graded frame is searched");
+  assert.match(seqTool, /const found = await timed\(\(\) => findSkinTime\(c\.start, c\.end, track, snap, visible\), "read"\);/, "a clip with no skin on the graded frame is searched");
   assert.match(panel, /function visionAllMany\(files\)/, "several frames go to Vision in one call");
   assert.match(seqTool, /await hc\.write\(hueBump\(centre, shift\)\);/, "a bump on the skin's own hue, pinned back to zero either side");
   assert.match(seqTool, /further off than[\s\S]*?await hc\.write\(\[\]\)|await hc\.write\(\[\]\); best = 0;/, "a move that made it worse is removed");

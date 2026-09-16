@@ -17,6 +17,20 @@ function visibleSourceRect(t) {
   };
 }
 
+// The same rectangle clamped to the source and expressed as fractions of it: the window of the source the
+// timeline actually shows. A 4K clip at 50% in a 1080 frame shows all of it; the same clip at 150% shows
+// the middle. Every source-file read should be cropped to this, or the pass measures pixels the viewer
+// never sees (the owner, 16:20). null when the whole source is visible, so callers can skip the crop.
+function visibleFraction(t) {
+  if (!(t.srcW > 0 && t.srcH > 0 && t.scale > 0) || !isFinite(t.x) || !isFinite(t.y)) return null;
+  const r = visibleSourceRect(t);
+  const x0 = Math.max(0, Math.min(1, r.x0 / t.srcW)), x1 = Math.max(0, Math.min(1, r.x1 / t.srcW));
+  const y0 = Math.max(0, Math.min(1, r.y0 / t.srcH)), y1 = Math.max(0, Math.min(1, r.y1 / t.srcH));
+  if (!(x1 - x0 > 0.01 && y1 - y0 > 0.01)) return null;                       // degenerate: measure it all
+  if (x0 <= 0.002 && y0 <= 0.002 && x1 >= 0.998 && y1 >= 0.998) return null;  // all of it is on screen
+  return { x0, y0, x1, y1 };
+}
+
 // Where a source rectangle (px) lands in the frame, as frame fractions.
 function roiInFrame(t, roi) {
   const a = toFrame(t, roi.x0, roi.y0), b = toFrame(t, roi.x1, roi.y1);
@@ -47,4 +61,4 @@ function fitRegion({ srcW, srcH, frameW, frameH, roi, target, maxScale = 100, ma
   return { x, y, scale, roiFrame: placed, fits: inside(placed, target, 0.005), blank: blankCanvas(t) };
 }
 
-module.exports = { toFrame, visibleSourceRect, roiInFrame, inside, blankCanvas, fitRegion };
+module.exports = { toFrame, visibleSourceRect, visibleFraction, roiInFrame, inside, blankCanvas, fitRegion };

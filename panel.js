@@ -25,7 +25,7 @@ const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(pat
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
 const { findPeakFile, parsePeakFile, peakWindows } = require(path.join(extensionRoot, "src", "pek.cjs"));
 const { diffSnapshots, formatSnapshot, parseSnapshot, summarizeChanges, isGraphic, isGuide, topFootageAt, firstVisibleTime, seams } = require(path.join(extensionRoot, "src", "timeline.cjs"));
-const { fitRegion, visibleSourceRect, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
+const { fitRegion, visibleSourceRect, visibleFraction, roiInFrame, inside: rectInside } = require(path.join(extensionRoot, "src", "frame.cjs"));
 const { captionBlocks, captionStyle, updateCaptionStyles, readProjectXml, writeProjectXml } = require(path.join(extensionRoot, "src", "prproj.cjs"));
 const { loudIntervals, planCuts, silencesFrom, union } = require(path.join(extensionRoot, "src", "silence.cjs"));
 const { DEFAULT_MIN_PAUSE, complementRanges, decodeWords, fillerRanges, findInWords, linesFromWords, listTranscripts, pausesFromWords, tc, transcriptForClip } = require(path.join(extensionRoot, "src", "transcript.cjs"));
@@ -750,7 +750,7 @@ function biggestFaceBox(file) {
 // hand clear at the next cut point). So when the midpoint finds no face or hand, a few more times across
 // the clip are decoded FROM THE SOURCE FILE - no Premiere render, no playhead move - and Vision run on
 // each; the first that finds skin gives the skin step its time. Returns null when the clip has none.
-async function findSkinTime(start, end, track, snapshot) {
+async function findSkinTime(start, end, track, snapshot, visible = null) {
   const span = end - start;
   if (!(span > 0.2)) return null;
   // Vision reads stills, not video - but bin/ocr takes many files in one call and prints a line each, so
@@ -758,7 +758,7 @@ async function findSkinTime(start, end, track, snapshot) {
   const times = [], pngs = [];
   for (const f of [0.15, 0.35, 0.65, 0.85]) {
     const t = Math.round((start + span * f) * 1000) / 1000;
-    try { const png = sourcePngAt(t, track, snapshot); if (png) { times.push(t); pngs.push(png); } } catch (_) { /* a time the decoder cannot reach */ }
+    try { const png = sourcePngAt(t, track, snapshot, visible); if (png) { times.push(t); pngs.push(png); } } catch (_) { /* a time the decoder cannot reach */ }
   }
   try {
     const seen = visionAllMany(pngs);
@@ -785,25 +785,41 @@ function visionAllMany(files) {
   } catch (_) { return []; }
 }
 
+// A packed RGB24 frame cut down to a rectangle given as fractions of it.
+function cropRgb(rgb, width, height, rect) {
+  if (!rect) return { rgb, width, height };
+  const x0 = Math.max(0, Math.floor(rect.x0 * width)), x1 = Math.min(width, Math.ceil(rect.x1 * width));
+  const y0 = Math.max(0, Math.floor(rect.y0 * height)), y1 = Math.min(height, Math.ceil(rect.y1 * height));
+  const w = x1 - x0, h = y1 - y0;
+  if (!(w > 0 && h > 0)) return { rgb, width, height };
+  const out = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) rgb.copy(out, y * w * 3, ((y0 + y) * width + x0) * 3, ((y0 + y) * width + x1) * 3);
+  return { rgb: out, width: w, height: h };
+}
+
 // One frame of the clip under `seconds`, decoded from its own file to a PNG the caller must delete.
-function sourcePngAt(seconds, track, snapshot) {
+function sourcePngAt(seconds, track, snapshot, visible = null) {
   const c = snapshot && snapshot.clips.find((k) => k.track === "V" + track && seconds >= k.start && seconds < k.end && k.mediaPath);
   if (!c) return null;
-  const f = sourceFrameRgb(c.mediaPath, toSourceSeconds(seconds, c.start, c.inPoint, c.speed), { maxWidth: 0 });
+  const raw = sourceFrameRgb(c.mediaPath, toSourceSeconds(seconds, c.start, c.inPoint, c.speed), { maxWidth: 0 });
+  const f = cropRgb(raw.rgb, raw.width, raw.height, visible); // only what the timeline shows
   const png = path.join(os.tmpdir(), "claude-for-adobe-skinhunt-" + Date.now().toString(36) + ".png");
   const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
   return w.status === 0 ? png : null;
 }
 
-async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = null) {
+async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = null, visible = null) {
   const snap = snapshot || await readSnapshot(); // a sequence run passes its one snapshot: no re-read per clip
   if (snap.error) throw new Error(snap.error);
   const c = snap.clips.find((k) => k.track === "V" + track && seconds >= k.start && seconds < k.end && k.mediaPath);
   if (!c) throw new Error("no footage with a source file at " + seconds + "s on V" + track);
   const at = toSourceSeconds(seconds, c.start, c.inPoint, c.speed);
-  const f = sourceFrameRgb(c.mediaPath, at, { maxWidth: 0 });
+  const raw = sourceFrameRgb(c.mediaPath, at, { maxWidth: 0 });
+  // Only the window the timeline shows: a clip scaled past 100% or pushed off centre hides source pixels,
+  // and measuring them balances a picture the viewer never sees (the owner, 16:20).
+  const f = Object.assign(cropRgb(raw.rgb, raw.width, raw.height, visible), { frame: raw.frame });
   const whole = measureScopes(f.rgb);
-  Object.assign(whole, { region: "frame", source: true, clip: c.name, sourceSeconds: at, decoded: f.width + "x" + f.height + (f.frame !== undefined ? " frame " + f.frame : "") });
+  Object.assign(whole, { region: "frame", source: true, clip: c.name, sourceSeconds: at, cropped: !!visible, decoded: raw.width + "x" + raw.height + (visible ? " → visible " + f.width + "x" + f.height : "") + (raw.frame !== undefined ? " frame " + raw.frame : "") });
   if (region === "frame") return whole;
   // Regions need Vision, which wants an image file: write the decoded frame out once.
   const png = path.join(os.tmpdir(), "claude-for-adobe-source-" + Date.now().toString(36) + ".png");
@@ -1021,11 +1037,24 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   // shared temperature left the third blue by 11 in the whites). Its cuts are read up front (a source
   // decode each, no render) and the reference is graded before its siblings; rows are re-sorted to
   // timeline order at the end.
+  // What the timeline shows of each clip's source, from its Motion scale and position: every source read
+  // is cropped to it, so a clip scaled past 100% is measured on the pixels the viewer sees and not on the
+  // ones hanging off the edges (the owner, 16:20). Premiere leaves srcW/srcH empty on BRAW; the file says.
+  const visibleBy = {};
+  const visibleFor = (c) => {
+    const k = keyOf(c);
+    if (!(k in visibleBy)) {
+      let w = c.srcW, h = c.srcH;
+      if ((!w || !h) && c.mediaPath) { const d = mediaDims(c.mediaPath); if (d) { w = d.w; h = d.h; } }
+      visibleBy[k] = visibleFraction({ srcW: w, srcH: h, frameW: tf.w, frameH: tf.h, x: c.x, y: c.y, scale: c.scale });
+    }
+    return visibleBy[k];
+  };
   const preread = {}, clips = [], bySource = {};
   for (const c of timelineOrder) (bySource[c.name] = bySource[c.name] || []).push(c);
   for (const group of Object.values(bySource)) {
     if (group.length > 1 && read !== "premiere") {
-      for (const c of group) { const s0 = Date.now(); try { preread[keyOf(c)] = { m: await measureSourceAt(midOf(c), track, region, snap), ms: Date.now() - s0 }; } catch (_) {} }
+      for (const c of group) { const s0 = Date.now(); try { preread[keyOf(c)] = { m: await measureSourceAt(midOf(c), track, region, snap, visibleFor(c)), ms: Date.now() - s0 }; } catch (_) {} }
       const readable = group.filter((c) => preread[keyOf(c)]).sort((a, b) => GRADE_STATS.whitesRB(preread[keyOf(a)].m) - GRADE_STATS.whitesRB(preread[keyOf(b)].m));
       if (readable.length) { const r = readable[Math.floor((readable.length - 1) / 2)]; clips.push(r, ...group.filter((c) => c !== r)); continue; }
     }
@@ -1051,6 +1080,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   for (const c of clips) {
     if (cancelRequested) { stopped = true; break; }
     const at = Math.round(((c.start + c.end) / 2) * 1000) / 1000;
+    // What the timeline shows of this clip's source: Motion scale and position decide it, and every source
+    // read below is cropped to it. null = all of the source is on screen.
+    const visible = visibleFor(c);
     const label = c.name + " @" + at + "s";
     const clipT0 = Date.now(), host0 = { ...hostTime };
     let renderMs = 0, readMs = 0;
@@ -1082,7 +1114,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     try {
       if (preread[keyOf(c)] && !graded) { m = preread[keyOf(c)].m; readMs += preread[keyOf(c)].ms; readFrom = "source"; }
       else if ((read === "source" || read === "auto") && !graded) {
-        try { m = await timed(() => measureSourceAt(at, track, region, snap), "read"); readFrom = "source"; }
+        try { m = await timed(() => measureSourceAt(at, track, region, snap, visible), "read"); readFrom = "source"; }
         catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
         if (readFrom === "source" && read === "auto" && parity === null) {
           const p = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++;
@@ -1328,7 +1360,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       let seenVision = (m.frame || m).vision || m.vision, skinAt = at;
       // No skin on the graded frame is not "no skin in the shot": look elsewhere in the clip first.
       if (confirm && !ref && !(seenVision && ((seenVision.faces || []).length || (seenVision.hands || []).length))) {
-        const found = await timed(() => findSkinTime(c.start, c.end, track, snap), "read");
+        const found = await timed(() => findSkinTime(c.start, c.end, track, snap, visible), "read");
         if (found) { skinAt = found.at; seenVision = found.vision; parts.push("skin found at " + skinAt + "s, not on the graded frame"); }
       }
       if (confirm && !ref && seenVision && ((seenVision.faces || []).length || (seenVision.hands || []).length)) {

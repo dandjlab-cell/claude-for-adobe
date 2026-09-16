@@ -8,7 +8,7 @@ Saying "grade this video" runs one deterministic pass, not a judgement call per 
 
 ## 2. What it measures, and where the numbers come from
 
-Every reading comes from one video frame near the middle of each clip, decoded from the camera file where possible, or a Premiere render otherwise. From that frame the pass computes the same kind of scopes a colourist reads off a waveform or vectorscope:
+Every reading comes from one video frame near the middle of each clip, decoded from the camera file where possible, or a Premiere render otherwise. A frame read from the camera file is cropped to the part of it the timeline actually shows, which the clip's scale and position decide: a 4K clip at half scale in an HD sequence shows all of itself, the same clip at full scale shows only its middle. Reading the whole file instead would balance a picture nobody sees. From that frame the pass computes the same kind of scopes a colourist reads off a waveform or vectorscope:
 
 - **Luma** at the 1st and 99th percentile of pixels — the honest black point and white point, ignoring a few stray dark or bright specks.
 - **The colour parade's ends** — the darkest and brightest few percent of pixels taken together, so the reading reflects real parts of the picture rather than three unrelated extremes.
