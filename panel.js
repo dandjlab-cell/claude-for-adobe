@@ -17,7 +17,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resiz
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, keyedPixels, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -643,6 +643,19 @@ function measureRegion(src, region, reuse = null) {
   // A region reading always carries the whole-frame numbers too (`frame`): clipping and crushing are
   // judged on the frame, because pushing a small subject up blows the room behind it.
   const vision = region === "frame" ? null : visionAll(src);
+  // The skin key learned from the hand and face boxes on this very frame (src/skin.cjs), for HSL Secondary:
+  // each box is decoded as its own crop, so no frame geometry is needed - the crop IS the box.
+  let skinKey = null;
+  if (vision) {
+    const boxes = [...((vision.faces || []).map((f) => f.box)), ...((vision.hands || []).map((h) => h.box))].map((b) => ({ x0: b[0], y0: b[1], x1: b[2], y1: b[3] }));
+    if (boxes.length) {
+      try {
+        const crops = boxes.map((b) => decodeRgb(src, b)), all = Buffer.concat(crops);
+        skinKey = skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }]);
+      } catch (_) { skinKey = null; }
+    }
+  }
+  frame.src = src; frame.skinKey = skinKey;
   // "keyed": the frame is Lumetri's HSL Secondary mask view (Show Mask on) - the selected pixels alone.
   if (region === "keyed") {
     const k = keyedPixels(decodeRgb(src));
@@ -824,11 +837,23 @@ async function writeGradeState(at, track, region, s) {
   if (s.curves) await curveWriter(at, track).write(s.curves);
   await satWriter(at, track).write(s.sat || []);
   for (const [p, v] of Object.entries(s.sliders || {})) if (GRADE_PARAMS[p] && isFinite(v)) await lumetriWriter(at, track, GRADE_PARAMS[p].lumetri, region).set(v);
+  if (s.hsl) { const h = hslWriter(at, track); await h.writeKey(s.hsl.key || EMPTY_HSL_KEY); if (isFinite(s.hsl.tint)) await h.tint(s.hsl.tint); if (isFinite(s.hsl.saturation)) await h.saturation(s.hsl.saturation); }
 }
 
 function gradeStateSummary(s) {
   const pads = s.wheels ? Object.keys(s.wheels).filter((w) => s.wheels[w].sat > 0.005).map((w) => w + " " + round2(s.wheels[w].hue) + "°/" + round2(s.wheels[w].sat)) : [];
   return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.curves && s.curves.Master && s.curves.Master[0][0] > 0.005 ? ", curve black " + s.curves.Master[0][0].toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
+}
+
+// HSL Secondary: the key through QE by name, the correction scalars and Show Mask by property index.
+function hslWriter(at, track) {
+  const qe = async (value) => { const raw = await host("lumetriQE", String(at), String(track), "HSL Secondary", value); if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4)); return raw.split(COL)[1]; };
+  const idx = async (index, expect, value) => { const raw = await host("lumetriIndex", String(at), String(track), String(index), expect, value); if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4)); return raw.split(COL)[1]; };
+  return {
+    readKey: () => qe(""), writeKey: (text) => qe(text),
+    tint: (v) => idx(102, "Tint", v === undefined ? "" : String(v)), saturation: (v) => idx(105, "Saturation", v === undefined ? "" : String(v)), temperature: (v) => idx(101, "Temperature", v === undefined ? "" : String(v)),
+    showMask: (on) => idx(88, "Show Mask", on ? "true" : "false"),
+  };
 }
 
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
@@ -951,7 +976,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     try { tintFrom = await tiw.read(); if (!isFinite(tintFrom)) tintFrom = 0; } catch (_) { tintFrom = 0; }
     try { currentCurves = (await cw.read()).curves; } catch (error) { curvesErr = error.message; }
     try { currentSat = (await sw.read()).points; } catch (error) { satErr = error.message; }
-    const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves)) || !!(currentSat && currentSat.length);
+    let hslKeyed = false; try { const kt = String(await hslWriter(at, track).readKey()); hslKeyed = /:0,?[.,]?00,0,?[.,]?00;/.test(kt) === false && kt.indexOf(",0,00,0,00") < 0 && kt.indexOf(",0.00,0.00") < 0; } catch (_) { hslKeyed = false; }
+    const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves)) || !!(currentSat && currentSat.length) || hslKeyed;
 
     let m, readFrom = read;
     // auto: decode the clip's own file (parity with Premiere's render verified on BRAW, 2026-09-15:
@@ -1054,7 +1080,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    (with `measured` given it renders only after the writes); if that shows damage past the
     //    baseline it restores the sliders and confirms again - the clip's one correction. Otherwise
     //    the correction goes to the pads, if a cast is left and the real reading says how much.
-    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false;
+    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false, hsl = null;
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
@@ -1197,6 +1223,37 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
         } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }
       }
+      // 3. Skin, inside an HSL Secondary key (2026-09-16): the key learned from the hand/face boxes on
+      //    the confirmed frame, HSL Tint solved to put the keyed hue on the line, HSL Saturation into the
+      //    band, one confirm read on the hand/face box. Only when Vision saw skin; never on a matched cut
+      //    (the reference's HSL state is copied).
+      if (confirm && !ref) {
+        const f1s = state.frame || state, vis = f1s.vision, key = f1s.skinKey;
+        const boxes = vis ? [...((vis.faces || [])), ...((vis.hands || []))] : [];
+        if (boxes.length && key && f1s.src) {
+          try {
+            const skinRegion = vis.faces && vis.faces.length ? "face" : "hands";
+            const skinNow = measureRegion(f1s.src, skinRegion);
+            if (skinNow.region === skinRegion) {
+              const sk = gradeSkinFor(skinNow);
+              const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
+              if (!sk) parts.push("skin: " + skinRegion + " on the line (hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + ")");
+              else {
+                const hw = hslWriter(at, track);
+                await hw.writeKey(key.text);
+                if (sk.tint !== null) await hw.tint(sk.tint);
+                if (sk.saturation !== null) await hw.saturation(sk.saturation);
+                hsl = { key: key.text, tint: sk.tint === null ? 0 : sk.tint, saturation: sk.saturation === null ? 100 : sk.saturation };
+                const after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                const hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10, satAfter = round2(after.saturation.p50);
+                const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
+                parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + key.text + " → " + sk.why.join(", ") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                state = Object.assign(after.frame ? { ...after.frame, region: "frame" } : state, { vision: f1s.vision, skinKey: key, src: f1s.src });
+              }
+            }
+          } catch (error) { needs.push("skin: " + error.message); }
+        }
+      }
     } catch (error) { lines.push(label + ": " + error.message); continue; }
 
     touched++;
@@ -1209,7 +1266,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       for (const g of goals) sliders[g.param] = await lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region).read();
       const wheels = wheelsErr ? null : (await ww.read()).wheels, curves = curvesErr ? null : (await cw.read()).curves, satNow = satErr ? [] : (await sw.read()).points;
       const tempNow = await tw.read(), tintNow = await tiw.read();
-      matched[c.name] = { label, cuts: [at], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders };
+      matched[c.name] = { label, cuts: [at], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders, hsl };
       matched[c.name].summary = gradeStateSummary(matched[c.name]);
     } catch (_) {}
     const took = tookOf();

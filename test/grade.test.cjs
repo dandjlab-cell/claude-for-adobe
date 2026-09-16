@@ -127,7 +127,7 @@ test("every reading taken is returned, so the panel can show its work", async ()
 });
 
 test("the eight swept parameters are marked tested and the rest are not", () => {
-  assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["blacks", "contrast", "exposure", "highlights", "shadows", "temperature", "tint", "whites"]);
+  assert.deepEqual(Object.keys(PARAMS).filter((k) => PARAMS[k].tested).sort(), ["blacks", "contrast", "exposure", "highlights", "hslSaturation", "hslTemperature", "hslTint", "shadows", "temperature", "tint", "whites"]);
   const { SWEEPS } = require("../src/grade_model.cjs");
   for (const k of Object.keys(PARAMS)) assert.equal(!!SWEEPS[k], !!PARAMS[k].tested, k + ": tested means swept, and swept means tested");
 });
@@ -145,7 +145,8 @@ test("the tool is wired, and its schema cannot drift from the parameters it can 
   const enumMatch = /enum: \[([^\]]*)\] \}, target:/.exec(panel);
   assert.ok(enumMatch, "found the parameter enum");
   const declared = enumMatch[1].split(",").map((s) => s.trim().replace(/"/g, "")).filter(Boolean);
-  assert.deepEqual(declared.sort(), Object.keys(PARAMS).sort());
+  // The HSL Secondary scalars live inside a key and are driven by grade_sequence's skin step, not by name.
+  assert.deepEqual(declared.sort(), Object.keys(PARAMS).filter((k) => !PARAMS[k].index).sort());
 });
 
 test("every parameter names a Lumetri property and a statistic that exists", () => {

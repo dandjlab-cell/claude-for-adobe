@@ -68,6 +68,13 @@ const PARAMS = {
   blacks: { lumetri: "Blacks", steer: "blackPoint", range: [-100, 100], step: 25, tested: true },   // p1 0 -> 20.4; crushes below -20
   saturation: { lumetri: "Saturation", steer: "saturation", range: [0, 200], step: 20, tested: false, neutral: 100 },
   vibrance: { lumetri: "Vibrance", steer: "saturation", range: [-100, 100], step: 25, tested: false },
+  // HSL Secondary's own correction, inside its key - by property index (the names collide with Basic/
+  // Creative). Swept 2026-09-16 on C227's hands inside a hand key: Tint moves the keyed hue ~0.12 deg a
+  // point (143 -> 119 across the range, crossing the I-line), Temperature a quarter of the global slider,
+  // Saturation usable 0-100 (100 = neutral) and compressed above.
+  hslTemperature: { lumetri: "Temperature", index: 101, steer: "skinHue", range: [-100, 100], step: 25, tested: true },
+  hslTint: { lumetri: "Tint", index: 102, steer: "skinHue", range: [-100, 100], step: 25, tested: true },
+  hslSaturation: { lumetri: "Saturation", index: 105, steer: "saturation", range: [0, 200], step: 25, tested: true, neutral: 100 },
 };
 
 // Hitting the number is not the job: a grade that reaches it by blowing highlights or crushing blacks

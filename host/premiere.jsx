@@ -851,6 +851,33 @@ var PCX = (function () {
   // "White Balance" - and it works for scalars too. value === "" reads; anything else writes and reads
   // back. Writes need DOT decimals (comma form is accepted and ignored); reads come back with commas.
   // Adds Lumetri Color to the clip when it has none. Returns "OK<COL>text<COL>clipName" or "ERR:...".
+  // A Lumetri scalar by property INDEX (HSL Secondary's own Temperature 101, Tint 102, Contrast 103,
+  // Sharpen 104, Saturation 105 and Show Mask 88 share their names with Basic/Creative, which the name
+  // walk finds first). `expect` is the displayName the index must carry. Empty value = read.
+  function lumetriIndex(seconds, track, index, expect, value) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) { var k = tr.clips[c]; if (at >= k.start.seconds && at < k.end.seconds) { cl = k; } }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+    var comp = null;
+    for (var j = 0; j < cl.components.numItems; j++) { var cp = cl.components[j]; if (String(cp.displayName).indexOf("Lumetri") >= 0) { comp = cp; } }
+    if (!comp) return "ERR:no Lumetri on " + cl.name;
+    var i = num(index), props = comp.properties;
+    if (!(i >= 0) || i >= props.numItems) return "ERR:no property " + index;
+    var pr = props[i];
+    if (String(expect) !== "" && String(pr.displayName) !== String(expect)) return "ERR:property " + index + " is " + pr.displayName + ", not " + expect;
+    if (String(value) !== "") {
+      var v = value === "true" ? true : value === "false" ? false : num(value);
+      try { pr.setValue(v, true); } catch (e1) { return "ERR:setValue " + e1; }
+    }
+    var back = "";
+    try { back = String(pr.getValue()); } catch (e2) { return "ERR:getValue " + e2; }
+    return "OK" + COL + back + COL + cl.name;
+  }
+
   function lumetriQE(seconds, track, name, value) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
@@ -1675,7 +1702,7 @@ var PCX = (function () {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE, lumetriIndex: lumetriIndex
   };
 }());
 "PCX loaded";

@@ -160,7 +160,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // Shot match (2026-09-16): a later cut of a graded file takes the first cut's WHOLE grade; if it would
   // clip or crush under it, the shot's tone is backed off to half on every cut so they still match.
   assert.match(seqTool, /if \(ref\) \{[\s\S]*?await writeGradeState\(at, track, region, ref\);[\s\S]*?for \(const t of ref\.cuts\) await writeGradeState\(t, track, region, ref\);/, "a later cut takes the reference state; a backoff is written to every earlier cut too");
-  assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders \};/, "the first cut records its whole state");
+  assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders, hsl \};/, "the first cut records its whole state, the HSL key included");
+  assert.match(seqTool, /const sk = gradeSkinFor\(skinNow\);/, "skin is solved on the hand/face box of the confirmed frame");
   assert.match(seqTool, /readable\[Math\.floor\(\(readable\.length - 1\) \/ 2\)\]/, "a source cut more than once is graded from its median-whites cut");
   // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
   const loop = seqTool.slice(seqTool.indexOf("for (const c of clips)"));
@@ -236,4 +237,16 @@ test("a frame warm at both ends by more than 20 is the scene's colour: no white 
   const t = temperatureFor(f);
   assert.ok(t && t.sceneColour && t.value === 0 && t.tint === null, JSON.stringify(t && { v: t.value, s: t.sceneColour }));
   assert.match(t.why, /scene's own colour/);
+});
+
+test("skin inside the HSL key: Tint puts the keyed hue on the line, Saturation only when out of the band", () => {
+  const { skinFor, SKIN_HUE } = require("../src/grade_rules.cjs");
+  // C227's hands, 2026-09-16: Cb -4.9 / Cr 5.6 = 131 deg, saturation 19 - just off both.
+  const hands = { luma: { min: 9.4, p1: 13.3, p50: 44.7, p99: 72.9, max: 75.3 }, red: { mean: 53.7, p1: 26.3, p99: 74.5 }, green: { mean: 43.1, p1: 10.6, p99: 72.2 }, blue: { mean: 35.8, p1: 1.6, p99: 78.4 }, saturation: { p50: 19, p99: 32 }, cast: { cb: -4.9, cr: 5.6 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0 };
+  const sk = skinFor(hands);
+  assert.ok(sk && sk.tint !== null && sk.tint > 40 && sk.tint < 80, "tint about +60 from the sweep: " + JSON.stringify(sk));
+  const hue = Math.atan2(sk.predicted.cast.cr, sk.predicted.cast.cb) * 180 / Math.PI;
+  assert.ok(hue >= SKIN_HUE[0] && hue <= SKIN_HUE[1], "predicted hue on the line: " + hue.toFixed(1));
+  const onLine = { ...hands, cast: { cb: -5.5, cr: 8.4 }, saturation: { p50: 30, p99: 40 } }; // 123 deg, 30
+  assert.equal(skinFor(onLine), null, "nothing to do");
 });

@@ -257,6 +257,33 @@ function satCurveFor(m, current = null) {
   return { points, why: ends + " rolled off by " + ROLLOFF_DEPTH + " (Luma vs Sat)" };
 }
 
+// Skin, inside an HSL Secondary key (2026-09-16): the keyed pixels' hue onto the vectorscope's skin
+// line with HSL Tint (the hue knob inside the key - Temperature only warms), their saturation into the
+// canon's band with HSL Saturation. `m` is the measurement of the skin pixels (Vision's hand or face box
+// on the confirmed render); `from` is where the knobs are. null = already on the line.
+const SKIN_SAT_TARGET = 25;
+function skinFor(m, from = { tint: 0, saturation: 100 }) {
+  const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
+  const hueOff = hue < SKIN_HUE[0] || hue > SKIN_HUE[1], satOff = sat < SKIN_SAT[0] || sat > SKIN_SAT[1];
+  if (!hueOff && !satOff) return null;
+  const out = { tint: null, saturation: null, why: [], predicted: m };
+  let state = m;
+  if (hueOff) {
+    const t = solveKnob(m, "hslTint", from.tint, STATISTICS.skinHue, (SKIN_HUE[0] + SKIN_HUE[1]) / 2 + 2); // 123: the line's centre
+    if (t && t.helps) { out.tint = Math.round(t.value * 100) / 100; state = predict(m, "hslTint", from.tint, out.tint); out.why.push("hue " + round(hue) + "° → tint " + round(out.tint) + (t.partial ? " (as far as it goes: " + round(t.predicted) + "°)" : "")); }
+    else out.why.push("hue " + round(hue) + "° is beyond what HSL Tint reaches");
+  }
+  const satNow = STATISTICS.saturation(state);
+  if (satNow < SKIN_SAT[0] || satNow > SKIN_SAT[1]) {
+    const target = satNow < SKIN_SAT[0] ? SKIN_SAT_TARGET : SKIN_SAT[1] - 5;
+    const sv = solveKnob(state, "hslSaturation", from.saturation, STATISTICS.saturation, target);
+    if (sv && sv.helps) { out.saturation = Math.round(sv.value * 100) / 100; state = predict(state, "hslSaturation", from.saturation, out.saturation); out.why.push("saturation " + round(satNow) + " → " + round(out.saturation) + (sv.partial ? " (as far as it goes)" : "")); }
+  }
+  if (out.tint === null && out.saturation === null) return null;
+  out.predicted = state;
+  return out;
+}
+
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
