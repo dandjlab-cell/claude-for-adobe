@@ -65,6 +65,21 @@ function skinKeyFrom(rgb, width, height, boxes, { minPixels = 200, tight = false
   return { key, text: formatKey(key), pixels: H.length, share: Math.round((H.length / Math.max(1, inBoxes)) * 1000) / 10 };
 }
 
+// What share of a frame a key would light, by this file's HSL (inside every axis's outer range; the
+// feather is ignored). Premiere's own mask lit 3-4% where this said 8% on the C227 frames (14:02):
+// within the spill rule's margin, and it needs no render - the mask view reaches an export only on
+// Premiere's own schedule. `step` subsamples pixels.
+function keyCoverage(rgb, key, step = 4) {
+  const inAx = (v, [c, , o], wrap) => { let d = Math.abs(v - c); if (wrap) d = Math.min(d, 1 - d); return d <= o; };
+  let n = 0, lit = 0;
+  for (let i = 0; i + 2 < rgb.length; i += 3 * step) {
+    n++;
+    const [h, sat, l] = hsl(rgb[i], rgb[i + 1], rgb[i + 2]);
+    if (inAx(h, key.H, true) && inAx(sat, key.S, false) && inAx(l, key.L, false)) lit++;
+  }
+  return n ? lit / n : 0;
+}
+
 // The QE text: "H:c,i,o;S:c,i,o;L:c,i,o", dots, two decimals.
 function formatKey(key) {
   const f = (n) => Math.max(0, Math.min(1, n)).toFixed(2);
@@ -85,4 +100,4 @@ function keyedPixels(rgb) {
   return { rgb: out.subarray(0, n), share: Math.round((n / 3) / (rgb.length / 3) * 10000) / 100 };
 }
 
-module.exports = { hsl, skinKeyFrom, formatKey, keyedPixels, spills, EMPTY_KEY, PRIOR, SAT_FLOOR };
+module.exports = { hsl, skinKeyFrom, formatKey, keyedPixels, keyCoverage, spills, EMPTY_KEY, PRIOR, SAT_FLOOR };

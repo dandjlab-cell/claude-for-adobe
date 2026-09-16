@@ -19,7 +19,7 @@ const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATIS
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve } = require(path.join(extensionRoot, "src", "curves.cjs"));
-const { skinKeyFrom, keyedPixels, spills: skinSpills, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
+const { skinKeyFrom, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
@@ -704,8 +704,9 @@ function skinKeyFor(src, vision, opts = {}) {
     }
     const all = Buffer.concat(crops);
     const k = skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }], opts);
-    // What share of the frame the key should light: the skin pixels it was learned from, as a frame fraction.
-    return k && Object.assign(k, { masked: !!person, expected: boxPixels ? k.pixels / boxPixels * boxArea : 0 });
+    // What share of the frame the key should light: the skin pixels it was learned from, as a frame fraction;
+    // and what it would light by this file's own HSL over the whole frame (the mask view's stand-in).
+    return k && Object.assign(k, { masked: !!person, expected: boxPixels ? k.pixels / boxPixels * boxArea : 0, estimated: skinKeyCoverage(decodeRgb(src), k.key) });
   } catch (_) { return null; }
   finally { if (person) { try { fs.rmSync(person.mask, { force: true }); } catch (_) {} } }
 }
@@ -1280,18 +1281,19 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                   // the plain picture as "100% keyed" on every clip (13:15, 13:56, 14:12 even after 0.9 s), while
                   // the same key by hand read 3-4% because that scopes call moved the playhead there fresh. So the
                   // playhead is nudged off the frame first; a whole-frame read is still retried once.
-                  let cov = null;
+                  let cov = null, estimated = false;
                   try {
                     for (let t = 0; t < 2 && cov === null; t++) {
                       try { await host("playhead", String(Math.round((at + 0.5 * (t + 1)) * 254016000000))); } catch (_) {}
-                      await new Promise((r) => setTimeout(r, t ? 600 : 200));
+                      await new Promise((r) => setTimeout(r, t ? 3000 : 1500));
                       const mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++;
                       const c = mv && mv.region === "keyed" ? mv.coverage : 0;
                       if (c < 0.98) cov = c;
                     }
                   } finally { await hw.showMask(false); }
-                  if (cov === null) { maskFail = "the mask view read as the whole frame twice (Show Mask did not reach the render): spill unchecked"; break; }
-                  spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
+                  // No mask view: the key's coverage by this file's own HSL on the confirmed frame stands in.
+                  if (cov === null) { const est = pass === 0 ? key.estimated : skinKeyCoverage(decodeRgb(src1), (skinKeyFor(src1, vis, { tight: true }) || key).key); cov = est; estimated = true; maskFail = "mask view unread (Show Mask did not reach the render): spill estimated at " + round2(est * 100) + "%"; }
+                  spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame" + (estimated ? " (estimated)" : "") + " against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
                   // The mirror check: a key that lights well under the skin it was learned from grades half an arm
                   // (the owner's eyedropper key, 13:30: its lightness topped at 0.50 on a brighter graded arm).
                   thin = !spill && key.expected > 0 && cov < 0.5 * key.expected ? "thin key: lights " + round2(cov * 100) + "% of the frame, the boxes hold about " + round2(key.expected * 100) + "% skin" : null;
@@ -1317,6 +1319,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                     const k = (target - hue0) / (hueAfter - hue0);
                     if (k < 0) { pad2 = { hue: sk.pad.hue, sat: 0 }; notes.push("the pad turned the hue the wrong way (" + hue0.toFixed(1) + " → " + hueAfter + "°): off"); }
                     else { pad2 = { hue: sk.pad.hue, sat: Math.round(Math.min(GRADE_HSL_PAD.cap, sk.pad.sat * k) * 1000) / 1000 }; notes.push("pad " + sk.pad.sat.toFixed(2) + " → " + pad2.sat.toFixed(2) + " (hue read " + hueAfter + "°)"); }
+                  }
+                  // A saturation boost on near-grey skin swings its hue (C222, 14:12 and 14:21: in the band before,
+                  // 136.9 deg after Saturation 198): with no pad written, one is solved from the confirmed read.
+                  if (!sk.pad && (hueAfter < GRADE_SKIN_HUE[0] || hueAfter > GRADE_SKIN_HUE[1])) {
+                    const sk2 = gradeSkinFor(after);
+                    if (sk2 && sk2.pad) { pad2 = sk2.pad; notes.push("the saturation move swung the hue to " + hueAfter + "°: Midtones pad " + round2(pad2.hue) + "°/" + pad2.sat.toFixed(2)); }
                   }
                   // The same secant on HSL Saturation: the gain is one number from two hands (14:12).
                   const sat0 = skinNow.saturation.p50;

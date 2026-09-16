@@ -41,6 +41,15 @@ test("a tight key sits inside the loose one; the loose one reaches past the pixe
   assert.equal(spills(0.137, 0.063), false, "C227: skin and some oak");
 });
 
+test("a key's coverage in software: the skin it was learned from lights, a grey wall does not", () => {
+  const { keyCoverage } = require("../src/skin.cjs");
+  const w = 40, h = 40, rgb = Buffer.alloc(w * h * 3);
+  for (let i = 0; i < w * h; i++) { const skin = i < w * h / 2; rgb[i * 3] = skin ? 200 : 120; rgb[i * 3 + 1] = skin ? 150 : 120; rgb[i * 3 + 2] = skin ? 120 : 122; }
+  const k = skinKeyFrom(rgb, w, h, [{ x0: 0, y0: 0, x1: 1, y1: 0.5 }], { minPixels: 50 });
+  const cov = keyCoverage(rgb, k.key, 1);
+  assert.ok(cov > 0.45 && cov < 0.55, "half the frame is the skin: " + cov);
+});
+
 test("the mask view's grey is dropped, everything else is the selection", () => {
   const k = keyedPixels(Buffer.from([184, 184, 184, 183, 185, 184, 200, 150, 120, 10, 10, 10]));
   assert.equal(k.rgb.length / 3, 2);
