@@ -18,35 +18,41 @@ function hsl(r, g, b) {
 const PRIOR = { hueMax: 0.14, sat: [0.10, 0.75], light: [0.15, 0.85] };
 
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * p)))];
-// One axis: plateau = p5..p95, feather = p1..p99 widened by `margin` (tight: p25..p75 / p10..p90, no
-// margin, for a key that spilled), as centre / inner / outer; hue is unwrapped around 0 first. `floor`
-// cuts the low edge (saturation: below 0.18 the key takes the room's greys and beiges with the hand -
-// C223, 2026-09-16). The margin is Premiere's: a key at the pixels' own p2-p98 lit 3-4% of the frame
-// where the hands were 5-6% and patchy in the mask view (14:02, "it could have gone farther") - Lumetri's
-// H/S/L are not this file's HSL to the decimal.
-function axis(values, wrap, tight = false, floor = -Infinity, margin = 0) {
-  const v = values.map((x) => (wrap && x > 0.5 ? x - 1 : x)).sort((a, b) => a - b);
-  const [pa, pb] = tight ? [0.25, 0.10] : [0.05, 0.01];
-  const m = tight ? 0 : margin;
-  const lo = pct(v, pa) - m / 2, hi = pct(v, 1 - pa) + m / 2, lo2 = Math.max(floor, pct(v, pb) - m), hi2 = pct(v, 1 - pb) + m;
-  // Symmetric about the feather's centre (the text has one centre), the plateau as wide as fits both its edges.
-  let centre = (lo2 + hi2) / 2, outer = Math.max(0.03, (hi2 - lo2) / 2), inner = Math.max(0.01, Math.min(outer - 0.02, hi - centre, centre - lo));
-  if (wrap && centre < 0) centre += 1;
-  return [centre, inner, outer].map((n) => Math.round(n * 1000) / 1000);
-}
-const SAT_FLOOR = 0.18;
-const MARGIN = { H: 0.01, S: 0.04, L: 0.04 };
 
-// The mask view against Vision's boxes: a key that lights up much more of the frame than the boxes cover
-// has taken the room (C223: the whole kitchen went pink). coverage and boxShare are frame fractions.
-// Some spill is an HSL key's nature (the owner, 13:50: skin picks up colours like it, "normal"): on the
-// oak a hand key lights about twice its boxes, the kitchen's cream cabinets take a tightened face key to
-// 18% from a 3% face. A small pad moves that spill a point or two; a key past 3x the boxes + 10% is the room.
+// How a colourist actually builds a skin key (researched 2026-09-16 from Adobe's own Lumetri procedure,
+// Resolve's qualifier guidance, Cullen Kelly via Frame.io, Cine Source, Larry Jordan):
+//
+//  - The eyedropper is a SEED, not the key. "Sampling will always leave you with an overly-narrow
+//    selection" (Kelly). Our percentile key was that mistake with extra decimals: it caught the rims of
+//    two hands and nothing else (the owner's mask, 14:50).
+//  - Hue and saturation are the two axes that matter; brightness is "a distant third". Standard practice
+//    is to key on hue, or hue and saturation, and leave LIGHTNESS FULLY OPEN.
+//  - The hue range is deliberately wide, taking in the neighbouring yellows and magentas. No source
+//    publishes a width; the skin line itself spans 116-126 deg across implementations, so +-25-30 deg is
+//    the defensible machine default and narrowing is a response to contamination, not a starting point.
+//  - Saturation is opened at the BOTTOM (pale skin is near grey) and bounded only at the top, which is
+//    the one control that rejects a same-hue wall or a red sleeve.
+//  - Refine (Denoise, Blur) comes BEFORE any correction: it is the documented fix for a chattering,
+//    speckled key, and a loose blurred key beats a tight hard one, which bands.
+// The mask against Vision's boxes: a key that lights far more of the frame than the boxes cover has taken
+// the room (a kitchen's cream cabinets, 12:18). Some spill is an HSL key's nature - it is meant to be wide.
 const spills = (coverage, boxShare) => coverage > 3 * boxShare + 0.10;
 
+const HUE_INNER = 0.05, HUE_OUTER = 0.083;   // about +-18 deg plateau, +-30 deg feather
+const SAT_FLOOR = 0.02, SAT_HEADROOM = 0.12; // open at the bottom, a little headroom over the skin found
+const OPEN = [0.5, 0.5, 0.5];                // an axis that selects everything
+
+// The circular median of hue values unwrapped around red.
+function hueCentre(H) {
+  const v = H.map((x) => (x > 0.5 ? x - 1 : x)).sort((a, b) => a - b);
+  let c = pct(v, 0.5);
+  return c < 0 ? c + 1 : c;
+}
+
 // rgb: packed RGB24; boxes: [{x0,y0,x1,y1}] as frame fractions (Vision's). Returns { key, text, pixels, share }
-// or null when the boxes hold too few skin-like pixels to trust.
-function skinKeyFrom(rgb, width, height, boxes, { minPixels = 200, tight = false } = {}) {
+// or null when the boxes hold too few skin-like pixels to trust. `satCeiling` (0..1) narrows the one axis
+// that rejects contamination; every other axis stays as wide as the method says.
+function skinKeyFrom(rgb, width, height, boxes, { minPixels = 200, satCeiling = null } = {}) {
   const H = [], S = [], L = [];
   let inBoxes = 0;
   for (const b of boxes || []) {
@@ -61,8 +67,45 @@ function skinKeyFrom(rgb, width, height, boxes, { minPixels = 200, tight = false
     }
   }
   if (H.length < minPixels) return null;
-  const key = { H: axis(H, true, tight, -Infinity, MARGIN.H), S: axis(S, false, tight, SAT_FLOOR, MARGIN.S), L: axis(L, false, tight, -Infinity, MARGIN.L) };
-  return { key, text: formatKey(key), pixels: H.length, share: Math.round((H.length / Math.max(1, inBoxes)) * 1000) / 10 };
+  const sorted = S.slice().sort((a, b) => a - b);
+  const hi = Math.min(1, satCeiling === null ? pct(sorted, 0.98) + SAT_HEADROOM : satCeiling);
+  const lo = Math.min(SAT_FLOOR, hi - 0.05);
+  const sInner = Math.max(0.01, (hi - lo) / 2 * 0.7);
+  const key = {
+    H: [Math.round(hueCentre(H) * 1000) / 1000, HUE_INNER, HUE_OUTER],
+    S: [Math.round((lo + hi) / 2 * 1000) / 1000, Math.round(sInner * 1000) / 1000, Math.round((hi - lo) / 2 * 1000) / 1000],
+    L: OPEN,
+  };
+  return { key, text: formatKey(key), pixels: H.length, share: Math.round((H.length / Math.max(1, inBoxes)) * 1000) / 10, satCeiling: Math.round(hi * 1000) / 1000 };
+}
+
+// The method's wide key is the START, not the answer: on a wooden table the oak shares skin's hue and
+// saturation, and the wide key lit 98% of the frame (measured 15:10 on three sandbox frames). Adobe's own
+// remedy is to narrow the range that is letting the room in, watching the mask - so that is what this does,
+// with the mask computed rather than eyeballed. Each axis is narrowed a step at a time, always the step
+// that costs the least skin for the most background removed, until the key is inside the spill rule or too
+// little skin is left to correct (then the caller skips this clip). Lightness is narrowed only last: it is
+// "a distant third" for skin, but on a bright table it is the one axis that separates.
+function refineKey(key, skinPixels, framePixels, boxShare, { minKeep = 0.7, steps = 14 } = {}) {
+  const shrink = { H: [0.004, 0.006], S: [0.02, 0.03], L: [0.05, 0.07] };
+  let cur = { H: [...key.H], S: [...key.S], L: [...key.L] };
+  const cover = (k, px) => keyCoverage(px, k, 1);
+  let kept = cover(cur, skinPixels), lit = cover(cur, framePixels), narrowed = [];
+  for (let step = 0; step < steps && spills(lit, boxShare); step++) {
+    let best = null;
+    for (const ax of ["H", "S", "L"]) {
+      const [di, doo] = shrink[ax], next = { ...cur, [ax]: [cur[ax][0], Math.max(0.01, cur[ax][1] - di), Math.max(0.02, cur[ax][2] - doo)] };
+      if (next[ax][2] <= 0.03) continue;
+      const k2 = cover(next, skinPixels), l2 = cover(next, framePixels);
+      if (k2 < minKeep) continue;
+      const gain = (lit - l2) / Math.max(0.001, kept - k2 + 0.001); // background removed per skin lost
+      if (!best || gain > best.gain) best = { ax, next, kept: k2, lit: l2, gain };
+    }
+    if (!best) break;
+    cur = best.next; kept = best.kept; lit = best.lit;
+    if (!narrowed.includes(best.ax)) narrowed.push(best.ax);
+  }
+  return { key: cur, text: formatKey(cur), keeps: Math.round(kept * 1000) / 10, lights: Math.round(lit * 1000) / 10, narrowed, ok: !spills(lit, boxShare) && kept >= minKeep };
 }
 
 // What share of a frame a key would light, by this file's HSL (inside every axis's outer range; the
@@ -100,4 +143,9 @@ function keyedPixels(rgb) {
   return { rgb: out.subarray(0, n), share: Math.round((n / 3) / (rgb.length / 3) * 10000) / 100 };
 }
 
-module.exports = { hsl, skinKeyFrom, formatKey, keyedPixels, keyCoverage, spills, EMPTY_KEY, PRIOR, SAT_FLOOR };
+// Refine, before any correction (Adobe: Denoise "smooths colors and removes noise from the selection";
+// Blur "softens the edges of the mask to blend the selection"; Resolve's typical matte blur is 2-4 px).
+// The sliders' units are not published; these are a first pass on a 0-100 scale and the mask check judges them.
+const REFINE = { denoise: 10, blur: 15 };
+
+module.exports = { hsl, skinKeyFrom, refineKey, formatKey, keyedPixels, keyCoverage, spills, EMPTY_KEY, PRIOR, SAT_FLOOR, REFINE, HUE_INNER, HUE_OUTER };

@@ -19,7 +19,7 @@ const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATIS
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve } = require(path.join(extensionRoot, "src", "curves.cjs"));
-const { skinKeyFrom, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
+const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
 const { FFMPEG } = require(path.join(extensionRoot, "src", "media.cjs"));
@@ -706,7 +706,10 @@ function skinKeyFor(src, vision, opts = {}) {
     const k = skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }], opts);
     // What share of the frame the key should light: the skin pixels it was learned from, as a frame fraction;
     // and what it would light by this file's own HSL over the whole frame (the mask view's stand-in).
-    return k && Object.assign(k, { masked: !!person, expected: boxPixels ? k.pixels / boxPixels * boxArea : 0, estimated: skinKeyCoverage(decodeRgb(src), k.key) });
+    if (!k) return null;
+    // The wide key is the seed; refineKey narrows it against this frame, always the step that costs the
+    // least skin for the most background, until it is inside the spill rule or too little skin is left.
+    return Object.assign(k, skinRefineKey(k.key, all, decodeRgb(src), boxArea), { masked: !!person, boxShare: boxArea });
   } catch (_) { return null; }
   finally { if (person) { try { fs.rmSync(person.mask, { force: true }); } catch (_) {} } }
 }
@@ -853,7 +856,7 @@ async function writeGradeState(at, track, region, s) {
   if (s.curves) await curveWriter(at, track).write(s.curves);
   await satWriter(at, track).write(s.sat || []);
   for (const [p, v] of Object.entries(s.sliders || {})) if (GRADE_PARAMS[p] && isFinite(v)) await lumetriWriter(at, track, GRADE_PARAMS[p].lumetri, region).set(v);
-  if (s.hsl) { const h = hslWriter(at, track); await h.writeKey(s.hsl.key || EMPTY_HSL_KEY); await h.correction(hslPadText(s.hsl.pad)); if (isFinite(s.hsl.saturation)) await h.saturation(s.hsl.saturation); }
+  if (s.hsl) { const h = hslWriter(at, track); await h.writeKey(s.hsl.key || EMPTY_HSL_KEY); if (s.hsl.refine) { await h.denoise(s.hsl.refine.denoise); await h.blur(s.hsl.refine.blur); } await h.correction(hslPadText(s.hsl.pad)); if (isFinite(s.hsl.saturation)) await h.saturation(s.hsl.saturation); }
 }
 // The key's colour wheels as QE text (Round 253): the Midtones pad alone carries the skin rotation.
 const hslPadText = (pad) => "Shadows:0.00,0.00,0.50;Midtones:" + (pad && pad.sat > 0 ? pad.hue.toFixed(2) + "," + pad.sat.toFixed(3) : "0.00,0.000") + ",0.50;Highlights:0.00,0.00,0.50";
@@ -1275,27 +1278,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 // The mask view against Vision's boxes before anything is corrected: a key that has taken the
                 // room (C223, 12:18: the whole kitchen went pink) is tightened once, else skin is skipped here.
                 const boxShare = boxes.reduce((sum, b) => sum + Math.max(0, b.box[2] - b.box[0]) * Math.max(0, b.box[3] - b.box[1]), 0);
-                // No tightening pass any more: the tightened key caught the rims of the hands and nothing else,
-                // and a rim is the worst thing to colour (14:50). A key that spills is skipped, and so is a key
-                // that lights far less than the skin it was learned from - a thin key grades an outline.
-                let keyText = key.text, spill = null, thin = null;
-                {
-                  await hw.writeKey(keyText);
-                  // The coverage is computed here, from the key over the confirmed frame, not from Lumetri's mask
-                  // view: four runs (13:15 through 14:41) never got the mask into an export, however long the pass
-                  // waited or wherever the playhead was, and it cost two renders and 4.5 s a clip. Premiere's own
-                  // mask lit 3-4% where this estimate said 8% (14:02) - inside the rule's margin.
-                  const cov = key.estimated;
-                  spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
-                  // The mirror check: a key that lights well under the skin it was learned from grades half an arm
-                  // (the owner's eyedropper key, 13:30: its lightness topped at 0.50 on a brighter graded arm).
-                  thin = !spill && key.expected > 0 && cov < 0.5 * key.expected ? "the key lights " + round2(cov * 100) + "% of the frame where the " + skinRegion + " hold about " + round2(key.expected * 100) + "% skin: it would colour an outline" : null;
-                }
-                if (spill || thin) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: " + (spill || thin) + " (key " + keyText + "); skipped on this clip"); }
+                // The key is built AND judged before anything is written (skinKeyFor + refineKey): the mask
+                // view never reached an export in four runs, so its stand-in is the key's own coverage of the
+                // confirmed frame, which matched Lumetri's mask inside the rule's margin by hand (14:02).
+                const keyText = key.text, spill = !key.ok;
+                if (spill) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: no key separates the " + skinRegion + " from the rest of this frame - the widest key that still holds " + key.keeps + "% of the skin also lights " + key.lights + "% of the picture, where the " + skinRegion + " cover " + round2(key.boxShare * 100) + "%: the surroundings share skin's colour here; skipped on this clip"); }
                 else {
+                  await hw.denoise(SKIN_REFINE.denoise); await hw.blur(SKIN_REFINE.blur); // Refine before correcting
                   await hw.correction(hslPadText(sk.pad));
                   if (sk.saturation !== null) await hw.saturation(sk.saturation);
-                  hsl = { key: keyText, pad: sk.pad, saturation: sk.saturation === null ? 100 : sk.saturation };
+                  hsl = { key: keyText, pad: sk.pad, saturation: sk.saturation === null ? 100 : sk.saturation, refine: SKIN_REFINE };
                   let after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
                   let hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10, satAfter = round2(after.saturation.p50);
                   const hue0 = GRADE_STATS.skinHue(skinNow), target = GRADE_SKIN_HUE_TARGET;
@@ -1345,7 +1337,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                     hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
                   }
                   const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (key.masked ? "" : " (no person mask: boxes alone)") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + " (holds " + key.keeps + "% of the skin, lights " + key.lights + "% of the frame" + (key.narrowed.length ? ", narrowed on " + key.narrowed.join("/") : "") + ")" + (key.masked ? "" : " (no person mask: boxes alone)") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
                   state = after.frame ? { ...after.frame, region: "frame" } : state;
                 }
               }

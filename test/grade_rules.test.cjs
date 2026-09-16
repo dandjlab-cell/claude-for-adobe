@@ -165,8 +165,9 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // 12:54: the key's Midtones wheel carries the skin rotation; the mask view is checked against Vision's
   // boxes first, and a key that took the room is tightened once, else skin is skipped on that clip.
   assert.match(panel, /const SKIN_WRITE = true;/, "skin writes are on");
-  assert.ok(seqTool.indexOf("skinSpills(cov, boxShare)") > 0 && seqTool.indexOf("skinSpills(cov, boxShare)") < seqTool.indexOf("await hw.correction(hslPadText(sk.pad));"), "the spill check runs before the wheel is written");
-  assert.match(seqTool, /if \(spill \|\| thin\) \{ await hw\.writeKey\(EMPTY_HSL_KEY\);/, "a key that spills or catches only an outline is emptied, not graded");
+  assert.ok(seqTool.indexOf("const keyText = key.text, spill = !key.ok;") > 0 && seqTool.indexOf("const keyText = key.text, spill = !key.ok;") < seqTool.indexOf("await hw.correction(hslPadText(sk.pad));"), "the key is judged before the wheel is written");
+  assert.match(seqTool, /await hw\.denoise\(SKIN_REFINE\.denoise\); await hw\.blur\(SKIN_REFINE\.blur\);/, "Refine is written before any correction");
+  assert.match(seqTool, /if \(spill\) \{ await hw\.writeKey\(EMPTY_HSL_KEY\); needs\.push\("skin: no key separates/, "when no key separates the skin from the room, nothing is written and the row says so");
   assert.match(panel, /await h\.correction\(hslPadText\(s\.hsl\.pad\)\);/, "a matched cut takes the reference's wheel too");
   assert.doesNotMatch(seqTool, /hw\.tint\(/, "HSL Tint is never written for skin (a magenta wash, 12:21)");
   assert.match(seqTool, /readable\[Math\.floor\(\(readable\.length - 1\) \/ 2\)\]/, "a source cut more than once is graded from its median-whites cut");
