@@ -637,25 +637,13 @@ async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPla
 // Returns the measurement plus what was actually measured, since a region can fall back to the frame.
 function measureRegion(src, region, reuse = null) {
   const frame = measureScopes(decodeRgb(src));
+  frame.src = src; // the exported PNG: the skin step decodes it again for Vision's boxes
   // A region fixed by an earlier read (its box, as frame fractions): the same pixels, whatever Vision
   // would say about this render. Precision of a box against a mask is a fair trade for consistency.
   if (reuse && reuse.box && region !== "frame") return Object.assign(measureScopes(decodeRgb(src, reuse.box)), { region, box: reuse.box, reused: true, frame });
   // A region reading always carries the whole-frame numbers too (`frame`): clipping and crushing are
   // judged on the frame, because pushing a small subject up blows the room behind it.
   const vision = region === "frame" ? null : visionAll(src);
-  // The skin key learned from the hand and face boxes on this very frame (src/skin.cjs), for HSL Secondary:
-  // each box is decoded as its own crop, so no frame geometry is needed - the crop IS the box.
-  let skinKey = null;
-  if (vision) {
-    const boxes = [...((vision.faces || []).map((f) => f.box)), ...((vision.hands || []).map((h) => h.box))].map((b) => ({ x0: b[0], y0: b[1], x1: b[2], y1: b[3] }));
-    if (boxes.length) {
-      try {
-        const crops = boxes.map((b) => decodeRgb(src, b)), all = Buffer.concat(crops);
-        skinKey = skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }]);
-      } catch (_) { skinKey = null; }
-    }
-  }
-  frame.src = src; frame.skinKey = skinKey;
   // "keyed": the frame is Lumetri's HSL Secondary mask view (Show Mask on) - the selected pixels alone.
   if (region === "keyed") {
     const k = keyedPixels(decodeRgb(src));
@@ -695,6 +683,13 @@ function visionAll(file) {
     const v = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
     return v && !v.error ? v : null;
   } catch (_) { return null; }
+}
+// The skin key learned from the hand and face boxes on one exported frame (src/skin.cjs): each box is
+// decoded as its own crop, so no frame geometry is needed - the crop IS the box.
+function skinKeyFor(src, vision) {
+  const boxes = vision ? [...((vision.faces || []).map((f) => f.box)), ...((vision.hands || []).map((h) => h.box))].map((b) => ({ x0: b[0], y0: b[1], x1: b[2], y1: b[3] })) : [];
+  if (!boxes.length) return null;
+  try { const all = Buffer.concat(boxes.map((b) => decodeRgb(src, b))); return skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }]); } catch (_) { return null; }
 }
 function subjectMask(file) {
   let entry = null;
@@ -1228,12 +1223,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       //    band, one confirm read on the hand/face box. Only when Vision saw skin; never on a matched cut
       //    (the reference's HSL state is copied).
       if (confirm && !ref) {
-        const f1s = state.frame || state, vis = f1s.vision, key = f1s.skinKey;
+        const f1s = state.frame || state, src1 = f1s.src || (state.src);
+        const vis = src1 ? (f1s.vision || visionAll(src1)) : null, key = vis && src1 ? skinKeyFor(src1, vis) : null;
         const boxes = vis ? [...((vis.faces || [])), ...((vis.hands || []))] : [];
-        if (boxes.length && key && f1s.src) {
+        if (boxes.length && key && src1) {
           try {
             const skinRegion = vis.faces && vis.faces.length ? "face" : "hands";
-            const skinNow = measureRegion(f1s.src, skinRegion);
+            const skinNow = measureRegion(src1, skinRegion);
             if (skinNow.region === skinRegion) {
               const sk = gradeSkinFor(skinNow);
               const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
@@ -1248,7 +1244,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 const hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10, satAfter = round2(after.saturation.p50);
                 const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
                 parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + key.text + " → " + sk.why.join(", ") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
-                state = Object.assign(after.frame ? { ...after.frame, region: "frame" } : state, { vision: f1s.vision, skinKey: key, src: f1s.src });
+                state = after.frame ? { ...after.frame, region: "frame" } : state;
               }
             }
           } catch (error) { needs.push("skin: " + error.message); }
