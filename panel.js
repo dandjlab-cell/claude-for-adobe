@@ -1272,12 +1272,22 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 // The mask view against Vision's boxes before anything is corrected: a key that has taken the
                 // room (C223, 12:18: the whole kitchen went pink) is tightened once, else skin is skipped here.
                 const boxShare = boxes.reduce((sum, b) => sum + Math.max(0, b.box[2] - b.box[0]) * Math.max(0, b.box[3] - b.box[1]), 0);
-                let keyText = key.text, spill = null, thin = null;
+                let keyText = key.text, spill = null, thin = null, maskFail = null;
                 for (let pass = 0; pass < 2; pass++) {
                   await hw.writeKey(keyText); await hw.showMask(true);
-                  let mv = null;
-                  try { mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++; } finally { await hw.showMask(false); }
-                  const cov = mv && mv.region === "keyed" ? mv.coverage : 0;
+                  // Show Mask is a view toggle through the DOM, not a QE parameter: an export a few ms after it
+                  // read the plain picture as "100% keyed" on every clip (13:15, 13:56), while the same key by hand
+                  // read 3-4% seconds later. Settle, and a whole-frame read is a mask that did not render: once more.
+                  let cov = null;
+                  try {
+                    for (let t = 0; t < 2 && cov === null; t++) {
+                      await new Promise((r) => setTimeout(r, t ? 900 : 400));
+                      const mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++;
+                      const c = mv && mv.region === "keyed" ? mv.coverage : 0;
+                      if (c < 0.98) cov = c;
+                    }
+                  } finally { await hw.showMask(false); }
+                  if (cov === null) { maskFail = "the mask view read as the whole frame twice (Show Mask did not reach the render): spill unchecked"; break; }
                   spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
                   // The mirror check: a key that lights well under the skin it was learned from grades half an arm
                   // (the owner's eyedropper key, 13:30: its lightness topped at 0.50 on a brighter graded arm).
@@ -1318,7 +1328,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                     hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
                   }
                   const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + (key.masked ? "" : " (no person mask: boxes alone)") + (thin ? " (" + thin + ")" : "") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + (key.masked ? "" : " (no person mask: boxes alone)") + (thin ? " (" + thin + ")" : "") + (maskFail ? " (" + maskFail + ")" : "") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
                   state = after.frame ? { ...after.frame, region: "frame" } : state;
                 }
               }
