@@ -163,4 +163,19 @@ function satRolloff({ shadows = true, whites = true, depth = ROLLOFF_DEPTH } = {
   return [...low, [0.25, 0], [0.5, 0], [0.75, 0], ...high].map(([x, y]) => [x, Math.round(y * 100) / 100]);
 }
 
-module.exports = { NAMES, IDENTITY, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
+// A Hue vs Hue nudge on skin: a bump centred on the skin's own hue that returns to zero on either side,
+// so nothing else in the picture rotates. The colourists' hierarchy puts this ABOVE an HSL qualifier
+// ("Primaries, Custom curves, Hue vs Hue curves, HSL qualifier using as few parameters as possible" -
+// Cullen Kelly via Frame.io; "the HSL curves are some of the most powerful tools in Lumetri" - R Neil
+// Haugen), and it is the whole answer to a key that cannot separate skin from a wooden table: a curve
+// needs no key at all. `centre` is the skin's hue 0..1, `shift` the signed offset at the peak, `width`
+// the half-width in hue units; the zeros pin the spline so the bump does not bow into the neighbours.
+const HUE_BUMP_WIDTH = 0.08;
+function hueBump(centre, shift, width = HUE_BUMP_WIDTH) {
+  if (!isFinite(centre) || !isFinite(shift) || Math.abs(shift) < 0.001) return [];
+  const wrap = (x) => (x < 0 ? x + 1 : x > 1 ? x - 1 : x);
+  const pts = [[wrap(centre - 2 * width), 0], [wrap(centre - width), 0], [wrap(centre), shift], [wrap(centre + width), 0], [wrap(centre + 2 * width), 0]];
+  return pts.sort((a, b) => a[0] - b[0]);
+}
+
+module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };

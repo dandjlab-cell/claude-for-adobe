@@ -18,7 +18,7 @@ const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, mask
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
-const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve } = require(path.join(extensionRoot, "src", "curves.cjs"));
+const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
@@ -847,6 +847,19 @@ function satWriter(at, track) {
   return { read: () => call(""), write: (points) => call(formatSatCurve(points)) };
 }
 
+// Hue vs Hue, the same door: the colourists' tool of choice for skin, and the only one an automatic pass
+// can reach - Adobe's own engineer on masks: "There is no supported ExtendScript API to either apply
+// effects, or modify masks", and UXP's whole mask surface is hasObjectMask() (researched 15:30).
+function hueCurveWriter(at, track, name) {
+  const call = async (value) => {
+    const raw = await host("lumetriQE", String(at), String(track), name, value);
+    if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+    const [, text, clipName] = raw.split(COL);
+    return { points: parseSatCurve(text), text, clipName };
+  };
+  return { read: () => call(""), write: (points) => call(formatSatCurve(points)) };
+}
+
 // One Lumetri state (temperature, tint, wheels, curves, Luma vs Sat, the sliders) written to the clip at
 // one timeline position: how a later cut of a graded file takes the first cut's grade.
 async function writeGradeState(at, track, region, s) {
@@ -856,18 +869,22 @@ async function writeGradeState(at, track, region, s) {
   if (s.curves) await curveWriter(at, track).write(s.curves);
   await satWriter(at, track).write(s.sat || []);
   for (const [p, v] of Object.entries(s.sliders || {})) if (GRADE_PARAMS[p] && isFinite(v)) await lumetriWriter(at, track, GRADE_PARAMS[p].lumetri, region).set(v);
-  if (s.hsl) { const h = hslWriter(at, track); await h.writeKey(s.hsl.key || EMPTY_HSL_KEY); if (s.hsl.refine) { await h.denoise(s.hsl.refine.denoise); await h.blur(s.hsl.refine.blur); } await h.correction(hslPadText(s.hsl.pad)); if (isFinite(s.hsl.saturation)) await h.saturation(s.hsl.saturation); }
+  if (s.hsl && s.hsl.hueCurve) await hueCurveWriter(at, track, "Hue vs Hue").write(hueBump(s.hsl.hueCurve.centre, s.hsl.hueCurve.shift));
 }
 // The key's colour wheels as QE text (Round 253): the Midtones pad alone carries the skin rotation.
 const hslPadText = (pad) => "Shadows:0.00,0.00,0.50;Midtones:" + (pad && pad.sat > 0 ? pad.hue.toFixed(2) + "," + pad.sat.toFixed(3) : "0.00,0.000") + ",0.50;Highlights:0.00,0.00,0.50";
 
 function gradeStateSummary(s) {
   const pads = s.wheels ? Object.keys(s.wheels).filter((w) => s.wheels[w].sat > 0.005).map((w) => w + " " + round2(s.wheels[w].hue) + "°/" + round2(s.wheels[w].sat)) : [];
-  return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.hsl && s.hsl.pad ? ", skin pad " + round2(s.hsl.pad.hue) + "°/" + s.hsl.pad.sat.toFixed(2) : "") + (s.curves && s.curves.Master && s.curves.Master[0][0] > 0.005 ? ", curve black " + s.curves.Master[0][0].toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
+  return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.hsl && s.hsl.hueCurve ? ", skin hue curve " + s.hsl.hueCurve.shift.toFixed(3) + " at " + s.hsl.hueCurve.centre.toFixed(2) : "") + (s.curves && s.curves.Master && s.curves.Master[0][0] > 0.005 ? ", curve black " + s.curves.Master[0][0].toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
 }
 
 // Skin writes: the key's Midtones wheel, calibrated 2026-09-16 12:54 (HSL Tint was a wash toward magenta).
 const SKIN_WRITE = true;
+// The Hue vs Hue probe: a small first move (the curve's units are not degrees and its response is not
+// published), and a cap - a skin rotation is meant to be small, and "if the trace sits past the skin tone
+// line toward magenta, you've gone too far".
+const SKIN_HUE_PROBE = 0.02, SKIN_HUE_CAP = 0.12;
 // HSL Secondary: the key and its wheels ("Correction") through QE by name, the scalars and Show Mask by
 // property index.
 function hslWriter(at, track) {
@@ -1270,76 +1287,55 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           try {
             if (skinNow.region === skinRegion) {
               const sk = gradeSkinFor(skinNow, { saturation: 100 }, key.attenuation);
+              let after = skinNow;
               const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
               if (!sk) parts.push("skin: " + skinRegion + " on the line (hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + ")");
               else if (!SKIN_WRITE) parts.push("skin: " + boxes.length + " " + skinRegion + " hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + " (off the line; skin writes are off - nothing written)");
               else {
-                const hw = hslWriter(at, track);
-                // The mask view against Vision's boxes before anything is corrected: a key that has taken the
-                // room (C223, 12:18: the whole kitchen went pink) is tightened once, else skin is skipped here.
-                const boxShare = boxes.reduce((sum, b) => sum + Math.max(0, b.box[2] - b.box[0]) * Math.max(0, b.box[3] - b.box[1]), 0);
-                // The key is built AND judged before anything is written (skinKeyFor + refineKey): the mask
-                // view never reached an export in four runs, so its stand-in is the key's own coverage of the
-                // confirmed frame, which matched Lumetri's mask inside the rule's margin by hand (14:02).
-                const keyText = key.text, spill = !key.ok;
-                if (spill) { await hw.writeKey(EMPTY_HSL_KEY); needs.push("skin: no key separates the " + skinRegion + " from the rest of this frame - the widest key that still holds " + key.keeps + "% of the skin also lights " + key.lights + "% of the picture, where the " + skinRegion + " cover " + round2(key.boxShare * 100) + "%: the surroundings share skin's colour here; skipped on this clip"); }
-                else {
-                  await hw.denoise(SKIN_REFINE.denoise); await hw.blur(SKIN_REFINE.blur); // Refine before correcting
-                  await hw.correction(hslPadText(sk.pad));
-                  if (sk.saturation !== null) await hw.saturation(sk.saturation);
-                  hsl = { key: keyText, pad: sk.pad, saturation: sk.saturation === null ? 100 : sk.saturation, refine: SKIN_REFINE };
-                  let after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
-                  let hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10, satAfter = round2(after.saturation.p50);
-                  const hue0 = GRADE_STATS.skinHue(skinNow), target = GRADE_SKIN_HUE_TARGET;
-                  const notes = [];
-                  // One correction from the real move: the wheel was measured on one key, and another key's
-                  // pixels turn more or less per unit of pad. The pad's saturation is rescaled by what this
-                  // write actually rotated (the secant); a pad that turned the hue the wrong way comes off.
-                  // The wheel's strength varies about six-fold between keys (14:41: 55°/unit on one hand, 10° on
-                  // another), so the first write is a guess and the clip's own response is measured: rescale from
-                  // what it did, clamped, and go again until the hue is in the band or two tries are spent.
-                  let pad2 = null, sat2 = null, padNow = sk.pad, hueLast = hueAfter;
-                  for (let t = 0; t < 2 && padNow && (hueLast < GRADE_SKIN_HUE[0] || hueLast > GRADE_SKIN_HUE[1]); t++) {
-                    if (Math.abs(hueLast - hue0) <= 1) break;
-                    const k = (target - hue0) / (hueLast - hue0);
-                    if (k < 0) { pad2 = { hue: padNow.hue, sat: 0 }; notes.push("the pad turned the hue the wrong way (" + hue0.toFixed(1) + " → " + hueLast + "°): off"); break; }
-                    const next = { hue: padNow.hue, sat: Math.round(Math.max(0, Math.min(GRADE_HSL_PAD.cap, sk.pad.sat * Math.max(0.2, Math.min(5, k)))) * 1000) / 1000 };
-                    if (Math.abs(next.sat - padNow.sat) < 0.005) break;
-                    await hw.correction(hslPadText(next));
-                    const re = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
-                    const h2 = Math.round(GRADE_STATS.skinHue(re) * 10) / 10;
-                    notes.push("pad " + padNow.sat.toFixed(2) + " → " + next.sat.toFixed(2) + " (hue read " + hueLast + "° → " + h2 + "°)");
-                    padNow = next; pad2 = next; hueLast = h2; after = re; hueAfter = h2; satAfter = round2(re.saturation.p50);
+                // Hue vs Hue, not the HSL key: the colourists' own hierarchy puts a hue curve above a
+                // qualifier ("Primaries, Custom curves, Hue vs Hue curves, HSL qualifier using as few
+                // parameters as possible" - Cullen Kelly via Frame.io), and on this footage no key can
+                // separate a hand from an oak table anyway. The curve needs no key, no mask and no tracking:
+                // it rotates one slice of the hue wheel and leaves the rest of the picture alone. Masks were
+                // the other candidate and are unreachable - Adobe's engineer: "There is no supported
+                // ExtendScript API to either apply effects, or modify masks", and UXP's entire mask surface
+                // is hasObjectMask() (researched 15:30).
+                const hc = hueCurveWriter(at, track, "Hue vs Hue");
+                const centre = key.key.H[0];              // the skin's own hue, from Vision's boxes
+                const hue0 = GRADE_STATS.skinHue(skinNow), target = GRADE_SKIN_HUE_TARGET;
+                // The curve's units are not the vectorscope's degrees and the response is not published, so
+                // the first write is a deliberately small probe and the clip's own response lands it.
+                const notes = [];
+                let shift = hue0 > target ? -SKIN_HUE_PROBE : SKIN_HUE_PROBE, hueLast = hue0, best = 0;
+                for (let t = 0; t < 3; t++) {
+                  await hc.write(hueBump(centre, shift));
+                  const re = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                  const h2 = Math.round(GRADE_STATS.skinHue(re) * 10) / 10;
+                  notes.push("curve " + shift.toFixed(3) + " → " + h2 + "°");
+                  after = re; hueLast = h2; best = shift;
+                  if (h2 >= GRADE_SKIN_HUE[0] && h2 <= GRADE_SKIN_HUE[1]) break;
+                  if (Math.abs(h2 - hue0) <= 0.5) { // no response yet: double the probe
+                    shift = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, shift * 2));
+                    if (Math.abs(shift) >= SKIN_HUE_CAP) { notes.push("at the curve's cap"); break; }
+                    continue;
                   }
-                  // A saturation boost on near-grey skin swings its hue (C222, 14:12 and 14:21: in the band before,
-                  // 136.9 deg after Saturation 198): with no pad written, one is solved from the confirmed read.
-                  if (!sk.pad && (hueAfter < GRADE_SKIN_HUE[0] || hueAfter > GRADE_SKIN_HUE[1])) {
-                    const sk2 = gradeSkinFor(after);
-                    if (sk2 && sk2.pad) { pad2 = sk2.pad; notes.push("the saturation move swung the hue to " + hueAfter + "°: Midtones pad " + round2(pad2.hue) + "°/" + pad2.sat.toFixed(2)); }
-                  }
-                  // The same secant on HSL Saturation: the gain is one number from two hands (14:12).
-                  const sat0 = skinNow.saturation.p50;
-                  if (sk.saturation !== null && Math.abs(satAfter - sat0) > 1 && (satAfter < GRADE_SKIN_SAT[0] || satAfter > GRADE_SKIN_SAT[1])) {
-                    const satTarget = sat0 < GRADE_SKIN_SAT[0] ? GRADE_SKIN_SAT_TARGET : GRADE_SKIN_SAT[1] - 5, ks = (satTarget - sat0) / (satAfter - sat0);
-                    if (ks > 0) { sat2 = Math.round(Math.max(GRADE_HSL_SAT_RANGE[0], Math.min(GRADE_HSL_SAT_RANGE[1], 100 + (sk.saturation - 100) * ks)) * 100) / 100; notes.push("saturation " + round2(sk.saturation) + " → " + round2(sat2) + " (read " + satAfter + ")"); }
-                  }
-                  if (confirm && gradeUnsafe(gradeDamage(after), gradeAllowance(baseline))) {
-                    const h = gradeDamage(after);
-                    if (pad2 === null && sk.pad) { pad2 = { hue: sk.pad.hue, sat: Math.round(sk.pad.sat / 2 * 1000) / 1000 }; notes.push("pad halved to " + pad2.sat.toFixed(2)); }
-                    if (sk.saturation !== null) { sat2 = Math.round((100 + ((sat2 === null ? sk.saturation : sat2) - 100) / 2) * 100) / 100; notes.push("saturation halved to " + sat2); }
-                    notes.push("the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "%");
-                  }
-                  if (pad2 !== null || sat2 !== null) {
-                    if (pad2 !== null) { await hw.correction(hslPadText(pad2)); hsl.pad = pad2.sat > 0 ? pad2 : null; }
-                    else if (hsl.pad && padNow) hsl.pad = padNow.sat > 0 ? padNow : null;
-                    if (sat2 !== null) { await hw.saturation(sat2); hsl.saturation = sat2; }
-                    after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
-                    hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
-                  }
-                  const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + " (holds " + key.keeps + "% of the skin, lights " + key.lights + "% of the frame" + (key.narrowed.length ? ", narrowed on " + key.narrowed.join("/") : "") + ")" + (key.masked ? "" : " (no person mask: boxes alone)") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
-                  state = after.frame ? { ...after.frame, region: "frame" } : state;
+                  const k = (target - hue0) / (h2 - hue0);
+                  const next = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, shift * Math.max(-2, Math.min(5, k))));
+                  if (Math.abs(next - shift) < 0.002) break;
+                  shift = next;
                 }
+                // A move that made it worse is not kept: the curve goes back to empty.
+                if (Math.abs(hueLast - target) > Math.abs(hue0 - target)) {
+                  await hc.write([]); best = 0;
+                  notes.push("it read " + hueLast + "°, further off than " + round2(hue0) + "°: removed");
+                  after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                  hueLast = Math.round(GRADE_STATS.skinHue(after) * 10) / 10;
+                }
+                if (best) hsl = { hueCurve: { centre, shift: best } };
+                const satAfter = round2(after.saturation.p50);
+                const onLine = hueLast >= GRADE_SKIN_HUE[0] && hueLast <= GRADE_SKIN_HUE[1];
+                parts.push("skin: " + boxes.length + " " + skinRegion + " hue " + round2(hue0) + "° → Hue vs Hue at " + centre.toFixed(2) + " (" + notes.join(", ") + ") → hue " + hueLast + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°)"));
+                state = after.frame ? { ...after.frame, region: "frame" } : state;
               }
             }
           } catch (error) { needs.push("skin: " + error.message); }

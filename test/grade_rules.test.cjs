@@ -160,15 +160,18 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // Shot match (2026-09-16): a later cut of a graded file takes the first cut's WHOLE grade; if it would
   // clip or crush under it, the shot's tone is backed off to half on every cut so they still match.
   assert.match(seqTool, /if \(ref\) \{[\s\S]*?await writeGradeState\(at, track, region, ref\);[\s\S]*?for \(const t of ref\.cuts\) await writeGradeState\(t, track, region, ref\);/, "a later cut takes the reference state; a backoff is written to every earlier cut too");
-  assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders, hsl \};/, "the first cut records its whole state, the HSL key included");
+  assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders, hsl \};/, "the first cut records its whole state, the skin curve included");
   assert.match(seqTool, /const sk = gradeSkinFor\(skinNow, \{ saturation: 100 \}, key\.attenuation\);/, "skin is solved on the hand/face box of the confirmed frame, at the strength the key's selectivity allows");
   // 12:54: the key's Midtones wheel carries the skin rotation; the mask view is checked against Vision's
   // boxes first, and a key that took the room is tightened once, else skin is skipped on that clip.
   assert.match(panel, /const SKIN_WRITE = true;/, "skin writes are on");
-  assert.ok(seqTool.indexOf("const keyText = key.text, spill = !key.ok;") > 0 && seqTool.indexOf("const keyText = key.text, spill = !key.ok;") < seqTool.indexOf("await hw.correction(hslPadText(sk.pad));"), "the key is judged before the wheel is written");
-  assert.match(seqTool, /await hw\.denoise\(SKIN_REFINE\.denoise\); await hw\.blur\(SKIN_REFINE\.blur\);/, "Refine is written before any correction");
-  assert.match(seqTool, /if \(spill\) \{ await hw\.writeKey\(EMPTY_HSL_KEY\); needs\.push\("skin: no key separates/, "when no key separates the skin from the room, nothing is written and the row says so");
-  assert.match(panel, /await h\.correction\(hslPadText\(s\.hsl\.pad\)\);/, "a matched cut takes the reference's wheel too");
+  // Skin is corrected with a Hue vs Hue bump, not an HSL key: the colourists' hierarchy puts the curve
+  // above the qualifier, and masks - the other candidate - have no scripting surface at all (15:30).
+  assert.match(seqTool, /const hc = hueCurveWriter\(at, track, "Hue vs Hue"\);/, "the skin tool is the hue curve");
+  assert.match(seqTool, /await hc\.write\(hueBump\(centre, shift\)\);/, "a bump on the skin's own hue, pinned back to zero either side");
+  assert.match(seqTool, /further off than[\s\S]*?await hc\.write\(\[\]\)|await hc\.write\(\[\]\); best = 0;/, "a move that made it worse is removed");
+  assert.match(panel, /if \(s\.hsl && s\.hsl\.hueCurve\) await hueCurveWriter\(at, track, "Hue vs Hue"\)/, "a matched cut takes the reference's skin curve");
+
   assert.doesNotMatch(seqTool, /hw\.tint\(/, "HSL Tint is never written for skin (a magenta wash, 12:21)");
   assert.match(seqTool, /readable\[Math\.floor\(\(readable\.length - 1\) \/ 2\)\]/, "a source cut more than once is graded from its median-whites cut");
   // The 18:18 live run died on "Assignment to constant variable": a per-clip const shadowed the tally.
