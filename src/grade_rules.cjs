@@ -142,7 +142,7 @@ function padsFor(m, current = null) {
     // A parade end this far off neutral after the white balance is an object's colour, not the light:
     // a pad can only part-neutralise it and tints whatever the curve crushed under it (C187, 21:37: a
     // 0.45 cyan pad on a red-orange surface, a flat blue floor in the parade). No pad; said out loud.
-    if (Math.hypot(cast[0], cast[1]) > COLOURED) { needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size that is the scene's own colour (C187: every band warm by 25-32, only the speculars near neutral), not the light - left alone, neutralising it would drain the objects"); continue; }
+    if (Math.hypot(cast[0], cast[1]) > COLOURED) { needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size that is the scene's own colour (every band leans the same way, only the speculars near neutral), not the light - left alone, neutralising it would drain the objects"); continue; }
     const r = solveCast(wheel, [-cast[0], -cast[1]]);
     if (!r) continue;
     const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
