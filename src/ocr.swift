@@ -121,8 +121,10 @@ func hands(_ cg: CGImage, _ file: String) -> String {
   return "\"hands\":[\(out.joined(separator: ","))]"
 }
 
-// A frame-sized mask (Float32 or 8-bit, one channel) to coverage, extent and, when asked, an 8-bit PNG.
-func maskStats(_ buffer: CVPixelBuffer, writeTo maskPath: String?) -> (coverage: Double, box: String, error: String?) {
+// A mask (Float32 or 8-bit, one channel) to coverage, extent and, when asked, an 8-bit PNG at the frame's
+// size (`scaleTo`): person segmentation comes back at Vision's own 512x384, and the panel lines masks up
+// with the frame pixel for pixel.
+func maskStats(_ buffer: CVPixelBuffer, writeTo maskPath: String?, scaleTo: (Int, Int)? = nil) -> (coverage: Double, box: String, error: String?) {
   CVPixelBufferLockBaseAddress(buffer, .readOnly); defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
   let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer), stride = CVPixelBufferGetBytesPerRow(buffer)
   let isFloat = CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_OneComponent32Float
@@ -139,8 +141,15 @@ func maskStats(_ buffer: CVPixelBuffer, writeTo maskPath: String?) -> (coverage:
   if let maskPath = maskPath {
     let cs = CGColorSpaceCreateDeviceGray()
     guard let ctx = CGContext(data: &grey, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue),
-          let out = ctx.makeImage(),
+          var out = ctx.makeImage(),
           let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: maskPath) as CFURL, "public.png" as CFString, 1, nil) else { return (0, "null", "could not write mask") }
+    if let (tw, th) = scaleTo, tw != w || th != h {
+      guard let sctx = CGContext(data: nil, width: tw, height: th, bitsPerComponent: 8, bytesPerRow: tw, space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return (0, "null", "could not scale mask") }
+      sctx.interpolationQuality = .high
+      sctx.draw(out, in: CGRect(x: 0, y: 0, width: tw, height: th))
+      guard let scaled = sctx.makeImage() else { return (0, "null", "could not scale mask") }
+      out = scaled
+    }
     CGImageDestinationAddImage(dest, out, nil)
     guard CGImageDestinationFinalize(dest) else { return (0, "null", "could not finalize mask") }
   }
@@ -159,7 +168,7 @@ func person(_ cg: CGImage, _ file: String, writeMask: Bool) -> String {
   do { try handler.perform([req]) } catch { return "\"person\":null,\"personError\":\(json(String(describing: error)))" }
   guard let obs = req.results?.first else { return "\"person\":null" }
   let path = writeMask ? file + ".person.png" : nil
-  let r = maskStats(obs.pixelBuffer, writeTo: path)
+  let r = maskStats(obs.pixelBuffer, writeTo: path, scaleTo: (cg.width, cg.height))
   if let e = r.error { return "\"person\":null,\"personError\":\(json(e))" }
   return "\"person\":{\"mask\":\(path.map { json($0) } ?? "null"),\"coverage\":\(num(r.coverage)),\"box\":\(r.box)}"
 }

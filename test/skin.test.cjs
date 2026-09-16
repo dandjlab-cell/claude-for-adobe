@@ -33,8 +33,10 @@ test("a tight key sits inside the loose one; saturation never keys below the flo
   const loose = skinKeyFrom(rgb, w, h, box, { minPixels: 50 }), tight = skinKeyFrom(rgb, w, h, box, { minPixels: 50, tight: true });
   for (const ax of ["H", "S", "L"]) assert.ok(tight.key[ax][1] <= loose.key[ax][1] && tight.key[ax][2] <= loose.key[ax][2], ax + " tight " + tight.key[ax] + " loose " + loose.key[ax]);
   assert.ok(loose.key.S[0] - loose.key.S[2] >= SAT_FLOOR - 0.001, "sat feather floor: " + loose.key.S);
-  assert.equal(spills(0.30, 0.05), true);
-  assert.equal(spills(0.08, 0.05), false);
+  assert.equal(spills(0.9999, 0.08), true, "13:15: every learned key lit the whole frame");
+  assert.equal(spills(0.33, 0.0325), true, "C198 loose: the kitchen");
+  assert.equal(spills(0.18, 0.0325), false, "C198 tightened: cabinets a point or two warmer under a small pad");
+  assert.equal(spills(0.137, 0.063), false, "C227: skin and some oak");
 });
 
 test("the mask view's grey is dropped, everything else is the selection", () => {

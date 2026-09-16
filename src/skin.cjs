@@ -34,7 +34,10 @@ const SAT_FLOOR = 0.18;
 
 // The mask view against Vision's boxes: a key that lights up much more of the frame than the boxes cover
 // has taken the room (C223: the whole kitchen went pink). coverage and boxShare are frame fractions.
-const spills = (coverage, boxShare) => coverage > 2 * boxShare + 0.05;
+// Some spill is an HSL key's nature (the owner, 13:50: skin picks up colours like it, "normal"): on the
+// oak a hand key lights about twice its boxes, the kitchen's cream cabinets take a tightened face key to
+// 18% from a 3% face. A small pad moves that spill a point or two; a key past 3x the boxes + 10% is the room.
+const spills = (coverage, boxShare) => coverage > 3 * boxShare + 0.10;
 
 // rgb: packed RGB24; boxes: [{x0,y0,x1,y1}] as frame fractions (Vision's). Returns { key, text, pixels, share }
 // or null when the boxes hold too few skin-like pixels to trust.
