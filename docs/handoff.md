@@ -2,7 +2,7 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
-**Date:** 2026-09-16 (02:55)
+**Date:** 2026-09-16 (12:35)
 **Branch:** `fix/whisper-metal` (not merged to main, not released; the public zip is still **0.1.77**)
 **Last commit:** see `git log -1` — the 01:33 rules (mixed light, scene colour on the white balance) are **not yet run live**; everything up to `dc1baec` ran at 01:27 (7/18, parity matched, 50 s)
 **Role:** BUILDER
@@ -29,7 +29,7 @@ A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that
 
 **Works end to end on the user's Mac** (Apple Silicon, Premiere 26.3.2, dev panel symlinked to this repo): `grade this video` on the 18-clip BRAW sandbox sequence, plus everything from earlier sessions (rough_cut → transcript → audio_cut, Cut silences, reframe, captions, morph_cut, multicam_switch, scopes).
 
-**Suite:** `node --test test/*.test.cjs` → **302 tests, 301 pass, 1 skip** (`whisper.test.cjs` fetches `schemas.adobe.com`; the skip is counted, not a failure). The privacy scan is in the suite and in the pre-push hook.
+**Suite:** `node --test test/*.test.cjs` → **307 tests, 306 pass, 1 skip** (`whisper.test.cjs` fetches `schemas.adobe.com`; the skip is counted, not a failure). The privacy scan is in the suite and in the pre-push hook.
 
 **Not released.** Everything since `542edd9` is dev-only; 0.1.78 is gated on the 9:16 re-run (archive, What's Next 3) and an explicit go from the user.
 
@@ -80,6 +80,15 @@ Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the ev
   - **Correction scalars, DOM by index** (`comp.properties[n].setValue(v, true)`; the name walk finds Basic/Creative first): 101 Temperature, 102 Tint, 103 Contrast, 104 Sharpen, **105 Saturation (0–200, 100 neutral)**; 106 is a boolean, not the slider. Saturation 0 inside a broad skin key: saturation median 11 → 1, midtone cast −12.9 → 0, luma median 50.6 unchanged.
   - **Set color (84/85/86, ARGB, `setColorValue` works) does not drive the key through the API** — the ranges are the key. `getColorValue()` on the unnamed blob at 87 kills the interpreter (`EvalScript returned nothing`), so never call it in a loop.
   - **Not yet done**: a sweep of 101/102 (HSL Temperature/Tint) inside a key on skin, and the read side — the key ∩ Vision hand/face boxes measured on the mask view — then `skinFor` in the rules. That is What's Next 4, now with every door proven.
+
+- **11:00–12:35 — skin, built and half-calibrated (commits `675fb2e`…`cab4953`, suite 307/306/1 skip):**
+  - `src/skin.cjs`: the HSL key learned from the pixels in Vision's hand/face boxes (centre/inner/outer per axis from percentiles under a skin prior). **Known weakness (12:18, C223):** boxes at the frame edge hold sleeve and cabinet; the cream cabinets sit next to skin in hue with low saturation; the learned key took the whole room. Needs: inner quartiles, saturation floor ≈ 0.18, and a **spill check on the mask view** (keyed share of the frame vs the boxes' area; tighten once, else skip skin on that clip and say so). Not yet done.
+  - Scopes regions `keyed` (Show Mask on: only the selected pixels) and `hands` (the biggest Vision hand box); `bin/ocr` returns every detector by default.
+  - Host `lumetriIndex(seconds, track, index, expectName, value)` — a Lumetri property by index; HSL Secondary: 88 Show Mask, 101 Temperature, 102 Tint, 103 Contrast, 104 Sharpen, 105 Saturation (0–200, 100 neutral). `PARAMS` has `hslTemperature/hslTint/hslSaturation`; `lumetri_sweeps.json` has their rows measured on C227's hands inside the key `H:0.06,0.01,0.03;S:0.44,0.20,0.23;L:0.34,0.13,0.16` (Tint: hue 143→119° across ±100 on THAT key; Temperature a quarter of the global slider; Saturation usable 0–100).
+  - `skinFor` in the rules and the skin step in `gradeSequenceTool` (after the corrections: its own kept render of the hand/face region, key from it, write, confirm on the box, one secant correction, clip guard). **Writes are OFF (`SKIN_WRITE = false`, `fab2567`): HSL Tint is a wash toward magenta — every keyed pixel went pink (the owner, 12:21: "it should be using the wheels"), and its slope from one key did not transfer (C223 asked for 123° and got 102°).** The step now reports `skin: 2 hands hue 131°, saturation 19 (off the line; … nothing written)`.
+  - **The HSL Secondary wheels are QE `Correction`** — `Shadows:h,s,l;Midtones:h,s,l;Highlights:h,s,l`, same text as `Color Wheels & Match`, read-tracked live (a hand drag read back as `Midtones:66,32,0,73,0,50`); `3-Way` reads `true`. **Next: the calibration paste in the 12:30 chat** (Midtones pad at 0/90/180/270° sat 0.25, luma 0.35/0.65, region hands) → a 2×2 pad→(Cb,Cr) map inside the key and a luma-per-wheel row → `skinFor` re-solved as a Midtones pad (hue rotation without the wash) + wheel luma for a dark hand/face (the targeted lift instead of Shadows) → `SKIN_WRITE` back on. `writeGradeState` must carry `Correction` too.
+  - **Dark subject** (a hand/product under luma 35 while the frame is balanced): Shadows toward 40, **cap +30**, scaled back while the frame's spread would drop under 55 or its black point past 8 (+51 on C220 went flat, 12:18); the curve re-solves after a Shadows lift (it is not a non-responsive black); the verdict names `subject luma 22 dark where it matters`. Once the wheel luma is calibrated, that lift should move inside the key.
+  - The dev panel needed a Premiere restart at 11:55 for `lumetriIndex`; nothing since changed the host.
 
 **Open on this shot (C227, three cuts):** the brightest 1% is the wood's sheen, not a neutral, so no specular rule can balance it; the canon's next reference is skin (the hands) — see What's Next 4. A saturation floor on the subject (hold the temperature back while the subject's predicted saturation would fall under SKIN_SAT[0]) needs saturation in the model (`coupleBands` moves casts and levels, not saturation).
 
