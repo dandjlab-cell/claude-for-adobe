@@ -342,6 +342,8 @@ test("log footage is recognised from the picture and never balanced as if it wer
   assert.equal(looksLikeLog(log), true);
   const darkDisplay = frame(9.8, 40, 66.7, [10, 10, 10], [67, 67, 67], { saturation: { p50: 18, p99: 34 } }); // C233: dim, but coloured
   assert.equal(looksLikeLog(darkDisplay), false, "a dim display picture shares the luma, never the colour");
+  const dimmer = frame(9.8, 40, 61.6, [10, 10, 10], [62, 62, 62], { saturation: { p50: 10, p99: 18 } }); // C231, 23:23: tripped the first version
+  assert.equal(looksLikeLog(dimmer), false, "a dim, muted display picture is still not log: its median colour is not near zero");
   const graded = frame(18, 58.4, 82.4, [18, 18, 18], [82, 82, 82], { saturation: { p50: 17, p99: 39 } });
   assert.equal(looksLikeLog(graded), false);
   const fs = require("node:fs"), path = require("node:path");

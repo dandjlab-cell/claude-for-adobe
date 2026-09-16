@@ -75,11 +75,14 @@ const frameOf = (m) => m.frame || m;
 // frames a quarter-hour apart, against 32-39 on the display-referred sandbox. Balancing that as a dull
 // Rec.709 picture stretches the log curve instead of converting it; the pass stands down and says so.
 // Saturation is the discriminator: a dark display picture can share the luma numbers, never the colour.
-const LOG_SIGNATURE = { blackMin: 8, whiteMax: 78, satMax: 18 };
+// 23:23: a dim Blackmagic clip (black 9.8, white 61.6, colour p99 18) tripped the first version at p99 18,
+// so the colour test is two-sided now - the log file read p99 10-14 AND median 3-4; a dim display picture
+// keeps a coloured median (C231 ~10). Both must be low.
+const LOG_SIGNATURE = { blackMin: 8, whiteMax: 78, satMax: 15, satMedianMax: 6 };
 function looksLikeLog(m) {
   const f = frameOf(m);
   if (!f || !f.luma || !f.saturation) return false;
-  return f.luma.p1 >= LOG_SIGNATURE.blackMin && f.luma.p99 <= LOG_SIGNATURE.whiteMax && f.saturation.p99 <= LOG_SIGNATURE.satMax;
+  return f.luma.p1 >= LOG_SIGNATURE.blackMin && f.luma.p99 <= LOG_SIGNATURE.whiteMax && f.saturation.p99 <= LOG_SIGNATURE.satMax && f.saturation.p50 <= LOG_SIGNATURE.satMedianMax;
 }
 
 // White balance first: Temperature, for a cast the whole parade shares. It is a gain on red against
