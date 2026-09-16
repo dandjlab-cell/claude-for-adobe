@@ -300,3 +300,13 @@ test("a dark subject is lifted with Shadows toward 40, capped by the frame's bla
   assert.ok(verdict(withSubject(f, hand), "subject").notes.some((n) => /subject luma 22 dark/.test(n)));
   assert.equal([...goalsFor(withSubject(f, frame(20, 45, 70, [20, 20, 20], [70, 70, 70])), "subject")].some((x) => x.param === "shadows"), false, "a subject at 45 is not dark");
 });
+
+test("a long grade returns: it pauses at a time budget and says how to continue, and the shot match survives the pause", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(seqTool, /if \(budget_seconds > 0 && \(Date\.now\(\) - t0\) \/ 1000 > budget_seconds\) \{ resumeAt = /, "the loop stops at the budget");
+  assert.match(seqTool, /if \(c\.start \+ 0\.001 < Number\(start_at \|\| 0\)\) continue;/, "a resumed run skips what is done");
+  assert.match(seqTool, /call grade_sequence again with start_at=/, "the result says exactly how to continue");
+  assert.match(panel, /const gradeMatched = new Map\(\);/, "the shot match is kept between calls, or a resumed run regrades a later cut from scratch");
+});
