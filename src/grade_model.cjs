@@ -17,6 +17,7 @@ const SWEEPS = require("./lumetri_sweeps.json");
 const TRACKED = {
   "luma.p1": (r, i) => r.p1[i], "luma.p50": (r, i) => r.p50[i], "luma.p99": (r, i) => r.p99[i],
   "luma.min": (r, i) => r.min[i], "luma.max": (r, i) => r.max[i],
+  "luma.p10": (r, i) => (r.p10 ? r.p10[i] : NaN), "luma.p90": (r, i) => (r.p90 ? r.p90[i] : NaN), // only the contrast sweep carries them (22:58)
   "red.mean": (r, i) => r.red[i], "green.mean": (r, i) => r.green[i], "blue.mean": (r, i) => r.blue[i],
   "red.p1": (r, i) => r.redP1[i], "green.p1": (r, i) => r.greenP1[i], "blue.p1": (r, i) => r.blueP1[i],
   "red.p99": (r, i) => r.redP99[i], "green.p99": (r, i) => r.greenP99[i], "blue.p99": (r, i) => r.blueP99[i],
@@ -49,7 +50,7 @@ function predict(m, param, from, to) {
       const cur = get(src, key);
       if (!isFinite(cur)) continue;
       const a = calib(param, key, from), b = calib(param, key, to);
-      if (a === null || b === null) continue;
+      if (a === null || b === null || !isFinite(a) || !isFinite(b)) continue;
       const next = (scales(param, key) && a > 0 && cur > 0) ? cur * (b / a) : cur + (b - a);
       set(dst, key, Math.max(-50, Math.min(100, next)));
     }
@@ -61,6 +62,7 @@ function predict(m, param, from, to) {
   const carry = (src, dst) => {
     const f = src.luma, g = dst.luma;
     if (!f || !g || f.p10 === undefined || f.p90 === undefined) return;
+    if (SWEEPS[param].p10 && SWEEPS[param].p90) return; // the sweep carries them: already moved above
     const lerp = (x, a0, a1, b0, b1) => (a1 - a0 > 0.5 ? b0 + (x - a0) / (a1 - a0) * (b1 - b0) : b0 + (b1 - b0) / 2);
     g.p10 = lerp(f.p10, f.p1, f.p50, g.p1, g.p50);
     g.p90 = lerp(f.p90, f.p50, f.p99, g.p50, g.p99);

@@ -490,7 +490,26 @@
    87.8,
    89.8,
    92.9
-  ]
+  ],
+  "p10": [
+   17.0,
+   13.0,
+   10.6,
+   8.6,
+   7.1,
+   4.9,
+   1.9
+  ],
+  "p90": [
+   71.7,
+   74.7,
+   76.5,
+   77.6,
+   79.2,
+   81.0,
+   84.0
+  ],
+  "_body": "p10/p90 measured 2026-09-16 22:58 on C193 @15.39 (six values -40..60, panel-run sweep; -100/-50/100 extrapolated): the body (p90-p10) moves ~0.14 a point, 63 at -40, 69 at 0, 77 at 60; the floor crushes 0.9% at 40 and 2.8% at 60. The slider is a weak, crush-prone tool for a flat body; the ratio transfers, the absolute frame does not."
  },
  "wheels": {
   "_source": "Live sweep 2026-09-15, same clip and frame (timeline 1 s), Lumetri wheels written through QE setParamValue('Color Wheels & Match') with dot decimals; QE triple order is (hue, sat, luma). Hue: 0 red, 90 green, 180 cyan, 270 magenta. Neutral is the reading with all wheels at 0,0,0.50.",
