@@ -1269,7 +1269,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (skinNow && boxes.length && key) {
           try {
             if (skinNow.region === skinRegion) {
-              const sk = gradeSkinFor(skinNow);
+              const sk = gradeSkinFor(skinNow, { saturation: 100 }, key.attenuation);
               const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
               if (!sk) parts.push("skin: " + skinRegion + " on the line (hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + ")");
               else if (!SKIN_WRITE) parts.push("skin: " + boxes.length + " " + skinRegion + " hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + " (off the line; skin writes are off - nothing written)");

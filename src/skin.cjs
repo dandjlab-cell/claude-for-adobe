@@ -105,7 +105,18 @@ function refineKey(key, skinPixels, framePixels, boxShare, { minKeep = 0.7, step
     cur = best.next; kept = best.kept; lit = best.lit;
     if (!narrowed.includes(best.ax)) narrowed.push(best.ax);
   }
-  return { key: cur, text: formatKey(cur), keeps: Math.round(kept * 1000) / 10, lights: Math.round(lit * 1000) / 10, narrowed, ok: !spills(lit, boxShare) && kept >= minKeep };
+  return { key: cur, text: formatKey(cur), keeps: Math.round(kept * 1000) / 10, lights: Math.round(lit * 1000) / 10, narrowed, ok: kept >= minKeep, attenuation: attenuationFor(lit, boxShare) };
+}
+
+// A key that also holds the room is normal and usable - colourists accept it, and when they do not they add
+// a shape mask on top (the owner, 15:25). What it is not is a licence for a full-strength move: the wood
+// and the cabinets would swing with the skin. So the spill scales the correction instead of vetoing it - at
+// the spill threshold the move is full, at twice the threshold half, never under a quarter. This is the
+// broadcast auto-flesh rule too: attenuate where the correction would grab more than its subject.
+function attenuationFor(coverage, boxShare) {
+  const threshold = 3 * boxShare + 0.10;
+  if (!(coverage > threshold)) return 1;
+  return Math.round(Math.max(0.25, threshold / coverage) * 100) / 100;
 }
 
 // What share of a frame a key would light, by this file's HSL (inside every axis's outer range; the
@@ -148,4 +159,4 @@ function keyedPixels(rgb) {
 // The sliders' units are not published; these are a first pass on a 0-100 scale and the mask check judges them.
 const REFINE = { denoise: 10, blur: 15 };
 
-module.exports = { hsl, skinKeyFrom, refineKey, formatKey, keyedPixels, keyCoverage, spills, EMPTY_KEY, PRIOR, SAT_FLOOR, REFINE, HUE_INNER, HUE_OUTER };
+module.exports = { hsl, skinKeyFrom, refineKey, attenuationFor, formatKey, keyedPixels, keyCoverage, spills, EMPTY_KEY, PRIOR, SAT_FLOOR, REFINE, HUE_INNER, HUE_OUTER };

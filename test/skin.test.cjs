@@ -50,6 +50,13 @@ test("a key's coverage in software: the skin it was learned from lights, a grey 
   assert.ok(cov > 0.45 && cov < 0.55, "half the frame is the skin: " + cov);
 });
 
+test("a key that holds the room scales the move down instead of vetoing it", () => {
+  const { attenuationFor } = require("../src/skin.cjs");
+  assert.equal(attenuationFor(0.19, 0.063), 1, "inside the rule: full strength");
+  assert.equal(attenuationFor(0.532, 0.0567), 0.51, "half the frame lit for 6% of hands: about half strength");
+  assert.ok(attenuationFor(0.99, 0.03) >= 0.25, "never under a quarter");
+});
+
 test("the mask view's grey is dropped, everything else is the selection", () => {
   const k = keyedPixels(Buffer.from([184, 184, 184, 183, 185, 184, 200, 150, 120, 10, 10, 10]));
   assert.equal(k.rgb.length / 3, 2);

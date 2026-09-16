@@ -161,7 +161,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // clip or crush under it, the shot's tone is backed off to half on every cut so they still match.
   assert.match(seqTool, /if \(ref\) \{[\s\S]*?await writeGradeState\(at, track, region, ref\);[\s\S]*?for \(const t of ref\.cuts\) await writeGradeState\(t, track, region, ref\);/, "a later cut takes the reference state; a backoff is written to every earlier cut too");
   assert.match(seqTool, /matched\[c\.name\] = \{ label, cuts: \[at\], temp: tempNow, tint: tintNow, wheels, curves, sat: satNow, sliders, hsl \};/, "the first cut records its whole state, the HSL key included");
-  assert.match(seqTool, /const sk = gradeSkinFor\(skinNow\);/, "skin is solved on the hand/face box of the confirmed frame");
+  assert.match(seqTool, /const sk = gradeSkinFor\(skinNow, \{ saturation: 100 \}, key\.attenuation\);/, "skin is solved on the hand/face box of the confirmed frame, at the strength the key's selectivity allows");
   // 12:54: the key's Midtones wheel carries the skin rotation; the mask view is checked against Vision's
   // boxes first, and a key that took the room is tightened once, else skin is skipped on that clip.
   assert.match(panel, /const SKIN_WRITE = true;/, "skin writes are on");
