@@ -695,14 +695,17 @@ function skinKeyFor(src, vision, opts = {}) {
   const person = personMask(src);
   try {
     const crops = [];
+    let boxPixels = 0, boxArea = 0;
     for (const b of boxes) {
       let rgb = decodeRgb(src, b);
+      boxPixels += rgb.length / 3; boxArea += Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
       if (person) { try { rgb = maskRgb(rgb, decodeGray(person.mask, b)); } catch (_) { continue; } } // no person in this box: not skin
       crops.push(rgb);
     }
     const all = Buffer.concat(crops);
     const k = skinKeyFrom(all, all.length / 3, 1, [{ x0: 0, y0: 0, x1: 1, y1: 1 }], opts);
-    return k && Object.assign(k, { masked: !!person });
+    // What share of the frame the key should light: the skin pixels it was learned from, as a frame fraction.
+    return k && Object.assign(k, { masked: !!person, expected: boxPixels ? k.pixels / boxPixels * boxArea : 0 });
   } catch (_) { return null; }
   finally { if (person) { try { fs.rmSync(person.mask, { force: true }); } catch (_) {} } }
 }
@@ -1269,13 +1272,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 // The mask view against Vision's boxes before anything is corrected: a key that has taken the
                 // room (C223, 12:18: the whole kitchen went pink) is tightened once, else skin is skipped here.
                 const boxShare = boxes.reduce((sum, b) => sum + Math.max(0, b.box[2] - b.box[0]) * Math.max(0, b.box[3] - b.box[1]), 0);
-                let keyText = key.text, spill = null;
+                let keyText = key.text, spill = null, thin = null;
                 for (let pass = 0; pass < 2; pass++) {
                   await hw.writeKey(keyText); await hw.showMask(true);
                   let mv = null;
                   try { mv = await timed(() => measureFrameAt(at, { region: "keyed", keepPlayhead: true }), "render"); renders++; } finally { await hw.showMask(false); }
                   const cov = mv && mv.region === "keyed" ? mv.coverage : 0;
                   spill = skinSpills(cov, boxShare) ? "the key lights " + round2(cov * 100) + "% of the frame against " + round2(boxShare * 100) + "% of " + skinRegion + " boxes" : null;
+                  // The mirror check: a key that lights well under the skin it was learned from grades half an arm
+                  // (the owner's eyedropper key, 13:30: its lightness topped at 0.50 on a brighter graded arm).
+                  thin = !spill && key.expected > 0 && cov < 0.5 * key.expected ? "thin key: lights " + round2(cov * 100) + "% of the frame, the boxes hold about " + round2(key.expected * 100) + "% skin" : null;
                   if (!spill) break;
                   const tight = pass === 0 ? skinKeyFor(src1, vis, { tight: true }) : null;
                   if (!tight) break;
@@ -1312,7 +1318,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                     hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
                   }
                   const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + (key.masked ? "" : " (no person mask: boxes alone)") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                  parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + keyText + (keyText !== key.text ? " (tightened)" : "") + (key.masked ? "" : " (no person mask: boxes alone)") + (thin ? " (" + thin + ")" : "") + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
                   state = after.frame ? { ...after.frame, region: "frame" } : state;
                 }
               }
