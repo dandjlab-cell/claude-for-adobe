@@ -881,10 +881,13 @@ function gradeStateSummary(s) {
 
 // Skin writes: the key's Midtones wheel, calibrated 2026-09-16 12:54 (HSL Tint was a wash toward magenta).
 const SKIN_WRITE = true;
-// The Hue vs Hue probe: a small first move (the curve's units are not degrees and its response is not
-// published), and a cap - a skin rotation is meant to be small, and "if the trace sits past the skin tone
-// line toward magenta, you've gone too far".
-const SKIN_HUE_PROBE = 0.02, SKIN_HUE_CAP = 0.12;
+// The Hue vs Hue response, measured on the first live run (15:53) across four clips: a POSITIVE curve
+// offset lowers the vectorscope angle, every time, by about 180-270 degrees per unit (C223 +0.028 moved
+// 128.7 -> 122.3; C198 +0.040 moved 135.3 -> 124.4; C209 +0.031 moved 131.2 -> 123.7; C227 +0.031 moved
+// 128.3 -> 122.7). That is far steadier than the HSL wheel's six-fold spread, so the first write is a
+// solved guess rather than a probe, and the confirm still rescales it. The cap keeps the move small: "if
+// the trace sits past the skin tone line toward magenta, you've gone too far".
+const SKIN_HUE_GAIN = 220, SKIN_HUE_MIN = 0.008, SKIN_HUE_CAP = 0.12;
 // HSL Secondary: the key and its wheels ("Correction") through QE by name, the scalars and Show Mask by
 // property index.
 function hslWriter(at, track) {
@@ -1306,7 +1309,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 // The curve's units are not the vectorscope's degrees and the response is not published, so
                 // the first write is a deliberately small probe and the clip's own response lands it.
                 const notes = [];
-                let shift = hue0 > target ? -SKIN_HUE_PROBE : SKIN_HUE_PROBE, hueLast = hue0, best = 0;
+                const want = (hue0 - target) / SKIN_HUE_GAIN;
+                let shift = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, Math.sign(want) * Math.max(SKIN_HUE_MIN, Math.abs(want)))), hueLast = hue0, best = 0;
                 for (let t = 0; t < 3; t++) {
                   await hc.write(hueBump(centre, shift));
                   const re = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
@@ -1314,9 +1318,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                   notes.push("curve " + shift.toFixed(3) + " → " + h2 + "°");
                   after = re; hueLast = h2; best = shift;
                   if (h2 >= GRADE_SKIN_HUE[0] && h2 <= GRADE_SKIN_HUE[1]) break;
-                  if (Math.abs(h2 - hue0) <= 0.5) { // no response yet: double the probe
-                    shift = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, shift * 2));
+                  if (Math.abs(h2 - hue0) <= 0.5) { // no response: double it
                     if (Math.abs(shift) >= SKIN_HUE_CAP) { notes.push("at the curve's cap"); break; }
+                    shift = Math.max(-SKIN_HUE_CAP, Math.min(SKIN_HUE_CAP, shift * 2));
                     continue;
                   }
                   const k = (target - hue0) / (h2 - hue0);
