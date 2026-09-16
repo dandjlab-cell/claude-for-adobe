@@ -25,7 +25,15 @@ const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing tr
 // One predicate for the goals, the verdict and the printed footer, so they cannot disagree.
 const ACCEPT = { blackMax: BLACK_POINT[1] + 1, whiteMin: WHITE_POINT[0] - 3, whiteMax: WHITE_POINT[1] };
 const SKIN_LUMA = [40, 70];      // a face: light skin 60-70, dark skin 40-60; alive around 60-65
-const SKIN_HUE = [116, 126];     // the vectorscope skin line, 123 at centre
+// The vectorscope skin line is 123 deg on this scale (atan2(Cr, Cb); LOWER is redder, higher yellower).
+// It is a corridor, not a hairline, and complexions sit above it as well as on it - the research's own
+// words. On 2026-09-16 22:23 the pass took a fair face under warm kitchen light from 135 deg to 124 deg,
+// twice, "to put it on the line", and the owner's verdict was "way too pink": the canon's number pulled
+// her toward red because the target sat at the red end of the corridor. So: the band runs from the line
+// up into the oranges, and skin is only ever brought TO the line from the red/magenta side. From the
+// yellow side (past 140, a green cast) it comes down to the corridor's yellow end, never to the line.
+const SKIN_HUE = [116, 140];
+const SKIN_HUE_TARGET_LO = 123, SKIN_HUE_TARGET_HI = 132; // where a correction aims from below / from above
 // Percent of the vectorscope radius; ~30 reads natural on Rec.709. The band is a rule of thumb for skin in
 // general (hands are arguably the better reference: no makeup), and it is ASYMMETRIC in what it means. All
 // skin tones differ "in saturation and brightness but not in hue" (Van Hurkman, Color Correction Handbook
@@ -328,7 +336,8 @@ const HSL_PAD = { m: [[-1.5, -8.0], [11.0, -5.0]], cap: 0.3 };
 // amplifying a pale hand amplifies whatever tint it carries, and pale skin is an exposure and white-balance
 // problem, not a saturation one. Under the band is reported, never boosted; over it is pulled back.
 const HSL_SAT_GAIN = 0.8, HSL_SAT_RANGE = [50, 100];
-const SKIN_SAT_TARGET = 25, SKIN_SAT_TOL = 3, SKIN_HUE_TARGET = (SKIN_HUE[0] + SKIN_HUE[1]) / 2 + 2; // 123: the line's centre
+const SKIN_SAT_TARGET = 25, SKIN_SAT_TOL = 3, SKIN_HUE_TARGET = SKIN_HUE_TARGET_LO;
+const skinTargetFor = (hue) => (hue < SKIN_HUE[0] ? SKIN_HUE_TARGET_LO : SKIN_HUE_TARGET_HI);
 function skinFor(m, from = { saturation: 100 }) {
   const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
   // Saturation gets a margin: the knob reaches 3 points on a hand at full slider (its sweep), so a 1-point
@@ -349,7 +358,7 @@ function skinFor(m, from = { saturation: 100 }) {
   const hueNow = hue;
   if (hueNow < SKIN_HUE[0] || hueNow > SKIN_HUE[1]) {
     // The same radius at the target angle; the pad that moves (Cb, Cr) there is the inverse of the wheel.
-    const r = Math.hypot(state.cast.cb, state.cast.cr), t = SKIN_HUE_TARGET * Math.PI / 180;
+    const r = Math.hypot(state.cast.cb, state.cast.cr), t = skinTargetFor(hueNow) * Math.PI / 180;
     const d = [r * Math.cos(t) - state.cast.cb, r * Math.sin(t) - state.cast.cr];
     const [[a, b], [c, e]] = HSL_PAD.m, det = a * e - b * c;
     let x = (e * d[0] - b * d[1]) / det, y = (a * d[1] - c * d[0]) / det, padSat = Math.hypot(x, y), partial = false;
@@ -367,4 +376,4 @@ function skinFor(m, from = { saturation: 100 }) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };

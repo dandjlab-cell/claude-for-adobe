@@ -269,25 +269,26 @@ test("a frame warm at both ends by more than 20 is the scene's colour: no white 
   assert.match(t.why, /scene's own colour/);
 });
 
-test("skin inside the HSL key: the Midtones pad rotates the keyed hue onto the line, Saturation only when out of the band", () => {
+test("skin: the corridor runs from the line up into the oranges; only skin on the red side is brought to the line, skin past the corridor comes down to its yellow end", () => {
   const { skinFor, SKIN_HUE } = require("../src/grade_rules.cjs");
-  // C227's hands, 2026-09-16: Cb -4.9 / Cr 5.6 = 131 deg, saturation 19 - just off both.
+  // C227's hands, 2026-09-16: Cb -4.9 / Cr 5.6 = 131 deg, saturation 19. 22:23: 131 is NATURAL skin under
+  // warm light - a fair face taken from 135 to 124 "to sit on the line" read "way too pink" to the owner.
   const hands = { luma: { min: 9.4, p1: 13.3, p50: 44.7, p99: 72.9, max: 75.3 }, red: { mean: 53.7, p1: 26.3, p99: 74.5 }, green: { mean: 43.1, p1: 10.6, p99: 72.2 }, blue: { mean: 35.8, p1: 1.6, p99: 78.4 }, saturation: { p50: 19, p99: 32 }, cast: { cb: -4.9, cr: 5.6 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0 };
-  const sk = skinFor(hands);
-  // The 12:54 calibration: the pad at 270 deg / 0.25 took these hands from 131 to 123 deg on the thin
-  // eyedropper key; the pass's keys turn 2.5x as far, so about 0.1.
-  assert.ok(sk && sk.pad && sk.pad.hue > 250 && sk.pad.hue < 300 && sk.pad.sat > 0.06 && sk.pad.sat < 0.16, "a small magenta-side pad: " + JSON.stringify(sk));
+  assert.equal(skinFor(hands), null, "131 deg at saturation 19 is left alone");
+  const red = { ...hands, cast: { cb: -3, cr: 7 } }; // 113 deg: on the red/magenta side of the line
+  const sk = skinFor(red);
+  assert.ok(sk && sk.pad, "red-side skin gets a correction: " + JSON.stringify(sk));
   const hue = Math.atan2(sk.predicted.cast.cr, sk.predicted.cast.cb) * 180 / Math.PI;
   assert.ok(hue >= SKIN_HUE[0] && hue <= SKIN_HUE[1], "predicted hue on the line: " + hue.toFixed(1));
   assert.equal(sk.saturation, null, "saturation 19 is a point under the band: not worth the knob");
   // C222, 14:45: Saturation 198 on a hand at 14 made it bright pink. Under the band is reported, not boosted.
-  const pale = skinFor({ ...hands, saturation: { p50: 14, p99: 20 } });
+  const pale = skinFor({ ...red, saturation: { p50: 14, p99: 20 } });
   assert.equal(pale.saturation, null, "a pale hand is never boosted: " + JSON.stringify(pale));
   assert.ok(pale.why.some((w) => /under the band: left alone/.test(w)) && pale.pad, "it is said, and the hue is still put on the line");
   const loud = skinFor({ ...hands, saturation: { p50: 62, p99: 80 } });
   assert.ok(loud.saturation !== null && loud.saturation < 100 && loud.saturation >= 50, "over the band comes down: " + JSON.stringify(loud));
-  const inBand = skinFor({ ...hands, saturation: { p50: 30, p99: 40 } });
-  assert.ok(inBand.saturation === null && Math.abs(Math.hypot(inBand.predicted.cast.cr, inBand.predicted.cast.cb) - Math.hypot(5.6, 4.9)) < 0.01, "the pad alone is a rotation: the radius is kept");
+  const inBand = skinFor({ ...red, saturation: { p50: 30, p99: 40 } });
+  assert.ok(inBand.saturation === null && Math.abs(Math.hypot(inBand.predicted.cast.cr, inBand.predicted.cast.cb) - Math.hypot(7, 3)) < 0.01, "the pad alone is a rotation: the radius is kept");
   const far = { ...hands, cast: { cb: -28, cr: 4 } }; // 172 deg at four times the radius: beyond the pad's cap
   const fk = skinFor(far);
   assert.ok(fk.pad.sat === 0.3 && fk.why.some((w) => /as far as the pad goes/.test(w)), JSON.stringify(fk));
