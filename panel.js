@@ -1075,7 +1075,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    (with `measured` given it renders only after the writes); if that shows damage past the
     //    baseline it restores the sliders and confirms again - the clip's one correction. Otherwise
     //    the correction goes to the pads, if a cast is left and the real reading says how much.
-    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false, hsl = null;
+    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false, hsl = null, shadowsLifted = false;
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
@@ -1087,6 +1087,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
         const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline });
         renders += confirm ? r.renders : 0; state = r.after; corrected = r.backedOff;
+        shadowsLifted = r.plan.some((p) => p.param === "shadows" && p.value !== undefined);
         parts.push(r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
       } else if (confirm) { state = await confirmMeasure(); renders++; }
       else state = afterLevels;
@@ -1193,7 +1194,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (lev && curveNow !== null) {
           const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
           const predictedMove = curveBaseP1 - curvePredictedP1, actualMove = curveBaseP1 - p1;
-          if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.25) { // 21:37: a 39% response re-solved to 4.3 the run before; 25% is the line between 'slow' and 'not a black'
+          if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.25 && !shadowsLifted) { // a Shadows lift for a dark subject raises the black point on purpose: re-solve, do not call the pixels unresponsive // 21:37: a 39% response re-solved to 4.3 the run before; 25% is the line between 'slow' and 'not a black'
             // The black point did not follow the curve: the darkest pixels are not a black (a coloured
             // surface keeps its luma in one channel while the curve crushes the other two). Pushing
             // further only crushes more - C187 on the 21:26 run went to the cap for nothing.
@@ -1246,10 +1247,34 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 if (sk.tint !== null) await hw.tint(sk.tint);
                 if (sk.saturation !== null) await hw.saturation(sk.saturation);
                 hsl = { key: key.text, tint: sk.tint === null ? 0 : sk.tint, saturation: sk.saturation === null ? 100 : sk.saturation };
-                const after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
-                const hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10, satAfter = round2(after.saturation.p50);
+                let after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                let hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10, satAfter = round2(after.saturation.p50);
+                const hue0 = GRADE_STATS.skinHue(skinNow), target = (GRADE_SKIN_HUE[0] + GRADE_SKIN_HUE[1]) / 2 + 2;
+                const notes = [];
+                // One correction from the real move: the sweep's slope came from one hand key, and the angle
+                // moves 2-3x as much per point on other keys (12:18: C223 asked for 123 and got 102). The
+                // secant from what this write actually did, then the clip guard: a saturated skin push
+                // clips red (C198, 6.7%).
+                let tint2 = null, sat2 = null;
+                if (sk.tint !== null && Math.abs(hueAfter - hue0) > 1 && (hueAfter < GRADE_SKIN_HUE[0] || hueAfter > GRADE_SKIN_HUE[1])) {
+                  const slope = (hueAfter - hue0) / sk.tint;
+                  tint2 = Math.max(-100, Math.min(100, Math.round((target - hue0) / slope * 100) / 100));
+                  notes.push("tint " + round2(sk.tint) + " → " + round2(tint2) + " (hue read " + hueAfter + "°, " + round2(slope) + "°/point)");
+                }
+                if (confirm && gradeUnsafe(gradeDamage(after), gradeAllowance(baseline))) {
+                  const h = gradeDamage(after);
+                  if (tint2 === null && sk.tint !== null) { tint2 = Math.round(sk.tint / 2 * 100) / 100; notes.push("tint halved to " + tint2); }
+                  if (sk.saturation !== null) { sat2 = Math.round((100 + (sk.saturation - 100) / 2) * 100) / 100; notes.push("saturation halved to " + sat2); }
+                  notes.push("the frame clipped " + round2(h.clipped) + "% / crushed " + round2(h.crushed) + "%");
+                }
+                if (tint2 !== null || sat2 !== null) {
+                  if (tint2 !== null) { await hw.tint(tint2); hsl.tint = tint2; }
+                  if (sat2 !== null) { await hw.saturation(sat2); hsl.saturation = sat2; }
+                  after = await timed(() => measureFrameAt(at, { region: skinRegion, keepPlayhead: true }), "render"); renders++;
+                  hueAfter = Math.round(GRADE_STATS.skinHue(after) * 10) / 10; satAfter = round2(after.saturation.p50);
+                }
                 const onLine = hueAfter >= GRADE_SKIN_HUE[0] && hueAfter <= GRADE_SKIN_HUE[1] && satAfter >= GRADE_SKIN_SAT[0] && satAfter <= GRADE_SKIN_SAT[1];
-                parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + key.text + " → " + sk.why.join(", ") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
+                parts.push("skin: " + boxes.length + " " + skinRegion + " keyed " + key.text + " → " + sk.why.join(", ") + (notes.length ? " → corrected: " + notes.join(", ") : "") + " → hue " + hueAfter + "°, saturation " + satAfter + (onLine ? " ✓" : " (line 116-126°, 20-50)"));
                 state = after.frame ? { ...after.frame, region: "frame" } : state;
               }
             }
