@@ -566,10 +566,22 @@ async function scopesTool({ seconds = [], solo_track, region = "frame", source =
     const card = addTool("scopes from SOURCE at " + secs.map((n) => n + "s").join(", "), "");
     setStatus("Decoding " + secs.length + " source frame(s)…");
     const texts = [];
+    // A source read is only the timeline's picture if it is cropped the way Motion crops it: scale and
+    // position decide which source pixels reach the frame, and that belongs in every path that decodes a
+    // file, not just the grade (the owner, 18:40).
+    let tfScope = null; try { tfScope = await readTransforms(); } catch (_) {}
+    const visibleAt = (t) => {
+      if (!tfScope) return null;
+      const c = tfScope.rows.find((r) => r.track === "V" + track && !r.graphic && t >= r.start && t < r.end);
+      if (!c) return null;
+      let w = c.srcW, h = c.srcH;
+      if ((!w || !h) && c.mediaPath) { const d = mediaDims(c.mediaPath); if (d) { w = d.w; h = d.h; } }
+      return visibleFraction({ srcW: w, srcH: h, frameW: tfScope.w, frameH: tfScope.h, x: c.x, y: c.y, scale: c.scale });
+    };
     for (const t of secs) {
       try {
-        const m = await measureSourceAt(t, track, region);
-        texts.push(scopeReport(m, "timeline " + t + "s from the SOURCE FILE (" + m.clip + " at " + round2(m.sourceSeconds) + "s, " + m.decoded + ")" + (m.region !== "frame" ? " — " + m.region.toUpperCase() + " only" : "") + (m.fellBack ? " (" + m.fellBack + ")" : "")));
+        const m = await measureSourceAt(t, track, region, null, visibleAt(t));
+        texts.push(scopeReport(m, "timeline " + t + "s from the SOURCE FILE (" + m.clip + " at " + round2(m.sourceSeconds) + "s, " + m.decoded + ")" + (m.cropped ? " — cropped to what the timeline shows (Motion scale/position)" : "") + (m.region !== "frame" ? " — " + m.region.toUpperCase() + " only" : "") + (m.fellBack ? " (" + m.fellBack + ")" : "")));
       } catch (error) { texts.push("at " + t + "s: " + error.message); }
     }
     texts.push("Decoded from the camera file, NOT Premiere's render: no Lumetri, no sequence colour management. Compare with a plain scopes call at the same time once per footage type before trusting it for reads; never use it to confirm a grade.");
