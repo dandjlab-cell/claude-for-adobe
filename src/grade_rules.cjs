@@ -68,6 +68,20 @@ const BLACKS_SLOPE = 0.41;
 
 const frameOf = (m) => m.frame || m;
 
+// Log footage, recognised from the picture. A log encode has a black floor that never reaches the
+// bottom (S-Log2/3 sit near 9-13 on this scale), a top that never reaches the top, and colour at a
+// fraction of a display picture's - measured 2026-09-16 23:10 on a Sony A7S II XAVC S file that declared
+// nothing (no transfer tag, no sidecar): black 12.5-14.5, white 68-71, saturation p99 10-14 on three
+// frames a quarter-hour apart, against 32-39 on the display-referred sandbox. Balancing that as a dull
+// Rec.709 picture stretches the log curve instead of converting it; the pass stands down and says so.
+// Saturation is the discriminator: a dark display picture can share the luma numbers, never the colour.
+const LOG_SIGNATURE = { blackMin: 8, whiteMax: 78, satMax: 18 };
+function looksLikeLog(m) {
+  const f = frameOf(m);
+  if (!f || !f.luma || !f.saturation) return false;
+  return f.luma.p1 >= LOG_SIGNATURE.blackMin && f.luma.p99 <= LOG_SIGNATURE.whiteMax && f.saturation.p99 <= LOG_SIGNATURE.satMax;
+}
+
 // White balance first: Temperature, for a cast the whole parade shares. It is a gain on red against
 // blue, strongest at the top, so it is solved to line the WHITES up and only when the blacks lean the
 // same way (a warm bottom under blue tops is two lights, not a white balance - that is the pads' job).
@@ -84,15 +98,20 @@ const channelFloor = (m) => { const f = frameOf(m); return Math.min(f.red.p1, f.
 // calibration frame, which is what the old +-50 stood for).
 const channelTop = (m) => { const f = frameOf(m); return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
 const TOP_MAX = 98.5;
-function balanceAxis(m, param, from, stat) {
-  const s = solveKnob(m, param, from, stat, 0);
+// `satFloor` (0..1): stop the move where the predicted saturation would fall under that fraction of what
+// the picture has - the scene-colour case, where a full neutralisation drains the objects (C227's oak,
+// 01:33) and none at all leaves an orange picture (the owner, 23:12: "it's not balanced").
+function balanceAxis(m, param, from, stat, satFloor = 0, share = 1) {
+  const s = solveKnob(m, param, from, stat, stat(m) * (1 - share)); // share < 1: take out only that part of the cast
   if (!s || !s.helps) return null;
   let value = s.value, predicted = predict(m, param, from, value), held = null;
-  const unsafe = (p) => (channelFloor(p) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN) || (channelTop(p) > TOP_MAX && channelTop(m) <= TOP_MAX);
-  while (unsafe(predicted) && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); held = channelFloor(predicted) < FLOOR_MIN ? "floor" : "ceiling"; }
+  const sat0 = STATISTICS.saturation(m);
+  const unsafe = (p) => (channelFloor(p) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN) || (channelTop(p) > TOP_MAX && channelTop(m) <= TOP_MAX) || (satFloor > 0 && sat0 > 0 && STATISTICS.saturation(p) < sat0 * satFloor);
+  while (unsafe(predicted) && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); held = channelFloor(predicted) < FLOOR_MIN ? "floor" : channelTop(predicted) > TOP_MAX ? "ceiling" : "colour"; }
   if (Math.abs(value - from) <= 2) return null;
-  return { value, predicted, note: held ? " (held back: further would put a channel on the " + held + ")" : "" };
+  return { value, predicted, note: held === "colour" ? " (held back: further would drain the objects' colour)" : held ? " (held back: further would put a channel on the " + held + ")" : "" };
 }
+const SCENE_SAT_FLOOR = 0.7, SCENE_SHARE = 0.5; // the scene's own colour: at most half of it, never past the saturation floor
 // Temperature on blue-red, then Tint on green-magenta, solved on the state temperature predicts. Both
 // are gains on the top, both clip past +50 (their sweeps), both are the white balance. `tint` is null
 // when the green axis is already neutral.
@@ -119,10 +138,14 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   // blacks; a coloured top gets no pad either.
   const sceneColour = Math.abs(whites) > COLOURED && (Math.sign(whites) !== Math.sign(blacks) || Math.abs(blacks) > COLOURED);
   if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColour) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
+  // A picture warm at BOTH ends keeps its temperature: half the cast still solved to -49 on the oak-table
+  // fixture, and the owner had called -47 pale (23:20). The scene's colour comes out, when it does, through
+  // the pads at half strength (padsFor) - which is what a warm bottom under neutral whites needs.
   const afterTemp = temp ? temp.predicted : m;
   const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
   const sceneWhy = Math.sign(whites) === Math.sign(blacks) ? "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own colour, not the light" : "whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " over blacks that lean the other way: the brightest pixels are an object's colour (a sheen, a lamp), not the light";
   if (!temp && !tint) return sceneColour ? { value: from, tint: null, predicted: m, why: sceneWhy + " - no white balance (neutralising it would drain the objects)", sceneColour: true } : null;
+  if (temp && sceneColour) { const out = { value: temp.value, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : temp.predicted, why: sceneWhy + ": partly neutralised, temperature " + round(temp.value) + temp.note + (tint ? "; tint " + round(tint.value) : ""), sceneColour: true, partial: true }; return out; }
   const why = [];
   if (temp) why.push(mixed ? "mixed light (whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + ", blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(Math.abs(blacks)) + "): temperature " + round(temp.value) + " splits the difference, the pads take each end" + temp.note
     : "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
@@ -142,8 +165,11 @@ function padsFor(m, current = null) {
     // A parade end this far off neutral after the white balance is an object's colour, not the light:
     // a pad can only part-neutralise it and tints whatever the curve crushed under it (C187, 21:37: a
     // 0.45 cyan pad on a red-orange surface, a flat blue floor in the parade). No pad; said out loud.
-    if (Math.hypot(cast[0], cast[1]) > COLOURED) { needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size that is the scene's own colour (every band leans the same way, only the speculars near neutral), not the light - left alone, neutralising it would drain the objects"); continue; }
-    const r = solveCast(wheel, [-cast[0], -cast[1]]);
+    // 23:12: "left alone" read as an orange picture to the owner (a wire ring on a warm table, whites
+    // neutral, blacks warm by 25). Half of it comes out, the floor guard below still holds the channels.
+    const scene = Math.hypot(cast[0], cast[1]) > COLOURED;
+    if (scene) needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size much of it is the scene's own colour - half of it taken out, the rest is the objects");
+    const r = solveCast(wheel, scene ? [-cast[0] * SCENE_SHARE, -cast[1] * SCENE_SHARE] : [-cast[0], -cast[1]]);
     if (!r) continue;
     const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
     const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
@@ -376,4 +402,4 @@ function skinFor(m, from = { saturation: 100 }) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };

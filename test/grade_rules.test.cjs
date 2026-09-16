@@ -204,8 +204,11 @@ test("a parade end more than 20 off neutral is a coloured surface: no pad, no cu
   const { levelsFor } = require("../src/grade_rules.cjs");
   const f = frame(22, 45, 90, [32, 12, 4], [90, 90, 90]); // B-R -28 at the bottom: a red-orange object in shadow
   const pads = padsFor(f);
-  assert.equal(pads.wheels.shadows, undefined, "no Shadows pad on an object's colour");
-  assert.ok(pads.needs.some((n) => /the scene's own colour/.test(n)), pads.needs.join(" | "));
+  // 23:12: "left alone" read as an orange picture; half of an object's colour now comes out through the pad.
+  assert.ok(pads.wheels.shadows && pads.wheels.shadows.sat > 0, "half a Shadows pad on an object's colour: " + JSON.stringify(pads.wheels.shadows));
+  const full = padsFor(frame(22, 45, 90, [22 + 6, 22 - 3, 22 - 8], [90, 90, 90])).wheels.shadows; // the same direction, inside COLOURED
+  assert.ok(pads.wheels.shadows.sat < (full ? full.sat * 1.2 : 1), "and not the full pad a light cast would get");
+  assert.ok(pads.needs.some((n) => /the scene's own colour - half of it/.test(n)), pads.needs.join(" | "));
   const lev = levelsFor(f, null, f);
   assert.ok(!lev || lev.blackIn <= 0.03, "and at most a token black-point curve when its lowest channel is already at 4");
 });
@@ -330,4 +333,19 @@ test("nothing the grade footer reads is declared inside the clip loop's try bloc
   const declared = [...inside.matchAll(/^\s{2}(?:let|const) (\w+)/gm)].map((m) => m[1]);
   const leaked = declared.filter((n) => new RegExp("\\b" + n + "\\b").test(after));
   assert.deepEqual(leaked, [], "declared at the try's top level and read after it: " + leaked.join(", "));
+});
+
+test("log footage is recognised from the picture and never balanced as if it were display-referred", () => {
+  const { looksLikeLog } = require("../src/grade_rules.cjs");
+  // A Sony A7S II XAVC S file that declared nothing (23:10): black 12.5, white 70.6, saturation p99 10.
+  const log = frame(12.5, 26.7, 70.6, [13.3, 12.5, 12.2], [71.4, 70.2, 70.2], { saturation: { p50: 3, p99: 10 } });
+  assert.equal(looksLikeLog(log), true);
+  const darkDisplay = frame(9.8, 40, 66.7, [10, 10, 10], [67, 67, 67], { saturation: { p50: 18, p99: 34 } }); // C233: dim, but coloured
+  assert.equal(looksLikeLog(darkDisplay), false, "a dim display picture shares the luma, never the colour");
+  const graded = frame(18, 58.4, 82.4, [18, 18, 18], [82, 82, 82], { saturation: { p50: 17, p99: 39 } });
+  assert.equal(looksLikeLog(graded), false);
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(seqTool, /gradeLooksLikeLog\(m\)\) \{[\s\S]*?reads as LOG[\s\S]*?logSkipped\+\+;\s*continue;/, "a log clip is named and skipped, not stretched");
 });

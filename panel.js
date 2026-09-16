@@ -17,7 +17,7 @@ const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resiz
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -1080,7 +1080,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     clips.push(...group);
   }
   const lines = [], t0 = Date.now();
-  let renders = 0, balanced = 0, touched = 0, stopped = false;
+  let renders = 0, balanced = 0, touched = 0, stopped = false, logSkipped = 0;
   // The source decode is only a read of the timeline while it decodes the way Premiere does. On BRAW
   // that is the clip's own settings (Decode Using: Clip, the embedded LUT applied) - and the LUT is a
   // tick box (the owner, 2026-09-16 00:33). One render on the first clip read from source checks it;
@@ -1162,6 +1162,17 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         }
       } else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
+    // Log footage is converted, not balanced: the targets below (black 4, white 92) are display-referred
+    // and would stretch a log curve into a picture that is neither (23:08, a Sony A7S II file). Said and
+    // left alone until a conversion is in the chain - the maker's LUT, Premiere's own colour management,
+    // or a transform this pass can write. Only when the read is the source file: a Premiere render carries
+    // whatever conversion the clip already has.
+    if (readFrom === "source" && !graded && gradeLooksLikeLog(m)) {
+      const f0 = m.frame || m;
+      lines.push(label + " [" + (m.region || region) + "] reads as LOG (black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / colour p99 " + round2(f0.saturation.p99) + "): not balanced. A log encode needs a conversion to Rec.709 first - the camera maker's LUT in Lumetri's Input LUT (Sony S-Log2/S-Log3, Canon C-Log, Panasonic V-Log, ARRI LogC ship with Premiere), or Premiere's colour management set to detect log - and this pass grades what comes out of that. Stretching log to display targets is not a grade.");
+      logSkipped++;
+      continue;
+    }
     const seen = m.region || region;
     const sawV = m.vision ? [m.vision.faces && m.vision.faces.length ? m.vision.faces.length + " face" + (m.vision.faces.length > 1 ? "s" : "") : "", m.vision.hands && m.vision.hands.length ? m.vision.hands.length + " hand" + (m.vision.hands.length > 1 ? "s" : "") : ""].filter(Boolean).join(", ") : "";
     const f0 = m.frame || m;
@@ -1498,7 +1509,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.sort((a, b) => { const ta = /@([\d.]+)s/.exec(a), tb = /@([\d.]+)s/.exec(b); return (ta ? Number(ta[1]) : 0) - (tb ? Number(tb[1]) : 0); }); // ponytail: the reference cut was graded first; the reader wants timeline order
-  lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
+  lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone (see the row)" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
     + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   if (resumeAt !== null) lines.push("Not finished: the run paused after " + secs + "s so the call would return. Everything above is written and confirmed. To do the rest, call grade_sequence again with start_at=" + resumeAt + " (same track and region); the shot match carries over. If renders are creeping (they do through a long Premiere session), restart Premiere first.");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
