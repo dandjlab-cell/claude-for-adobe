@@ -2,20 +2,182 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
-**Date:** 2026-09-17 (12:35)
-**Branch:** `fix/whisper-metal` (not merged to main, not released; the public zip is still **0.1.77**)
-**Last commit:** `13cb188` — log identification reads the file's own declaration first; the conversion question is two choices (which conversion, where it goes). **Nothing since `ca9ae44` has been run live.**
+**Date:** 2026-09-17 (16:45)
+**Branch:** `main` — `fix/whisper-metal` was merged and deleted today; main is the working branch and what pushes. `feat/scopes` still exists as a local worktree; ignore or prune it, it is not in play.
+**Last commit:** `e1c432a` — 0.1.87: color, not colour, everywhere
+**Released:** **v0.1.87** is public and is what "Check for updates" offers. Ten releases went out today (0.1.78 → 0.1.87).
+**Tests:** 352 pass, 1 skip (`node --test test/*.test.cjs`; the skip fetches schemas.adobe.com)
 **Role:** BUILDER
 
-This file is committed at the end of every session (`handoff: …`); docs-only commits need no go from the user, pushes and releases do.
+This file is committed at the end of every session (`docs: session handoff …`); docs-only commits need no go from the user, pushes and releases do.
 
 ---
 
 ## What this project is
 
-A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that runs the user's own Claude Code or Codex inside Premiere. The editor selects clips or a folder, says what they want, and the agent inspects footage, transcribes, cuts silences and repeated takes, reframes, lays b-roll, makes captions, and now **color-balances a sequence** — all through deterministic panel tools that print CHECK lines and work on a duplicated "[Claude]" copy of the sequence. Users install a zip; the panel self-updates from GitHub Releases.
+A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that runs the user's own Claude Code or Codex inside Premiere. The editor selects clips or a folder, says what they want, and the agent inspects footage, transcribes, cuts silences and repeated takes, reframes, lays b-roll, makes captions, and **color-balances a sequence** — all through deterministic panel tools that print CHECK lines and work on a duplicated `<name> [AI]` copy of the sequence. Users install a zip; the panel self-updates from GitHub Releases.
 
-## What Was Done (2026-09-15, one long session on color)
+## What Was Done (2026-09-17)
+
+Thirty-nine commits, ten releases. Four threads:
+
+1. **Everything reached users for the first time since 7 September.** Everything built on 2026-09-15/16 existed only in the repo: the installed panel updates from *releases*, and nobody had cut one. `main` was 167 commits behind. Merged, deleted the branch, and released 0.1.78; main is now the only branch.
+2. **Speed: 147s → ~87s on an 18-clip timeline.** Three measured wins, all found by profiling rather than reasoning — see Decisions.
+3. **The color pass got four real fixes and two reverts** (log shadowing, self-refresh contention, skin corridor, the single-clip scope; the reverts are the RGB channel toes and the black-point floor guard).
+4. **The routing hole closed**: a **Color correct** button, and the rule that *all* color work goes through the one pass.
+
+## Current State
+
+**Works end to end, released, and run live today:**
+
+- **`grade_sequence`** — the deterministic balance over a track, or **one clip** via `seconds`. Reads each clip's own file, writes white balance / wheel pads / black point / whites / contrast / saturation roll-off / skin, confirms every move from Premiere's render. ~87s for 18 BRAW clips, 4–7 of them landing fully balanced.
+- **Color correct button** (Whole sequence · Selected clip) — calls the same pass with **no model in the loop**. This is the reliable path; the chat route depends on skill routing, which failed twice today.
+- **`ask_user`** — questions with clickable answers in the chat (full-width stacked rows, label + what it costs, label ≤ 32 chars). Used by the log-conversion question and available to the model generally.
+- **Log footage** — recognised from the picture; converted with the maker's own official LUT, fetched from their page. **Eight verified direct downloads**: Sony (S-Log3, S-Log2), Canon, Panasonic, ARRI, Fujifilm, DJI (D-Log, D-Log M). Nikon and Blackmagic are honestly page-only (installer / no standalone file). Nothing is bundled — Canon's licence forbids redistribution in plain words.
+- **Pre-push privacy guard** — now scans the *commits being pushed*, not just the tree.
+
+**Built but never exercised live:** the single-clip `seconds` path (the button's "Selected clip" was added at 15:11 and the 15:15 run used Whole sequence).
+
+**Known-unfixed, with evidence:** the blue blacks. See Known Issues.
+
+## What's in progress or blocked
+
+Nothing is half-written. Two things are *deliberately* parked with the reason recorded in the code:
+
+- **`neutralBottoms` in `src/curves.cjs`** — per-channel RGB curve toes. Written, tested, **not wired**, with a comment above it and a test asserting nothing calls it. It shipped in 0.1.80 and was reverted in 0.1.81.
+- **The black-point floor guard** — shipped in 0.1.82, reverted in 0.1.86, with the full account written above the line it guarded and a test that fails if it is re-added without a sweep.
+
+## What's Next (in order)
+
+1. **Sweep the toe-to-floor model.** This is the blocker for the blue blacks, for both reverted changes, and for proof frame 1 below. The question: when the Master curve's bottom point moves by Δx, how far does each channel's floor actually fall? Both reverts failed because I *derived* that relationship instead of measuring it. Method, mirroring the wheel sweep already in `src/lumetri_sweeps.json`: on one clip, set the curve's bottom point to 0.02 / 0.05 / 0.10 / 0.15 / 0.20 and after each read `scopes` (whole frame), recording `red.p1`, `green.p1`, `blue.p1` and `bands.blacks`. Add as a `curveToe` block beside `wheelBands` (confirmed absent today). **Use C227 @4.44s — the frame the wheel sweep itself used — so `curveToe` is comparable with `wheelBands`.** *Done when* `curveToe` is in the file and a re-run's parade at `00:00:09:10` shows blue's floor within 2 IRE of red's with nothing pushed under zero.
+2. **Batch the host writes** — ~28 `evalScript` round trips per clip, ~500 a run, ≈22s. The biggest remaining speed win and it does not touch what the grade *decides*. One call that sets the whole Lumetri state instead of five. *Done when* a full 18-clip run's total `host calls` drops from ~500 to under 150 and every row's confirmed numbers match the 0.1.87 baseline.
+3. **The external review** the owner has planned (ChatGPT 6 Atlas or a human colorist). **Write the brief to `docs/reviews/color-review-brief.md` — that is the next session's job, not the owner's**; the owner sends it. Hand over the brief, **not** the codebase: `panel.js` is one ~390 KB file and a reviewer will drown in it. The brief must carry the measured facts (the sweep tables, the band statistics), the rules with every *invented* constant flagged as invented, and the named failures with numbers. Tell the reviewer: many `panel.js` tests assert *source text*, not behaviour, so a green suite is a weaker guarantee than it looks; the calibration is from **one clip**; masks are not scriptable in Premiere; HSL is not trusted.
+4. **C228's contrast regression** — clip `A056_05072246_C228.braw` at **7.735s** on the test timeline. It read `black 3.5 / body 45.5 ✓` before the skin-corridor change (the 0.1.78 run) and `body 40, flat` after (the 0.1.85 run); `SPREAD.bodyFlat` is 45, so it crossed a threshold rather than collapsing. Cause: a Hue vs Hue rotation is not luma-neutral — changing the R:G:B ratio changes the weighted sum that *is* luma. To see it: `grade_sequence` with `seconds: 7.735`, then `scopes` at 7.735s and compare `p90 - p10`. Decide whether to accept it or compensate the contrast when the skin curve fires.
+5. **Prove the scripted Lumetri LUT write on Premiere 26.3.2.** Carried over unproven from 2026-09-17 morning: community reports say the write broke in 23.4–24.0, and `log_lut` judges by the render rather than the read-back, so it will say if it did not stick. Editor: open the **A7S II** project (the untagged Sony XAVC S interior on the external drive), Discard copy, then `grade this video` → the question appears → answer **on this clip**. *Done when* the row reads `log → the maker's official LUT, on this clip` followed by a normal grade, **or** the tool says the write did not take — either outcome settles it.
+6. **Targeted exposure** — `subject luma 33.7 dark where it matters` is reported, never acted on, because the only targeting tool is the HSL key and the owner does not trust it (15:0x: "we found HSL to not be very good in general"). Parked until something better exists.
+
+## The two proof frames (the owner's acceptance test, 2026-09-17 16:50)
+
+The owner ended the session with two screengrabs and "same problems again and again ... this is what we do
+next session as proof". Neither is a new bug class - both are the ones already named below - but these are
+the frames the work gets judged on. **Identify the two clips on the test timeline first** (the parades are
+in the chat export for 16:50); they were not timecoded in the message.
+
+1. **Left uncorrected — flat, and the blacks still blue.** Green stems across a warm out-of-focus interior.
+   The parade never reaches the bottom: all three channels stop well above 0 and blue's floor sits lifted
+   above red's and green's, the same horizontal blue shelf as `00:00:09:10`. The picture reads soft and
+   yellow. This is the blue-blacks issue AND the contrast one in a single frame: the pass reported it rather
+   than fixing it, which is the honest outcome but not the useful one.
+2. **Badly corrected.** A hand lifting a blue cloth out of a dishwasher. The parade here DOES fill the range
+   - roughly 0 to 85 on all three - but the result reads washed out: the whites are pushed up into a flat
+   shelf near the top and the midtones have lost separation. Worth checking whether this is a clip where
+   `whites` ran to its ceiling (several rows this session show `whites 100 ... partial: as far as the knob
+   goes`), which lifts the top without adding any contrast below it.
+
+*Done when* both frames are re-run after the toe sweep and: frame 1's parade bottoms meet within 2 IRE with
+nothing under zero and its body spread clears `SPREAD.bodyFlat` (45), and frame 2 no longer has whites
+pushed to a shelf - judged by the owner's eye on the picture, not only by the numbers, because "balanced"
+already passed on shots he disliked.
+
+## Key Files Changed (this session)
+
+| File | What changed |
+|---|---|
+| `panel.js` | `seconds` (single-clip grade); `runColorButton`; `askChoice`/`askUserTool` + the caps; `visionForGrade(Many)` (`--grade`, one launch); `prereadSources` + `writeFrameImage` (BMP); refresh suspended during every tool call; `logMode` rename (the shadowing bug); black-point correction reverted to unguarded |
+| `src/ocr.swift` + `bin/ocr` | new `--grade` mode: faces + hands + subject mask in one launch, no text/person work. **Binary rebuilt and re-signed** — `swiftc -O -o bin/ocr src/ocr.swift -framework Vision -framework AppKit; codesign -s - bin/ocr` |
+| `src/luts.cjs` | eight verified maker LUTs; fetch decides zip/gzip/cube by magic bytes; `site()`; `resolve()` for a named file; rewrite only when Premiere would refuse the cube |
+| `src/grade_rules.cjs` | `SKIN_HUE` ceiling 140 → **132**; `FLOOR_MIN` exported |
+| `src/curves.cjs` | `neutralBottoms` + `predictBottoms`, deliberately unwired |
+| `src/claude-session.cjs` | the prompt now names the **color** skill (it was the only one missing); `ask_user` pointer; still ≤ 700 words |
+| `.claude/skills/color/` | renamed from `colour/`; leads with "every color request goes through the pass, the only question is scope" |
+| `index.html` | Color correct button + its options row; `.choices` styling for the question card |
+| `scripts/privacy-patterns.cjs`, `scripts/scan-history.cjs`, `.githooks/pre-push` | the push guard now scans commit ranges |
+
+## Decisions Made
+
+| Decision | Why |
+|---|---|
+| **Anything that changes what the grade writes needs a sweep first** | Two reverts today, both from reasoning instead of measuring. The changes that held (Vision batching, single-clip scope) did not touch the arithmetic. |
+| A **button** for color, not only chat routing | Both routing failures today were invisible from inside the code. A button cannot mis-route. |
+| `grade` / `grade_shot` are **taste only**, never a balance | They are steered — the caller supplies the goals — so they cannot hold the canon's caps. Left ambiguous, the model asked for `contrast 85` on a clip the canon caps at 40. |
+| Maker LUTs are **fetched, never bundled** | Canon's terms: "solely for your personal, non-commercial use … shall not distribute … publish … to any other party." Repackaging is not the test; who hands the file to the editor is. |
+| The frame handed to Vision is **BMP** | PNG compression cost 352ms/frame vs 18ms, for a temp file read once and deleted. Vision returns identical faces, hands and subject coverage. |
+| Working copies are tagged **`[AI]`**, not `[Claude]` | The same panel runs Codex. `[Claude]` is still matched so existing copies are recognised. |
+| The black point is set by the **lowest channel**, not luma — *in the first write only* | The correction's version of that guard froze the pass (see Known Issues). |
+
+## Known Issues / Watch-outs
+
+- **Blue blacks are unfixed, and there is a parade proving it.** At `00:00:09:10` on the test timeline: blue's floor sits ~+8 IRE while red is pushed *under* zero. Two attempts failed. What is actually established: the cast at the bottom is a **paired** statistic (`bands.blacks` — darkest 3% of pixels, all three channels at those same pixels), **not** each channel's own `p1`; and the shadows band (5–30) is contaminated by coloured objects — on C228 its +5.5 reading is the blue *cloth*, not the black counter, which measures +1.7 (neutral) in the source. Aiming the pad at the shadows band would drain the subject.
+- **A green test suite is weaker than it looks.** Many `panel.js` tests are `assert.match(panel, /regex/)` against source text. The RGB-toe regression had passing tests.
+- **The calibration is one clip.** Every fitted model in `src/lumetri_sweeps.json` inherits that.
+- **Skin hue rotation is not luma-neutral** — it cost C228 ~3 points of body contrast and flipped it to "flat".
+- **Two panels exist.** The dev extension loads from this repo (`dev <sha>` in the log); the installed one updates from releases (`installed 0.1.87`). Testing the wrong one wastes a run — the log line says which.
+- **`panel.js` is ~390 KB, one file, no module boundaries.** The grade loop alone is ~500 lines carrying matched shots, the skin step, budget and resume.
+- **Masks are not scriptable in Premiere** (no ExtendScript or UXP API), and HSL is not trusted. Targeted correction has no good tool today.
+- **Releases are irreversible in practice** — a public push is cached and indexed. Verify the built zip's contents before `gh release create`; the last two releases before today shipped broken from a silent chain.
+
+## Where data lives
+
+- **The test project's absolute path, its sequence names and the analysis folder are deliberately NOT in this repo** (the privacy scan forbids it). They are in the private memory note `~/.claude/projects/-Users-dandj-DevApps-claude-for-adobe/memory/project_claude_for_adobe_test_project.md` — read it by absolute path before any live run.
+- Panel log: `~/Library/Logs/claude-for-adobe/panel-<date>.log` (host events, tool results truncated to one line, per-clip grade timing, slow bridge calls). Chat exports and bug reports go to `_claude-for-adobe_analysis/` beside the project.
+- Calibration: `src/lumetri_sweeps.json` (in the repo). Sweep prompts are in the chat log of 2026-09-15 and reproducible: "On clip 1 at 0.5s … set <Slider> to -100, -50, -20, 0, 20, 50, 100, measuring scopes (whole frame) after each, then back to 0."
+- The premiere-map side: `~/DevApps/premiere-map/reports/round250..252/`, `tools/parse_lumetri_prproj.py`; vault notes under `~/DevApps/Brain/Knowledge/Premiere Internals/`.
+- Private memory notes: `~/.claude/projects/-Users-dandj-DevApps-claude-for-adobe/memory/` (packaging, the test project's path, release-chain guard). Read by absolute path from any cwd.
+
+## Credentials / external setup
+
+- No API keys. Claude runs under the user's own Claude Code login; Codex under the user's Codex login (`codex` CLI 0.153.4 installed; `codex exec -m gpt-6-astra -s read-only` was used for the review).
+- `gh` authenticated as dandjlab-cell for releases. Blackmagic RAW SDK installed at `/Applications/Blackmagic RAW/` for BRAW source reads (optional; the pass falls back to a Premiere render).
+
+## Quick Start for Next Session
+
+```bash
+cd ~/DevApps/claude-for-adobe
+git status --short && git log --oneline -3     # main @ e1c432a (0.1.87), pushed. docs/handoff.md may be dirty
+                                               # if the previous session ended mid-write; commit it if so.
+node --test test/*.test.cjs                    # 352 pass, 1 skip (the skip fetches schemas.adobe.com)
+sh scripts/install.sh                          # only if the dev panel is missing: symlinks this repo into
+                                               # ~/Library/Application Support/Adobe/CEP/extensions/ and installs
+                                               # the pre-push privacy hook (core.hooksPath=.githooks).
+```
+
+Then, in Premiere (the editor's clicks, not the agent's — computer-use access was declined on 2026-09-08):
+
+1. Open the test project on the external drive (the BRAW kitchen timeline, 18 clips, ~29s) and **Discard copy** if an `[AI]` copy is already there — the bar above the chat lists them with Open original / Discard copy.
+2. Click **Color correct → Whole sequence**. That is the reliable path and needs no chat at all.
+3. Read the result from the `_claude-for-adobe_analysis/chat-*.md` export beside the project (newest first) — the agent reads it itself, no pasting needed. The panel log is `~/Library/Logs/claude-for-adobe/panel-<date>.log`.
+
+**To do What's Next 1 (the toe sweep), read this first — it cannot be run from chat as things stand.**
+
+**No panel tool reaches the Master curve.** `grade` and `grade_shot` take a `parameter` from a sliders-only
+enum (`temperature, tint, exposure, contrast, highlights, shadows, whites, blacks, saturation, vibrance` —
+`PARAMS` in `src/grade.cjs:64`). The curve's only door is `curveWriter` at `panel.js:1186`, which calls
+`host("lumetriQE", seconds, track, "RGB Curves", "Master:N:x,y,…")` — dots to write, commas on read — and
+nothing exposes it to the model.
+
+So step one of the sweep is to **expose it**: add a `curve_black` parameter that writes
+`curveLevels(x, 1, current, anchor)` through that same writer, or add a one-off `sweep` action to the grade
+tool. Either is a small change in `panel.js`; it is not a change to what the grade *decides*, so it needs no
+sweep of its own. Then, with **C227 @4.44s** selected (the frame `wheelBands` itself was swept on, so the
+new block is comparable):
+
+```
+Set the Master curve's bottom point to 0.02, then 0.05, 0.10, 0.15, 0.20. After each one call scopes at
+4.44s on the whole frame. Report red.p1 / green.p1 / blue.p1 and the blacks band for every setting, then
+put the curve back to 0.
+```
+
+Add the result to `src/lumetri_sweeps.json` as a `curveToe` block beside `wheelBands`, and only then
+re-attempt either reverted change.
+
+**Before any release:** bump `CSXS/manifest.xml` *and* `package.json` (package.sh refuses a mismatch), `npm test`, `sh scripts/package.sh`, then **unzip `dist/ClaudeForAdobe-<v>.zip` and grep it** for the change you just made — two releases before today shipped broken from a chain that failed silently. `gh release create vX.Y.Z dist/ClaudeForAdobe-X.Y.Z.zip dist/ClaudeForAdobe.zip --title … --notes …`; the updater matches the versioned asset name exactly.
+
+---
+
+# Archive — earlier sessions (canonical for their own topics; numbers above win)
+
+## The color pass as first built (2026-09-15 / 16)
+
 
 - **"Grade this video" is one deterministic tool call, `grade_sequence`.** The panel's AI decides nothing per shot; it calls the tool once and relays the table. Per clip: read the scopes from the clip's own file (no Premiere render), white-balance on both axes, cancel the residual casts at the parade's ends with the Shadows/Highlights wheel pads, set the black point with an anchored Master curve, lift the white point with Whites then Highlights, contrast only if the frame is flat or harsh, then confirm in Premiere and correct up to twice from the real readings, with (2026-09-16) saturation rolled off in the deepest shadows and near-whites on Luma vs Sat in the first batch. Three renders a clip at most.
 - **Every knob it moves is calibrated from live sweeps on one sandbox frame** (`src/lumetri_sweeps.json`): Exposure, Contrast, Temperature, Tint, Highlights, Shadows, Whites, Blacks, the three wheels (pads fitted on paired-pixel bands), and the RGB curve end points (analytic levels move, verified live).
@@ -25,7 +187,7 @@ A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that
 - **Also fixed on the way:** the playhead now follows the grade and returns once (host `frames(..., keep)` + `playhead()`); the Lumetri property walk stops at the first match (a 291 s run became 50 s); per-clip timing is printed in every row; grade tools always make the working copy first (the 18:03 run had written on the original).
 - **Sibling repo `~/DevApps/premiere-map`** closed Rounds 250–252 earlier the same day: Premiere's own scopes have no readable numbers (Export Frame + our computation is the native path); the whole Lumetri grade decodes offline from a `.prproj` (`tools/parse_lumetri_prproj.py`); QE `getParamValue/setParamValue` reads and writes Lumetri's blob parameters as text (wheels, curves, HSL key) — dot decimals to write, commas on read.
 
-## Current State
+### Current State
 
 **Works end to end on the user's Mac** (Apple Silicon, Premiere 26.3.2, dev panel symlinked to this repo): `grade this video` on the 18-clip BRAW sandbox sequence, plus everything from earlier sessions (rough_cut → transcript → audio_cut, Cut silences, reframe, captions, morph_cut, multicam_switch, scopes).
 
@@ -51,7 +213,7 @@ clip.braw @1.645s [subject] black 10.6 / white 87.8 / blacks 1.2 / whites 2.4 / 
 
 Read it left to right: the read (`black`/`white` = luma p1/p99 of the frame; `blacks`/`whites` = blue-minus-red at the parade's bottom/top, > 0 blue, < 0 warm), the moves in order, `corrected:` / `corrected again:` for the passes, the confirmed numbers, then `✓` or the residuals in the canon's words (`black point 8.2 lifted`, `whites green by 1.6`) and any `NEEDS:` note, and last the timing: total seconds, source read, Premiere renders, bridge calls, the rest.
 
-## What's in progress or blocked
+### What's in progress or blocked
 
 - **Nothing is blocked.** The color pass is at its plateau on this footage; the remaining misses are named in each row.
 - **Speed question CLOSED (2026-09-15, 23:58 run, after a Premiere restart): it was session state, not the effect stack.** 18 clips, 53 renders, 69.2 s total; per render **~0.7–0.85 s** on every row that can be divided out (C222 1 render 0.80 s; C233/C228/C223/C231 2 renders 0.70–0.85 s each; C198 4 renders 0.80 s each), and the source read back at 1.3–1.6 s from the 3 s it had reached. The heavier stack (curves + wheels + sliders) costs nothing measurable. Restart Premiere when a long grading session's renders creep past ~1.5 s.
@@ -62,7 +224,7 @@ Read it left to right: the read (`black`/`white` = luma p1/p99 of the frame; `bl
 - **Renders were back at ~3.7 s within 50 minutes of the restart** (00:48 run: 59 renders in 219.9 s; C209 @20.29 took 18.2 s for 5). Session state degrades after a few hundred effect writes; it is not the stack. Restart before any timed run.
 - **Built 00:52–01:00 (`e46b0f3`, not yet run live):** the correction's pad nudge carries the first pad's floor guard (C227 @5.63: an orange Shadows pad 0.21→0.35 over a −83 temperature put blue on the floor across the parade — the owner's screenshot at 00:00:05:12); and **shot match** — the first cut of a source file is graded, every later cut of the same file gets the same Lumetri state (read back from Premiere: temperature, tint, wheels, curves, Luma vs Sat, the sliders) and one confirm, its row reads `→ matched to <first cut> (same source): …` (C227's three cuts had temperature −64 / −83 / −47).
 
-## 2026-09-16 01:00–01:40 — what landed after the roll-off (each with a run unless marked)
+### 2026-09-16 01:00–01:40 — what landed after the roll-off (each with a run unless marked)
 
 Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the evidence; commits in order:
 - `40c8382` a channel at 0 is damage only as a FLOOR (> 5% of the frame): C228's blue cloth had red at 0 on 2.8% and the guard threw its black-point curve away ("flat and less rich"). C228 ✓ since.
@@ -106,7 +268,7 @@ Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the ev
   - **22:35–23:05 — depth (`53eeea9`, `fe08339` + this):** with the skin step leaving her alone the face "is much better"; the remaining complaint is **depth** on C193 (13:22, 15:00). Two causes in the rows: the shot guard **halved** Whites when the sibling's white point passed 95 (97.6 → 84.3 for a cut that wanted 93) → a white point past the band is now scaled to land at 93; real clipping still halves. And Contrast never fired: the calibration sweep carried no body percentiles → **the panel's model ran the sweep itself in one instruction** (22:58, C193 @15.39, −40…60, `contrast-sweep-C193.md` on the drive), and `lumetri_sweeps.json` now has `p10`/`p90` rows on `contrast` (C193's series; the model interpolates the ratio). **Finding: the Contrast slider is a weak, crush-prone tool** — the body moves ~0.14 a point (63 at −40, 69 at 0, 77 at +60) and the floor crushes 0.9% at +40, 2.8% at +60; a body of 42 → 52 would need +74, past the goal's cap of 40, so the slider gets partway and the crush guard holds it. **The next tool for depth is an S-curve on the Master curve** (we write and model that curve exactly), not more slider. Also: the midtone band is now a bracketed hint, never a verdict; a long grade pauses at `budget_seconds` and resumes with `start_at`.
   - **23:05–23:25 — depth landed, log recognised, scene color half-corrected (`b5d19f3`, `8f08adc` + this):** the 23:06 run: Contrast fires (partial at its cap of 40 on the flat rows; C228 crushed 6% and the guard halved it to 20), C193's white point scaled to 92.2 instead of halved to 84, 8/18, 137 s. **The owner tried a second project — a Sony A7S II XAVC S file — and the pass balanced log as if it were display-referred** (black 12.2 → 2.7, white 70.6 → 94.9, contrast 40: a stretch, not a conversion). The file declares nothing (ffprobe: transfer/primaries unknown, full range, XAVC brand; no Sony sidecar copied), so log is now **recognised from the picture** (`looksLikeLog`: black ≥ 8 AND white ≤ 78 AND saturation p99 ≤ 18; measured 12.5–14.5 / 68–71 / 10–14 on three frames a quarter-hour apart, against 32–39 on the sandbox; a dim display picture shares the luma, never the color) and **the pass stands down on it with a row that names the conversion** (the maker's LUT in Input LUT, or Premiere's color management). Converting it ourselves (a generated .cube, or a curve-based transform) is the next log step; which S-Log the camera used is unknown (PP7 = S-Log2, PP8/9 = S-Log3). Also from the owner's eye: **21:23 "not balanced"** — a warm bottom under neutral whites was left alone as scene color; now **half** of a colored end comes out through the pad (`SCENE_SHARE`), the floor guard still holds. A temperature half-move was tried and reverted: −49 on the oak fixture, and −47 had been called pale. **15:08 "still lacks contrast"**: that row got no Contrast (the body test passed on the read) and the slider is weak anyway — **the S-curve on the Master curve is the next tool for depth.** Provenance: one row message quoted a sandbox clip tag; removed (rules never branch on a clip; sweeps and thresholds are the honest overfitting risk, listed in the 23:03 message, and only a second project settles it — the A7S II one is that project once its log is converted).
   - **23:25–09:25 — the LUT door is closed, so log gets graded by curves (`670e057`, `87e0246` + this):** the log detector tripped on a dim Blackmagic clip at color p99 exactly 18 → two-sided now (p99 ≤ 15 AND median ≤ 6). The 23:23 Prototype run: 21:23 gets half its shadow warmth out through the pad (the panel still reads the body warm by 41 — the objects), 15:08 reads with real depth by the numbers; the owner's eye on both is pending. **The owner's direction on LUTs: no Premiere built-ins (not good); the maker's official free LUTs, or grade log ourselves.** `src/cube.cjs` writes a .cube from a function (identity and inverted probes on the A7S II project's drive). **The Input LUT custom slot is not scriptable** (09:23 probe, panel-run): properties 6 and 7 are both "Input LUT"; QE `setParamValue("Input LUT", path)` returns true and changes nothing; DOM property 7 `setValue(path)` throws "Illegal Parameter type"; property 6 = 1 sets the menu index (QE reads it back) but loads nothing; the frame was identical through all four passes. The dropdown (screenshot 23:20) is None / [Custom] / Browse… then the technical LUTs alphabetically (ALEXA…, AMIRA…, ARRI_Universal…, D-21…, Phantom…; Sony below the fold, unseen). **Remaining file route:** patch the saved .prproj (premiere-map decodes the Lumetri blob) — save, patch, reopen; not taken. **Taken instead: the log conversion as RGB Curves** — the published inverse transfer (S-Log2 / S-Log3; A7S II PP7 = S-Log2, PP8/9 = S-Log3, unknown for this shoot) followed by the Rec.709 encode, written per channel through the proven curves door, confirmed by the render (black floor to ~0–4, color opened), then the normal pass; the S-Log2 curve on S-Log3 footage leaves blacks lifted and the reverse crushes them, which is how the format is told apart without a tag. **Honest ceiling:** no gamut matrix (Lumetri has none outside the LUT slot), so color lands close, not exact; Saturation trims. Not built yet.
-  - **09:30–09:45 — the gamut question is answered, and it is not a plugin (research + `surface-26.3.2.md`):** the owner: "I'm sure there are ways to handle the gamut." There are. **Premiere's own color management does the full Sony transform (tone + gamut) before any effect, and it is scriptable in ExtendScript on this machine:** `projectItem.getOverrideColorSpaceList()` / `setOverrideColorSpace(name)` / `getOverrideColorSpace()` / `isColorManagedMedia()`, `app.project.setLogColorManagement()`, `SequenceSettings.autoToneMapEnabled` / `autoInputGamutCompressionEnabled` / `gamutMappingControls` / `workingColorSpace(List)` — all present in our own API dump. Sony spaces: S-Log2/S-Gamut, S-Log3/S-Gamut3, S-Log3/S-Gamut3.Cine (not S-Log2 + S-Gamut3.Cine). A second door: `FootageInterpretation.setInputLUTFromFilePath()` takes a **file path** at the Interpret Footage level — the maker's official LUT goes there, not in Lumetri's slot. Colorists: tone-only conversion fails on S-Gamut greens/reds; "I'll take a transform over a LUT any day". Caveats from the agent: the two derived 3×3 matrices are from published primaries, not Sony's table, and Adobe/Sony pages 403'd — moot while Premiere applies its own transform. **A native plugin is NOT needed for gamut**; it stays the route only for a live program-monitor feed (Transmit), and signing is the ordinary cost the panel's bundled binaries already pay (ad-hoc locally, Developer ID + notarisation to distribute). Memory saved: `project_premiere_color_management_scriptable.md`. **Next: the panel probe** (read the override list + sequence color settings read-only; set "Sony S-Log2/S-Gamut" on the `[Claude]` copy; scopes + preview; restore), then the pass's log step: recognise → set the override → confirm from the render (black floor ~0–4, color opened; the wrong S-Log leaves blacks lifted or crushed) → grade what comes out.
+  - **09:30–09:45 — the gamut question is answered, and it is not a plugin (research + `surface-26.3.2.md`):** the owner: "I'm sure there are ways to handle the gamut." There are. **Premiere's own color management does the full Sony transform (tone + gamut) before any effect, and it is scriptable in ExtendScript on this machine:** `projectItem.getOverrideColorSpaceList()` / `setOverrideColorSpace(name)` / `getOverrideColorSpace()` / `isColorManagedMedia()`, `app.project.setLogColorManagement()`, `SequenceSettings.autoToneMapEnabled` / `autoInputGamutCompressionEnabled` / `gamutMappingControls` / `workingColorSpace(List)` — all present in our own API dump. Sony spaces: S-Log2/S-Gamut, S-Log3/S-Gamut3, S-Log3/S-Gamut3.Cine (not S-Log2 + S-Gamut3.Cine). A second door: `FootageInterpretation.setInputLUTFromFilePath()` takes a **file path** at the Interpret Footage level — the maker's official LUT goes there, not in Lumetri's slot. Colorists: tone-only conversion fails on S-Gamut greens/reds; "I'll take a transform over a LUT any day". Caveats from the agent: the two derived 3×3 matrices are from published primaries, not Sony's table, and Adobe/Sony pages 403'd — moot while Premiere applies its own transform. **A native plugin is NOT needed for gamut**; it stays the route only for a live program-monitor feed (Transmit), and signing is the ordinary cost the panel's bundled binaries already pay (ad-hoc locally, Developer ID + notarisation to distribute). Memory saved: `project_premiere_color_management_scriptable.md` — **in the premiere-map project's memory** (`~/.claude/projects/-Users-dandj-DevApps-premiere-map/memory/`), not this repo's. **Next: the panel probe** (read the override list + sequence color settings read-only; set "Sony S-Log2/S-Gamut" on the `[Claude]` copy; scopes + preview; restore), then the pass's log step: recognise → set the override → confirm from the render (black floor ~0–4, color opened; the wrong S-Log leaves blacks lifted or crushed) → grade what comes out.
   - **09:57–10:05 — both log doors probed live (panel-run, A7S II copy):** (1) **The override door works.** `projectItem.getOverrideColorSpaceList` is a **property** (34 `ColorSpace` objects with `.name/.primaries/.transferCharacteristic/.matrixEquation/.isSceneReferred/.empty`, not strings): ACEScct, Apple Log ×2, ARRI LogC3/LogC4, Canon Log/Log2/Log3, DCDM, DJI D-Log, Fuji F-Log/F-Log2 ×2, Leica L-Log, Nikon N-Log, P3 HLG/PQ, Panasonic V-Log, Rec.2020 ×2, Rec.2100 ×4, Rec.601 ×2, Rec.709 ×2, RED Log3G10, Sony S-Log/S-Log2/S-Log3/S-Log3.Cine, sRGB. `setOverrideColorSpace(<ColorSpace object>)` returned true, `getColorSpace()` followed, the render changed. **Restore rule:** the empty "no override" object is not valid to write back (`isValidOverrideColorSpace(empty)` false, `null` false) — restore with `getOriginalColorSpace()` (Rec.709 here, true; scopes identical to baseline). **The override is on the project item → shared with the original sequence; the pass must restore it itself.** Sequence: working Rec.709, `autoToneMapEnabled` true, `autoInputGamutCompressionEnabled` true (the owner's screenshot: Direct Rec.709 SDR, Input Tone Mapping + Input Gamut Compression on, Highlight Saturation 0.5, Knee 0, Color Space Aware Effects disabled). **S-Log2/S-Gamut on the A7S II clip with the tone mapper ON:** black 12.5→21.6, median 26.7→38, white 70.6→83.9, sat median 4→7 — whites/median rise like a conversion, the black floor rises like the input tone mapper; the panel's model called it "not log"; unresolved until the run with both boxes off across all three Sony curves (queued with the owner). (2) **Color Space Transform effect: adds by name** (`qe.project.getVideoEffectByName("Color Space Transform")`, `addVideoEffect` true, matchName `AE.ADBE Color Space Transform`), 9 properties: SCS, TCS, SCS Arb Data, TCS Arb Data, Tone Map Method, Gain, Desaturation, Knee, GC Methods. SCS=30/TCS=26 stuck on read-back but **the render did not change: the two Arb Data blobs drive it and QE `getParamValue` returns them empty** — a blob to decode from the .prproj (premiere-map's method) if this door is ever wanted; parked. The effect was left on the copy, inert.
   - **10:06 — the three Sony overrides with the tone mapper OFF (panel-run; `setSettings` is non-undoable, the panel checkpointed twice: mu58temq-95d2be, mu58v5lw-202359):** S-Log2/S-Gamut → black 21.6 / white 100 / sat 9–30, 5–11% clipped per channel; S-Log3/S-Gamut3.Cine → 9.0 / 100 / 7–39; S-Log3/S-Gamut3 → 9.0 / 100 / 8–41 (the two S-Log3s differ only in gamut, as they should). Restore to Rec.709 exact. **Reading:** clipping with the tone mapper off is what real log looks like through a raw transform (log holds highlights above display white; the tone mapper is what rolls them off) — the panel's model called it "already display-referred", which is backwards. **Unexplained:** S-Log2 LIFTS the floor 12.5 → 21.6 with the mapper on or off; no de-log lifts blacks; three arithmetic attempts (full-range, legal-range-misflagged, Premiere-as-limited) give 2–5, not 21.6. The container says full range (`yuvj420p`, `color_range=pc`); a wrong flag would offset every Sony MP4. The file's own floor (min 8.2%) sits at S-Log2's coded black (8.8%), below S-Log3's (9.3%) — weak evidence for S-Log2. **Decisive test, the owner's route:** Sony's official S-Log2 and S-Log3 LUTs by hand in Lumetri's Input LUT (Browse) on the copy, scopes at 507 s after each — a proper picture from one of them settles the profile AND says whether Premiere's transform mishandles the file's levels. The picture profile (PP7 = S-Log2, PP8/9 = S-Log3) has been asked for three times; unknown.
   - **10:15–11:00 — log handled end to end, no profile needed (this commit):** the eight-override sweep with the tone mapper ON settled the A7S II file: **S-Log3/S-Gamut3.Cine** (black 9.0 / white 85.1 / color p99 29, nothing crushed) — S-Log2 lifts the floor to 21.6 (the wrong curve), Canon Log3 and V-Log crush 0.3–0.4%, ARRI LogC3 ties on numbers and loses on maker. Built: `src/logspace.cjs` — `cameraHint` from the container's tags (XAVC → sony, verified on the file), `candidates` (the hinted maker's log spaces first, never a display space), `score` (distance from black 4 / white 91 / color p99 25–45, crush and clip ×20, a body under 45, −5 for the hinted maker), `pick` (accept ≤ 14); tests replay the real sweep and pick S-Log3.Cine. Host: `colorSpaces` (list / current / original), `setColorSpace` ("" = original), `setInputLUT` (FootageInterpretation.setInputLUTFromFilePath — **untested live**). Panel: `chooseLogConversion` (maker's candidates first, one render each, the rest only if none passes; winner set, else restored) wired into `grade_sequence` once per source file; the row reads `log → Sony S-Log3/S-Gamut3.Cine (4 conversions tried, sony first …)`, the footer says the override is on the project item and Discard does not undo it. **The makers' LUTs, the owner's four steps:** `src/luts.cjs` registry (Sony S-Log3.Cine→s709 v2.00 direct link verified and fetched to `~/Library/Application Support/claude-for-adobe/luts/sony/`; S-Log2, Canon, Panasonic, Blackmagic entries carry the maker's page — click-through, no direct link), `log_lut` tool (status / fetch / apply / clear), and the color skill's "Log footage" section: say it is log and from which maker (ask if the tags say nothing), Premiere's conversion by default, the maker's LUT on request — ask before fetching, say what and from where, never search. Not bundled: licensed for use, not redistribution.
@@ -115,102 +277,6 @@ Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the ev
   - **Next editor step: restart Premiere (host changed), reload, Discard copy on the A7S II project, `grade this video` (it will ask), then answer with the LUT route so the write is proven on this version.** Done when: C227's hands row ends inside 116–126° with the oak unchanged by eye, C223/C198/C209 are not pink (a spilled key is skipped and says so), C220 keeps its range, C222's hand is lifted. If a pad overshoots on another key, the secant line in the row says by how much — that is the number to read.
 
 **Open on this shot (C227, three cuts):** the brightest 1% is the wood's sheen, not a neutral, so no specular rule can balance it; the canon's next reference is skin (the hands) — see What's Next 4. A saturation floor on the subject (hold the temperature back while the subject's predicted saturation would fall under SKIN_SAT[0]) needs saturation in the model (`coupleBands` moves casts and levels, not saturation).
-
-## What's Next (in order)
-
-**Who does what:** anything that touches Premiere's GUI (restart, reload the panel, Discard copy, typing in the panel) is the editor's; the agent cannot drive Premiere (computer-use access was declined on 2026-09-08). The agent can read the panel's chat exports straight off the external drive: they land in a `_claude-for-adobe_analysis/chat-*.md` folder beside the project being edited (ask the editor for the project folder once, then read the newest export) — do that instead of asking the editor to paste a run.
-
-1. **Prove the scripted Lumetri LUT write on this Premiere version.** This is the only unverified piece of the log path, and community reports say the write broke in Premiere 23.4–24.0. Editor: restart Premiere (host changed), reload the panel, open the **A7S II** project (the untagged Sony XAVC S interior on the editor's external drive), Discard copy, type `grade this video`. It now **asks** which conversion and where. Answer: Sony's LUT, on the clip. Done when the row reads `log → the maker's LUT, on this clip` followed by a normal grade, **or** the tool says the write did not stick (it judges by the render, not the read-back). Either outcome is the answer.
-2. **The owner's eye on three frames, still outstanding from 2026-09-16 evening.** On the Prototype sandbox: `00:00:21:23` — half the shadow warmth now comes out through the pad (`SCENE_SHARE`), is half right, too much, or not enough? `00:00:15:08` — does it have depth now that Contrast fires? On the A7S II copy after item 1: does the room read as a normally exposed interior? These three answers decide whether `SCENE_SHARE` and the Contrast cap become measured stops or stay fractions.
-3. **Turn the fixed fractions into measured stops.** `SCENE_SHARE` (half a colored end), the Contrast cap of 40, the Shadows cap of 30 are placeholders chosen after single eye-verdicts — the honest overfitting risk. The flexible version is one mechanism: push until the measured stop (write, confirm, compare the band's saturation or the floor before and after; push further if the objects kept their color, back off if they lost it). One extra confirm render per rule.
-4. **The S-curve on the Master curve for depth.** The 22:58 sweep proved the Contrast slider is weak and crush-prone on this footage (the body moves ~0.14 a point; the floor crushes 2.8% at +60), so a body of 42 cannot reach 52 with it. We write and model the Master curve exactly, so an S-curve pinned at the black and white points is the right tool. Not started.
-5. **Adjustment layers and LUTs on the clip.** Detect an adjustment layer above the clip, a Lumetri on it, an Input LUT/Look already inside the clip's Lumetri, any other color effect; when present read from Premiere's render, make the confirm mandatory, and name it in the row. Pieces exist (components are enumerated per clip; the `visible_at` ledger knows what sits above). **Note:** the log work now writes Lumetri's Input LUT itself, so this detection must not mistake our own LUT for the editor's.
-6. **A third camera.** Each new source has found a real gap on its first run (the A7S II found log). Ideally Canon or a phone, and any log footage that *is* tagged, which would exercise the declaration path that has never run live.
-7. **Midtones wheel calibration** (`castMatrix('midtones')` is NaN today) — needed before a midtone cast can be corrected rather than reported. The paste was withdrawn on 2026-09-16 22:14 because the band's median measures the objects, not a cast; a measure that separates the two has to come first.
-8. Older, unchanged: release 0.1.78 (gated on an explicit go), the keystroke doorbell decision — in the archive below.
-
-## Key Files Changed (this session)
-
-| Path | What |
-|---|---|
-| `panel.js` | `gradeSequenceTool` (the whole pass, correction passes, timing, playhead), `grade`/`grade_shot` make the working copy, `curveWriter`, `wheelWriter`, `lumetriWriter`, `measureSourceAt(…, snapshot)`, `host()` logs slow bridge calls |
-| `host/premiere.jsx` | `frames(json, base, solo, keep)`, `playhead(value)`, `lumetriParam` stops at the first property match, `lumetriQE` (QE text door by name) |
-| `src/grade_rules.cjs` | The canon as rules: `temperatureFor` (both axes, `balanceAxis`), `padsFor`, `levelsFor`, `goalsFor`, `verdict`, `ACCEPT`, `COLORED`, `FLOOR_MIN` |
-| `src/grade.cjs` | `STATISTICS` (tonal ends on the frame; whites on the brightest 1%), `PARAMS` (eight tested), `planShot` (`onlyIf`, `solve`, `baseline`, half backoff), `damage`/`allowance` (channel floor counts as crushed) |
-| `src/grade_model.cjs` | `predict`/`solveKnob` from the sweeps; `coupleBands` moves the band casts by the channel-end deltas |
-| `src/wheels.cjs` | pad model on `wheelBands`, `castAt` (bands, 1% whites), `nudgePad` (direction-aware), `predictPads`, `MAX_SAT` 0.3 |
-| `src/curves.cjs` | RGB Curves text parse/format, `levels` (anchored), `blackInFor`, `predictLevels` |
-| `src/scopes.cjs` | casts by luma band from paired pixels (rank 1%/3% + level bands), channel-at-0 shares |
-| `src/lumetri_sweeps.json` | every live sweep: exposure, temperature, contrast, blacks, whites, shadows, highlights, tint, wheels (luma rows), wheelBands (pads) |
-| `.claude/skills/color/SKILL.md` | the canon with sources, the tool table, "grade this video" = one call |
-| `docs/reviews/color_grade_review_gpt6_astra_2026-09-15.md` | the outside review |
-| tests | `grade`, `grade_rules`, `wheels`, `curves`, `scopes_bands`, `source_frame` |
-
-## Decisions Made
-
-| Decision | Why |
-|---|---|
-| Deterministic code grades; the model only relays | "Does it need to be a model or can it be code?" — code; repeatable, no guessing per shot |
-| Rules from the colorist canon only, never from the user's own grades | User: "I'm not a colorist"; sources in the color skill |
-| Read the footage from its source file; confirm with Premiere's render | No render for the read (parity verified on BRAW); the confirm is the only way to see what Lumetri did — Premiere's scopes have no readable numbers (premiere-map Round 250) |
-| Parade ends read as pixels (darkest/brightest 1–3%), not independent channel percentiles | Once a knob puts a channel on the floor the percentiles are different pixels; a 5–30 level band read scene color as a cast |
-| White balance on the brightest 1% | A specular reflects the illuminant (the canon's reference); the brightest 3% was cream cabinets on C187 |
-| Black point with the Master curve's bottom point, anchored at the median and 0.8 | Blacks is a toe control, Shadows a dark-areas control — neither lands a black point; a two-point line is a global stretch; the 0.8 pin went in only after a confirm showed the spline bowing |
-| No fixed caps on Whites/Highlights/Temperature/Tint | They were the author's, from one frame, and left white points at 80–85 with nothing clipping; the predicted ceiling/floor and the clip guard decide |
-| A bottom band > 20 off neutral after the white balance is left alone | Every band of C187 read warm by 25–32 with only the speculars neutral: the scene's color, not the light; neutralising drains the objects |
-| Balance (temperature, pads) before the tonal sliders | The pad model reads the bottoms; a black point at 4 puts a warm bottom's blue channel on the floor where nothing reads linearly |
-| Up to two correction passes, three renders a clip | User: perfect over instant; each pass scales from what the previous one actually wrote |
-| Nothing unmeasured goes in | Every change this session traces to a row in a live run, a sweep, or a screenshot from the user |
-
-## Known Issues / Watch-outs
-
-- **The Lumetri panel's wheel widget does not redraw after a QE write** (the curve widget does); the effect and the render carry the value. Read back through QE or the scopes, not the wheel picture.
-- **Lumetri has two properties named "Tint"** (Basic Correction at index 15, HSL Secondary at 102). `lumetriParam` takes the first; scripts that walk properties by name must too.
-- **Lumetri applies curves before the wheels.** A curve that crushes pixels to 0 followed by a Shadows pad paints the crushed pixels with the pad's color (a flat blue floor in the parade). The pass avoids this (no curve or pad on a colored bottom; curve capped at the lowest channel bottom).
-- **Source decode and Premiere's render agree on the parade and the median but not on the 1% tail**, which the curve is solved from; hence the curve re-solve from the confirmed black point.
-- **The green axis residuals of 1.6–2.0 are within a step of an 8-bit render** (~0.4 per code); the line is 1.5 and was not moved.
-- **A working copy is made for every grade run**; the user discards it each time. Do not write on the original (the 18:03 run did, and five clips carried a stale Blacks −40 / Temperature −25 until stripped).
-- **The sandbox BRAW arrives through its embedded camera LUT** (Effect Controls → Blackmagic RAW: Decode Using Clip, Color Science Gen 5, Color Space Blackmagic Design, Gamma Blackmagic Design Film, ISO 500, **Apply LUT ✓ Embedded**; color management: Input LUT None, media color space Rec. 709). `bin/braw_to_rgba` sets nothing and takes the same clip defaults — that is the whole reason the source read matches Premiere's render, and every sweep in `src/lumetri_sweeps.json` was made in this state. The LUT is a tick box (the owner, 2026-09-16 00:33: "that LUT is optional"). Since `gradeSequenceTool`'s parity guard (2026-09-16 00:40): the first clip read from source is also rendered once and compared (median and channel means, line 1.5); a mismatch switches the run to Premiere reads and the header says so. **Open decision, not taken:** grading from log (LUT off, Override Media Color Space → Blackmagic Design Film Gen 5 in Premiere's color management, or Lumetri's Input LUT) is the colorists' foundation and would make the pass camera-agnostic — but it invalidates every calibration sweep, so it is a re-calibration project, not a switch.
-- **Private data:** the sandbox is on an external drive; its path and clip names must never enter this public repo. `test/privacy.test.cjs` scans every tracked file for home paths, `/Volumes/` paths, emails and every term listed in `~/.claude-for-adobe-private-words` (a plain text file, one word per line, kept outside the repo on purpose — add a client or project name there and the scan and the `.githooks/pre-push` hook refuse any commit or push that contains it). Never bundle the Blackmagic RAW SDK (EULA-gated); `bin/braw_to_rgba` is built locally and absent from the zip.
-- **Never push or release without an explicit go in the session** (two broken releases shipped from a chain that skipped the check).
-- Older issues (transitions invisible, caption band position, Whisper timing, Homebrew ggml byte-patch) are in the archive's Known Issues.
-
-## Where data lives
-
-- Panel log: `~/Library/Logs/claude-for-adobe/panel-<date>.log` (host events, tool results truncated to one line, per-clip grade timing, slow bridge calls). Chat exports and bug reports go to `_claude-for-adobe_analysis/` beside the project.
-- Calibration: `src/lumetri_sweeps.json` (in the repo). Sweep prompts are in the chat log of 2026-09-15 and reproducible: "On clip 1 at 0.5s … set <Slider> to -100, -50, -20, 0, 20, 50, 100, measuring scopes (whole frame) after each, then back to 0."
-- The premiere-map side: `~/DevApps/premiere-map/reports/round250..252/`, `tools/parse_lumetri_prproj.py`; vault notes under `~/DevApps/Brain/Knowledge/Premiere Internals/`.
-- Private memory notes: `~/.claude/projects/-Users-dandj-DevApps-claude-for-adobe/memory/` (packaging, the test project's path, release-chain guard). Read by absolute path from any cwd.
-
-## Credentials / external setup
-
-- No API keys. Claude runs under the user's own Claude Code login; Codex under the user's Codex login (`codex` CLI 0.153.4 installed; `codex exec -m gpt-6-astra -s read-only` was used for the review).
-- `gh` authenticated as dandjlab-cell for releases. Blackmagic RAW SDK installed at `/Applications/Blackmagic RAW/` for BRAW source reads (optional; the pass falls back to a Premiere render).
-
-## Quick Start for Next Session
-
-```bash
-cd ~/DevApps/claude-for-adobe
-git status --short && git log --oneline -3      # clean after the handoff commit; latest on fix/whisper-metal
-node --test test/*.test.cjs                      # 324: 323 pass, 1 whisper skip (it fetches schemas.adobe.com)
-sh scripts/install.sh                            # only if the dev panel is missing: symlinks this repo into
-                                                 # ~/Library/Application Support/Adobe/CEP/extensions/ and installs the pre-push privacy hook.
-                                                 # It is a symlink, so src/ and the skills are always current: reload the panel after edits,
-                                                 # restart Premiere only when host/premiere.jsx changed (it did on 2026-09-17).
-```
-
-Then, in Premiere (the editor's clicks, not the agent's):
-
-1. **Restart Premiere** — `host/premiere.jsx` changed (`colorSpaces`, `setColorSpace`, `setInputLUT`, `lumetriLUT`).
-2. Open the dev panel: Window > Extensions > the dev "Claude for Premiere". The footer must read `dev <sha> (fix/whisper-metal)`.
-3. Open the **A7S II** project, Discard copy (the bar above the chat lists `<name> [Claude]` copies with Open original / Discard copy), then type `grade this video`.
-4. It will **ask** which conversion and where. Answer: **Sony's LUT, on the clip.** That is What's Next 1.
-
-The agent reads the result itself from the `_claude-for-adobe_analysis/chat-*.md` exports beside the project on the editor's external drive (newest first) — no pasting needed.
-
----
-
-# Archive — earlier workstreams on this branch (unchanged today; canonical for their own topics)
 
 The sections below predate the color work. Their test counts and "last commit" lines are stale; the header above is canonical on anything numeric.
 
