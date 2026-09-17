@@ -76,8 +76,9 @@ test("what has no measured form refuses to be modelled", () => {
   const rgb = ramp(64);
   assert.throws(() => apply(rgb, "vibrance", 50), /no measured form/);
   assert.throws(() => apply(rgb, "saturation", 150), /no measured form/);
-  // Exposure upward is a tone map in Premiere and is deliberately not faked.
-  assert.throws(() => apply(rgb, "exposure", 0.5), /tone-map/);
+  // Exposure upward has a shoulder that is Lumetri's own - not the sequence tone mapper, which would have
+  // to act on Whites too and does not. Deliberately not faked from four ratios on one frame.
+  assert.throws(() => apply(rgb, "exposure", 0.5), /rolls off the highlights/);
   assert.doesNotThrow(() => apply(rgb, "exposure", -1), "downward is the measured gamma-2.4 gain");
 });
 

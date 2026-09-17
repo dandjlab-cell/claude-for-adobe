@@ -65,18 +65,24 @@ One line per established fact: what is known, when, where the evidence lives, an
 
 ---
 
-## The open question this index immediately raises
+## The open question this index raised — ANSWERED, within the hour, NO
 
-The offline simulator was cancelled because Exposure is asymmetric. **That asymmetry is now known to be
-`autoToneMapEnabled`, a sequence setting that is on by default and can be turned off.** With it off, the
-gamma-2.4 gain may hold in both directions — which would remove the reason the simulator was abandoned.
+Putting those two lines next to each other produced a hypothesis: the offline simulator was cancelled
+because Exposure is asymmetric, and that asymmetry might be `autoToneMapEnabled` — a sequence setting, on
+by default. If so, a cancelled approach had been cancelled over a checkbox.
 
-Nobody has tested that, because the two facts were recorded three days apart in different sections of the
-same prose file and never sat next to each other. That is the whole argument for this index.
+**It is not, and no setting had to be touched to find out.** Whites turns out to be *Exposure in different
+units* — 100 Whites points = 1 stop, both a gamma-2.4 gain, confirmed on two frames and bit-identical
+field-for-field on one. Downward they are the same operation exactly. **Upward they split: at the same
+gain, Whites clips 2.74 % of red while Exposure rolls off and clips nothing.** A sequence-level tone
+mapper acts on the composited result and cannot know which slider produced a value — if it were doing the
+roll-off, Whites would roll off too. So the shoulder is inside Lumetri's Exposure, `handoff.md:388`
+stands, and the non-undoable `setSettings` write was never needed.
 
-**The test:** set `autoToneMapEnabled` false on a working copy, sweep Exposure upward, and check whether
-`100·((v/100)^2.4 · 2^stops)^(1/2.4)` now predicts p99. If it does, `src/forward.cjs` can model Exposure
-in both directions and the pass gains a control it currently refuses to use upward.
+**What the hypothesis bought anyway**, which is why it was worth forming: it produced the comparison that
+found Whites and Exposure to be one control, and that the pass has the wrong one banned. Raising the white
+point with Whites clips; raising it with Exposure does not. The pass refuses Exposure upward and reaches
+for Whites — exactly backwards if the goal is not to blow the top out.
 
 ---
 

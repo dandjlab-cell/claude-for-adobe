@@ -50,14 +50,16 @@ const lerpTable = (pts, vals, x) => {
   return vals[vals.length - 1];
 };
 
-// Whites: a pure multiplicative gain about zero (`whitesRule`, out = in * k, residual 0.27 out of sample).
-const WHITES_K = { pts: [-100, -50, -20, 0, 20, 50, 100], k: [0.750, 0.865, 0.945, 1, 1.060, 1.152, 1.330] };
+// Whites and Exposure are ONE control in two unit systems (`whitesRule._ITISEXPOSURE`): 100 Whites points
+// = 1 stop, and a gamma-2.4 gain is the plain scale 2^(stops/2.4) in display code values. Confirmed on two
+// frames; on C202 the rows are bit-identical field for field. So there is one gain function here, not two
+// tables - keeping two would have been a redundancy pretending to be evidence.
+const gainForStops = (stops) => Math.pow(2, stops / 2.4);
 // Contrast: a gain about a pivot near 49.6 (`contrastRule`) - APPROXIMATE, median residual up to 2.09.
 const CONTRAST_K = { pts: [-100, -50, -20, 0, 20, 50, 100], k: [0.798, 0.900, 0.966, 1, 1.046, 1.100, 1.191] };
 const CONTRAST_PIVOT = 49.6;
-// Exposure: a gain in LINEAR light at gamma 2.4 (`exposureRule`), exact downward. Upward Premiere
-// tone-maps the highlights and that is not modelled - applying a positive exposure throws rather than
-// pretending.
+// The gamma the gain is taken in. Exported so a caller can see what the constant is rather than find 2.4
+// buried in gainForStops.
 const EXPOSURE_GAMMA = 2.4;
 // Blacks: a toe, exponential in level, lambda about 23 IRE (`blacksRule`). Strength per slider point is
 // taken from the measured black-point move: +100 lifted luma p1 by 8.2 on C202.
@@ -66,12 +68,17 @@ const BLACKS_LAMBDA = 23, BLACKS_PER_POINT = 0.082;
 const OPS = {
   temperature: (amount) => { const k = { red: lerpTable(WB.temperature.pts, WB.temperature.red, amount), green: lerpTable(WB.temperature.pts, WB.temperature.green, amount), blue: lerpTable(WB.temperature.pts, WB.temperature.blue, amount) }; return (v, ch) => v * k[ch]; },
   tint: (amount) => { const k = { red: lerpTable(WB.tint.pts, WB.tint.red, amount), green: lerpTable(WB.tint.pts, WB.tint.green, amount), blue: lerpTable(WB.tint.pts, WB.tint.blue, amount) }; return (v, ch) => v * k[ch]; },
-  whites: (amount) => { const k = lerpTable(WHITES_K.pts, WHITES_K.k, amount); return (v) => v * k; },
+  whites: (amount) => { const k = gainForStops(amount / 100); return (v) => v * k; },
   contrast: (amount) => { const k = lerpTable(CONTRAST_K.pts, CONTRAST_K.k, amount), P = to255(CONTRAST_PIVOT); return (v) => P + (v - P) * k; },
+  // Exposure is the same gain DOWNWARD and rolls off UPWARD, and the roll-off is Lumetri's own - not the
+  // sequence tone mapper, which would have to act on Whites too and does not (`exposureRule._notTheToneMapper`).
+  // The shoulder is level-dependent: measured/predicted at +0.5 stops is 0.985 at p1, 0.971 at the median,
+  // 0.926 at p99, 0.886 at max, and below about 20 IRE it is invisible even at +2. Not modelled, because a
+  // shoulder fitted from four ratios on one frame would be a guess wearing a number. Use whites for a clean
+  // gain up, or measure the shoulder properly first.
   exposure: (stops) => {
-    if (stops > 0) throw new Error("exposure above 0 is not modelled: Premiere tone-maps the highlights (exposureRule._upwardIsDifferent)");
-    const g = Math.pow(2, stops);
-    return (v) => 255 * Math.pow(Math.pow(v / 255, EXPOSURE_GAMMA) * g, 1 / EXPOSURE_GAMMA);
+    if (stops > 0) throw new Error("exposure above 0 is not modelled: Lumetri rolls off the highlights, and the shoulder has not been measured (exposureRule._notTheToneMapper)");
+    return (v) => v * gainForStops(stops);
   },
   blacks: (amount) => { const lift = to255(amount * BLACKS_PER_POINT); return (v) => v + lift * Math.exp(-toIRE(v) / BLACKS_LAMBDA); },
   // The Master curve's bottom point, and one channel's. Both are the same measured line
