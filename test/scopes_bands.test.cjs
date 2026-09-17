@@ -95,3 +95,42 @@ test("levels survive the crush that blinds the cast - the curveToe survivorship 
   assert.equal(b.readable, 0, "and says the cast figure has nothing left to stand on");
   assert.equal(b.rb, null, "which is exactly the x=0.2 row of curveToe");
 });
+
+// The cast statistic does not merely go blind as an end is crushed — it RECOVERS, and reports its
+// cleanest number on the most damaged frame. Measured on C187 @22.02s across the Master toe
+// (`curveToeC187`): readable 100 → 86 → 31 → 1 → 1 → 6 → 10 while blue's floor share runs
+// 0 → 0.43 → 3.02 → 10.96 → 18.61 → 27.76 → 45.9, and the cast reads −29.8 → … → −6.7. Once blue is
+// floored across half the dark pixels there is no blue left to differ from red. Anything gating on a
+// small cast would rank the worst setting as the most neutral.
+test("a destroyed parade end is refused, not reported as neutral", () => {
+  const { verdict, castTrust } = require("../src/grade_rules.cjs");
+  const frameAt = (rb, readable, floorBlue) => ({
+    luma: { min: 1, p1: 4, p50: 52, p99: 91, max: 95 },
+    red: { mean: 50, p1: 5, p99: 91 }, green: { mean: 50, p1: 5, p99: 91 }, blue: { mean: 50, p1: 0, p99: 91 },
+    saturation: { p50: 20, p99: 40 }, cast: { cb: 0, cr: 0 }, clipped: { red: 0, green: 0, blue: 0 },
+    floor: { red: 0, green: 0, blue: floorBlue }, crushed: 0,
+    bands: { blacks: { share: 3, readable, rb, g: 0, levels: { red: 5, green: 5, blue: 5 } },
+             whites: { share: 3, readable: 100, rb: 0, g: 0, levels: { red: 90, green: 90, blue: 90 } } },
+  });
+  // The real rows, with the real numbers. The x=0.35 row reads the SMALLEST cast of the three.
+  const worst = frameAt(-6.7, 10, 45.9);   // x=0.35, 45.9% of blue gone
+  const bad = frameAt(-31, 1, 10.96);      // x=0.2
+  const ok = frameAt(-0.4, 100, 0);        // genuinely clean
+  assert.equal(castTrust(worst, "shadows").trusted, false, "the flattering row is refused");
+  assert.equal(castTrust(bad, "shadows").trusted, false);
+  assert.equal(castTrust(ok, "shadows").trusted, true, "and a clean frame still reads normally");
+  assert.equal(verdict(ok, "frame").balanced, true);
+  for (const f of [worst, bad]) {
+    const v = verdict(f, "frame");
+    assert.equal(v.balanced, false, "a crushed end can never be balanced");
+    assert.ok(v.notes.some((n) => /blacks cannot be read/.test(n)), v.notes.join(" | "));
+    assert.ok(!v.notes.some((n) => /blacks (blue|warm) by/.test(n)), "and the untrustworthy number is not printed as if it meant something");
+  }
+  // A frame with no bands block at all is a different case - castAt falls back to channel percentiles,
+  // which is cruder but not corrupted - and must not be caught by this guard.
+  const noBands = { luma: { min: 1, p1: 4, p50: 52, p99: 91, max: 95 }, red: { mean: 50, p1: 5, p99: 90 },
+    green: { mean: 50, p1: 5, p99: 90 }, blue: { mean: 50, p1: 5, p99: 90 }, saturation: { p50: 20 },
+    cast: { cb: 0, cr: 0 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0 };
+  assert.equal(castTrust(noBands, "shadows").trusted, true);
+  assert.equal(castTrust(noBands, "shadows").noBands, true);
+});

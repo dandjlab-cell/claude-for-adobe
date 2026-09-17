@@ -441,6 +441,33 @@ function goalsFor(m, region = "frame") {
 
 // After the confirm: balanced, or what is still off - in the canon's words. The same thresholds the
 // goals use (ACCEPT), both cast axes the pads solve, and the spread the footer promises.
+// A parade end's cast is only readable while that end still has pixels with all three channels off the
+// rails: bands.*.rb drops any pixel with a channel at 0 or 255 (src/scopes.cjs). MEASURED on C187
+// @22.02s (`curveToeC187`), and it is worse than blindness - the statistic RECOVERS as the picture is
+// destroyed. Across the Master toe: readable 100 -> 86 -> 31 -> 1 -> 1 -> 6 -> 10 while blue's floor
+// share goes 0 -> 0.43 -> 3.02 -> 10.96 -> 18.61 -> 27.76 -> 45.9, and the cast reads
+// -29.8 -> -31 -> -32.2 -> -31 -> -13.7 -> -8.6 -> -6.7. Once blue is floored across half the dark pixels
+// there is no blue left to differ from red, so the worst row in the sweep reports the CLEANEST cast and
+// the highest readable of any damaged setting. Anything gating on a small cast waves it through.
+//
+// So the cast is trusted only while the end that produced it is intact: `readable` high AND that end's
+// own damage share small. The thresholds are read off the same sweep - at 0.43% floored readable was
+// still 86, at 3.02% it had fallen to 31.
+const CAST_READABLE = 80;   // percent of the band that still had a readable cast
+const CAST_DAMAGE = 1;      // percent of the frame on the floor (blacks) or at 255 (whites); GUARD.crushed is 1.0
+function castTrust(f, wheel) {
+  const b = f.bands && f.bands[wheel === "shadows" ? "blacks" : "whites"];
+  // No bands block at all is a DIFFERENT case from a crushed one: castAt then falls back to the channel
+  // percentiles, which is the older, cruder statistic but not a corrupted one. Leave that path alone -
+  // this guard is about a band that WAS measured and has been destroyed.
+  if (!b) return { readable: null, share: null, empty: false, noBands: true, trusted: true };
+  const readable = isFinite(b.readable) ? b.readable : 100;
+  const d = wheel === "shadows" ? f.floor : f.clipped;
+  const share = d ? Math.max(d.red, d.green, d.blue) : 0;
+  const empty = b.rb === null || b.rb === undefined;
+  return { readable, share, empty, noBands: false, trusted: !empty && readable >= CAST_READABLE && share <= CAST_DAMAGE };
+}
+
 function verdict(after, region = "frame") {
   const notes = [], hints = [];
   const f = frameOf(after);
@@ -448,6 +475,16 @@ function verdict(after, region = "frame") {
   if (f.luma.p99 < ACCEPT.whiteMin) notes.push("white point " + round(f.luma.p99) + " low");
   if (f.luma.p99 > ACCEPT.whiteMax) notes.push("white point " + round(f.luma.p99) + " near clipping");
   for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
+    // Never report a cast the reading cannot support, and never call a frame balanced on one. A crushed
+    // end reads CLEANER than a damaged-but-intact one (see castTrust), so passing it through would rank
+    // the most destroyed setting as the most neutral.
+    const t = castTrust(f, wheel);
+    if (!t.trusted) {
+      notes.push(label + " cannot be read: " + (t.empty ? "no pixel at that end has all three channels off the rails"
+        : round(t.share) + "% of the frame is " + (wheel === "shadows" ? "on the floor" : "at 255") + " and only " + t.readable + "% of the band is readable")
+        + " — the cast statistic is not trustworthy here, and it reads cleaner the more is destroyed");
+      continue;
+    }
     const [rb, g] = castAt(f, wheel);
     if (Math.abs(rb) > NEUTRAL) notes.push(label + " " + (rb > 0 ? "blue" : "warm") + " by " + round(rb) + (wheel === "shadows" ? " (Shadows wheel)" : ""));
     if (Math.abs(g) > NEUTRAL) notes.push(label + " " + (g > 0 ? "green" : "magenta") + " by " + round(Math.abs(g)));
@@ -564,4 +601,4 @@ function skinFor(m, from = { saturation: 100 }, attenuation = 1) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
+module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, castTrust, CAST_READABLE, CAST_DAMAGE, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
