@@ -46,3 +46,22 @@ test("installUpdate verifies the checksum, refuses dev checkouts and symlinks, a
   assert.equal(currentVersion(root), "9.9.9");
   fs.rmSync(work, { recursive: true, force: true });
 });
+
+// An update nobody is told about is not an update. The background check runs at launch, every 20 minutes
+// and on focus, but it used to announce nothing - it relabelled a tab in another view, so an editor working
+// in the chat never learned a release existed (the owner, 2026-09-17 14:20). It now says so in the chat the
+// first time it sees a given version, and only then: the check repeats every 20 minutes.
+test("a background check announces a version it has not announced before, once", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const fn = panel.slice(panel.indexOf("async function checkUpdates("), panel.indexOf("async function installPending("));
+  assert.match(fn, /const isNew = !pendingUpdate \|\| pendingUpdate\.version !== update\.version;/);
+  assert.match(fn, /if \(announce \|\| isNew\) addMessage/, "a click always says; a background check says only what is new");
+  assert.match(fn, /is available \(you have " \+ currentVersion\(extensionRoot\)/, "and it names both versions");
+  const dev = panel.slice(panel.indexOf("async function checkDevUpdates("), panel.indexOf("async function installDevPending("));
+  assert.match(dev, /if \(behind && \(announce \|\| isNew\)\) addMessage/, "the dev repo panel behaves the same way");
+  // The schedule itself: launch, then a timer, then focus.
+  assert.match(panel, /setTimeout\(recheck, 4000\);/);
+  assert.match(panel, /setInterval\(\(\) => \{ if \(!pendingUpdate\) recheck\(\); \}, 20 \* 60 \* 1000\);/);
+  assert.match(panel, /window\.addEventListener\("focus", \(\) => \{ if \(!pendingUpdate && Date\.now\(\) - lastRecheck > 5 \* 60 \* 1000\)/, "and on focus, at most every five minutes");
+});

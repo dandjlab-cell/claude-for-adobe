@@ -4066,12 +4066,18 @@ async function checkUpdates(announce) {
     log("up to date (" + currentVersion(extensionRoot) + ")");
     return;
   }
+  const isNew = !pendingUpdate || pendingUpdate.version !== update.version;
   pendingUpdate = update;
   tabSettings.textContent = "Settings · update"; tabSettings.classList.add("attention");
   setVersionRow("v" + currentVersion(extensionRoot) + " · " + update.version + " available");
   ui.checkUpdates.textContent = "Update to " + update.version; ui.checkUpdates.className = "accent";
   ui.checkUpdates.title = "Downloads the release from GitHub, verifies its checksum, and installs it. " + update.notesUrl;
-  if (announce) addMessage("assistant muted", "Version " + update.version + " is available. Use the Update button at the bottom.");
+  // The background checks used to find a release and say so only by relabelling a tab in another view, so an
+  // editor working in the chat never learned there was one (the owner, 14:20: "can we make it so it checks
+  // for updates and knows when there are updates"). A version they have not been told about is said out
+  // loud, once - the check runs every 20 minutes and must not repeat itself at them.
+  if (announce || isNew) addMessage("assistant muted", "Version " + update.version + " is available (you have " + currentVersion(extensionRoot) + "). Settings → Update to " + update.version + ".");
+  if (isNew) log("update available: " + update.version);
 }
 async function installPending() {
   const update = pendingUpdate; if (!update) return;
@@ -4106,13 +4112,14 @@ async function checkDevUpdates(announce) {
     gitDev("fetch", "--quiet");
     const local = gitDev("rev-parse", "--short", "HEAD"), branch = gitDev("rev-parse", "--abbrev-ref", "HEAD");
     const behind = Number(gitDev("rev-list", "--count", "HEAD..@{u}")) || 0;
+    const isNew = behind && (!pendingUpdate || pendingUpdate.behind !== behind);
     pendingUpdate = behind ? { dev: true, behind } : null;
     setVersionRow("dev " + local + " (" + branch + ") · " + (behind ? behind + " commit" + (behind === 1 ? "" : "s") + " behind" : "up to date"));
     // Premiere keeps a closed panel alive, so reopening never loads new code: the button always reloads.
     ui.checkUpdates.textContent = behind ? "Pull " + behind + " commit" + (behind === 1 ? "" : "s") + " & reload" : "Reload panel";
     ui.checkUpdates.className = behind ? "accent" : "utility";
     tabSettings.textContent = behind ? "Settings · update" : "Settings"; tabSettings.classList.toggle("attention", !!behind);
-    if (announce && behind) addMessage("assistant muted", behind + " new commit" + (behind === 1 ? "" : "s") + " in the repo. Use the Pull button at the bottom.");
+    if (behind && (announce || isNew)) addMessage("assistant muted", behind + " new commit" + (behind === 1 ? "" : "s") + " in the repo. Settings → Pull & reload."); // said once, not every check
     log("dev repo " + local + (behind ? " is " + behind + " behind" : " up to date"));
   } catch (error) { log("dev update check failed: " + error.message); ui.checkUpdates.textContent = "Reload panel"; if (announce) addMessage("assistant muted", "Could not check the repo: " + error.message); }
   ui.checkUpdates.disabled = false;
