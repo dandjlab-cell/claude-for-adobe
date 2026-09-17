@@ -1318,6 +1318,12 @@ async function curveSweepTool({ seconds, track = 1, points = CURVE_TOE_STEPS, cu
   // deep in the crush, and the readings looked like a lift only because they were climbing back out of it.
   // A sweep without its own baseline is not a sweep, so neutral is always the first row.
   if (isWheelLuma && !xs.some((x) => Math.abs(x - 0.5) < 1e-9)) xs = [0.5, ...xs];
+  // Twice now a caller has handed this the curve steps (0 .. 0.2) for a slider whose neutral is 0.5, and
+  // both runs measured nothing but the far side of a cliff. Points that are ALL at or under 0.25 are that
+  // mistake, not a deliberate range: refuse rather than spend a render on it.
+  if (isWheelLuma && xs.filter((x) => x > 0.25).length < 2) {
+    return { text: "CLAUDE_FOR_ADOBE_ERROR:Shadows luma is a 0-1 slider with NEUTRAL AT 0.5, not 0 - points " + xs.join(", ") + " are all at or below 0.25, which is the far side of the crush and measures nothing useful. Omit `points` for the default 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, or name values in that range.", isError: true };
+  }
   if (!xs.length) return { text: "CLAUDE_FOR_ADOBE_ERROR:points must be curve x positions between 0 and 0.5", isError: true };
   const card = addTool(which + (isWheelLuma ? "" : lift ? " lift" : " toe") + (isFinite(anchor) && anchor > 0 && anchor < 1 ? " anchored at " + anchor : "") + " sweep at " + at + "s: " + xs.join(", "), "");
   setStatus("Sweeping the " + which + (lift ? " lift" : " toe") + "…");
