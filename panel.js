@@ -215,6 +215,35 @@ function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "", si
   });
 }
 
+// The same card, any number of answers: the general form. A question with clickable answers is a tool the
+// model should reach for whenever it would otherwise write out a paragraph of options and wait for typing
+// (the owner, 12:52: "similar to how that is available for the desktop Claude Code version ... don't
+// reinvent the wheel", and 12:58: "I want to avoid hard coding it to one specific ask"). Resolves the
+// chosen label, or null if the call was abandoned.
+function askChoice(text, labels, signal = null) {
+  return new Promise((resolve) => {
+    const q = quietCard; quietCard = null;
+    const el = addMessage("assistant muted", text + "\n");
+    quietCard = q;
+    const row = document.createElement("div"); row.className = "row";
+    let done = false;
+    const finish = (label, shown) => { if (done) return; done = true; row.remove(); el.textContent += (shown || label) + "."; resolve(label); };
+    labels.forEach((label, i) => { const b = document.createElement("button"); b.textContent = label; if (i) b.className = "utility"; b.onclick = () => finish(label); row.append(b); });
+    el.appendChild(row);
+    if (signal) { if (signal.aborted) finish(null, "Cancelled: the call was abandoned"); else signal.addEventListener("abort", () => finish(null, "Cancelled: the call was abandoned"), { once: true }); }
+    followBottom(ui.messages);
+  });
+}
+
+// ask_user: the model's own door to that card.
+async function askUserTool({ question, options = [] } = {}, { signal } = {}) {
+  const labels = options.map((o) => (typeof o === "string" ? o : o && o.label)).filter(Boolean).slice(0, 4);
+  if (!question || labels.length < 2) return { text: "CLAUDE_FOR_ADOBE_ERROR:ask_user needs a question and at least two options", isError: true };
+  const why = options.filter((o) => o && o.label && o.description).map((o) => o.label + " - " + o.description);
+  const picked = await askChoice(question + (why.length ? "\n" + why.join("\n") : ""), labels, signal);
+  return { text: picked ? "The user chose: " + picked : "The user did not answer; the question is still open. Do not guess - ask again or stop here." };
+}
+
 // ---- project ------------------------------------------------------------------------------------
 
 async function readProject() {
@@ -1314,22 +1343,25 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       // A conversion by colour-space interpretation is a SOURCE setting: it changes how the file is read
       // everywhere and stays when the copy is discarded. The pass never does that on its own (the owner,
       // 12:05) - it says what it found and what the two routes are, and the editor picks.
-      // Buttons, not a paragraph (the owner, 12:40: "the interface needs to be clickable options"). Two
-      // binary questions, asked once for the whole run: WHICH conversion (the maker's official LUT or the
-      // one Premiere ships) and WHERE it goes (the file's source settings or this clip's Lumetri). Those are
-      // the two choices an editor actually makes - "Premiere's built-in transform" named a third thing that
-      // means nothing at the desk (the owner, 12:45). Abandoning either question leaves the clip as shot.
+      // Buttons, not a paragraph (the owner, 12:40: "the interface needs to be clickable options") - through
+      // askChoice, the same control ask_user gives the model, so there is one question card in the panel and
+      // not a bespoke one here. Two questions, asked once for the whole run: WHICH conversion (the maker's
+      // official LUT or the one Premiere ships) and WHERE it goes (the file's source settings or this clip's
+      // Lumetri). Those are the two choices an editor actually makes - "Premiere's built-in transform" named
+      // a third thing that means nothing at the desk (the owner, 12:45). Not answering leaves the clip as shot.
       if (log === "ask") {
         const hint = logCameraHint({ tags: mediaTags(c.mediaPath), path: c.mediaPath });
         const maker = hint ? hint[0].toUpperCase() + hint.slice(1) : null;
         const builtin = hint ? lutBuiltinFor(hint) : null;
-        const head = label + " is " + (maker ? maker + " log" : "log, and the file does not name the camera");
-        const pick = builtin
-          ? await askInline(head + ". Which conversion?", maker + "'s official LUT", "Leave it log", builtin.label)
-          : await askInline(head + ". Premiere ships no built-in conversion for " + (maker || "this camera") + " - its bundled set is Sony, ARRI and RED only.", "Download " + (maker || "the maker") + "'s official LUT", "Leave it log");
-        if (!pick) { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
-        const where = await askInline("Where does it go?", "Source settings - every cut of the file, stays after Discard copy", "This clip - Lumetri's Input LUT, goes with Discard copy");
-        log = (pick === "all" ? "builtin" : "lut") + (where ? "-source" : ""); // and the rest of the run follows it
+        const own = (maker || "The maker") + "'s official LUT";
+        const pick = await askChoice(
+          label + " is " + (maker ? maker + " log" : "log, and the file does not name the camera") + ". Which conversion?" +
+            (builtin ? "" : "\nPremiere ships no built-in conversion for " + (maker || "this camera") + " - its bundled set is Sony, ARRI and RED only."),
+          [own + " (downloaded from their page)", ...(builtin ? [builtin.label] : []), "Leave it log"]);
+        if (!pick || pick === "Leave it log") { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
+        const where = await askChoice("Where does it go?", ["This clip - Lumetri's Input LUT, goes with Discard copy", "Source settings - every cut of the file, stays after Discard copy"]);
+        if (!where) { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
+        log = (pick.indexOf(own) === 0 ? "lut" : "builtin") + (/^Source/.test(where) ? "-source" : ""); // and the rest of the run follows it
       }
       if (/^(lut|builtin)(-source)?$/.test(log)) {
         const toSource = /-source$/.test(log), which = /^builtin/.test(log) ? "builtin" : "official";
@@ -3474,7 +3506,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { log_lut: logLutTool, scopes: scopesTool, grade: gradeTool, grade_shot: gradeShotTool, grade_sequence: gradeSequenceTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { ask_user: askUserTool, log_lut: logLutTool, scopes: scopesTool, grade: gradeTool, grade_shot: gradeShotTool, grade_sequence: gradeSequenceTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -3520,6 +3552,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { texts: { type: "array", items: { type: "string" }, description: "all the words/labels to look for, in one pass" }, text: { type: "string", description: "a single word (or use texts)" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum; widened automatically beyond 30 frames" } } } },
   // caption_style (captionStyleTool) is built and tested but not registered: it reopens the project, which is
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
+  { name: "ask_user", description: "Ask the editor a question with clickable answers, in the chat. USE THIS INSTEAD OF WRITING OUT A LIST OF OPTIONS AND WAITING FOR THEM TO TYPE - any time the next step depends on a choice only they can make (which of two files, which take, whether a setting goes on the clip or on the source, what to do about something ambiguous), ask it here. Two to four options, each a short label they click; put the cost or consequence of each in its description, not in the question. Returns the label they chose, or that they did not answer. One decision per call: ask twice rather than cramming two questions into one. Do not use it to confirm something you were going to do anyway, and not for anything with an obvious default.", inputSchema: { type: "object", properties: { question: { type: "string", description: "The question, one line, in plain words. No preamble, and do not restate the options in it - the buttons are the options." }, options: { type: "array", description: "Two to four answers.", items: { type: "object", properties: { label: { type: "string", description: "What the button says: a few words, the answer itself." }, description: { type: "string", description: "Optional: what choosing it means or costs, one short line." } }, required: ["label"] } } }, required: ["question", "options"] } },
   { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. use: the whole thing in one call for a log clip - works out the maker from the file, downloads the official conversion from the maker's own page if it is not on this machine, applies it to that clip and confirms from the render. Ask the editor once before the first download, saying what will be downloaded and from where; after that just use it. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own colour management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
     inputSchema: { type: "object", properties: { action: { type: "string", enum: ["use", "status", "fetch", "apply", "clear"] }, where: { type: "string", enum: ["clip", "source"], description: "Where the LUT goes: clip = Lumetri's Input LUT on that clip, removed by Discard copy (default); source = the file's Interpret Footage LUT, which stays and covers every cut." }, which: { type: "string", enum: ["official", "builtin"], description: "Which file, for use: official = the maker's own conversion, downloaded from their page (default); builtin = the one Premiere already ships (Sony, ARRI and RED only - no built-in exists for any other maker)." }, id: { type: "string", description: "A LUT id from status, for fetch and apply." }, seconds: { type: "number", description: "Timeline position of the clip, for apply and clear." }, track: { type: "number", description: "1-based video track, default 1." } } } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",

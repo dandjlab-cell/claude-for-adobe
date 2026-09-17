@@ -99,14 +99,13 @@ test("the grade never changes a source setting on its own: log asks with BUTTONS
   assert.match(panel, /budget_seconds = 150, log: logArg = "ask" \} = \{\}\)/, "ask is the default");
   const ask = seqTool.slice(seqTool.indexOf("if (log === \"ask\") {"), seqTool.indexOf("if (/^(lut|builtin)(-source)?$/.test(log))"));
   assert.ok(ask, "the ask block is still there");
-  assert.match(ask, /await askInline\(/g, "the question is buttons in the message stream, not a paragraph to read");
-  assert.equal(ask.match(/await askInline\(/g).length, 3, "two questions reach the editor - where, and one of the two forms of which conversion (with a built-in to compare, or without)");
+  assert.equal(ask.match(/await askChoice\(/g).length, 2, "two questions, both through the panel's one question card - not a paragraph to read, and not a control built just for this");
   assert.match(ask, /Which conversion\?/, "question 1 names the choice between the two LUTs");
   assert.match(ask, /Where does it go\?/, "question 2 is where it goes");
-  assert.match(ask, /Source settings[\s\S]*?stays after Discard copy[\s\S]*?This clip[\s\S]*?goes with Discard copy/, "each destination's cost is on its own button");
+  assert.match(ask, /This clip[\s\S]*?goes with Discard copy[\s\S]*?Source settings[\s\S]*?stays after Discard copy/, "each destination's cost is on its own button");
   assert.match(ask, /Premiere ships no built-in conversion for/, "and it says so when there is no built-in to choose");
-  assert.match(ask, /if \(!pick\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining leaves the clip as shot");
-  assert.match(ask, /log = \(pick === "all" \? "builtin" : "lut"\) \+ \(where \? "-source" : ""\)/, "the answer sets the route for the rest of the run");
+  assert.match(ask, /if \(!pick \|\| pick === "Leave it log"\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining, or not answering, leaves the clip as shot");
+  assert.match(ask, /log = \(pick\.indexOf\(own\) === 0 \? "lut" : "builtin"\)/, "the answer sets the route for the rest of the run");
   assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: toSource \? "source" : "clip", which \}\)/, "the LUT goes where the editor asked, from the source they asked for");
 });
 
