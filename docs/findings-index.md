@@ -1,0 +1,79 @@
+# Findings index — read this before measuring anything
+
+**Why this file exists.** On 2026-09-17 a session spent an evening establishing that Premiere's Exposure
+is a clean gamma-2.4 gain downward and tone-maps upward, and recorded it as a new finding. It was already
+in `handoff.md:388`, dated 2026-09-15. The same session then built an offline Lumetri simulator without
+knowing one had been built and cancelled for a stated reason. Neither mistake was carelessness — the
+findings are real and recorded, in 478 lines of prose with no index.
+
+The sibling repo `premiere-map` solved this with a queryable graph and a rule at the top of its CLAUDE.md:
+*query the graph, do not grep markdown for orientation.* This is the cheap version of that. **Grep this
+file before running an experiment.**
+
+One line per established fact: what is known, when, where the evidence lives, and — the part that matters
+— **what it forecloses**, so the next session does not re-open it.
+
+---
+
+## Colour management — the layer above Lumetri
+
+| finding | date | evidence | forecloses |
+|---|---|---|---|
+| Premiere applies the full colour-space transform (primaries + transfer) **before any effect**, so Lumetri always grades converted pixels | 2026-09-17 | `handoff.md:366` | Any model that treats Lumetri as operating on camera-native values |
+| The sequence carries `autoToneMapEnabled` and `autoInputGamutCompressionEnabled`, both **true** by default, and both scriptable | 2026-09-17 | `handoff.md:367`; memory `project_premiere_colour_management_scriptable` | Treating highlight roll-off as a property of Lumetri rather than a setting |
+| **With the tone mapper off, log footage clips** — whites to 100, 5–11 % per channel. "Log holds highlights above display white; the tone mapper is what rolls them off" | 2026-09-17 | `handoff.md:368` | The theory that the clipping seen in sweeps is Lumetri's own |
+| `setOverrideColorSpace` works per project item; 34 spaces listed. Restore with `getOriginalColorSpace()` — the empty object is not writable back | 2026-09-17 | `handoff.md:367` | Needing a plugin for gamut |
+| The override lives on the **project item**, shared with the original sequence — Discard does not undo it | 2026-09-17 | `handoff.md:367`, `:371` | Assuming the working copy isolates colour-space changes |
+| The maker's LUT applies by writing Lumetri **property 4** (the .cube path) then **property 6 = 1**. Verified against the render: 4.7 / 92.2 / 27 against a software prediction of 4.7 / 92.2 / 24 | 2026-09-17 | `handoff.md:371` | The belief that the Input LUT slot is not scriptable (it is, by index, not by name) |
+| Premiere's own scopes have **no readable values** — GPU intermediates. Export Frame plus our own computation is the native path | 2026-09-15 | `handoff.md:386`; premiere-map Round 250 | Any further search for a scope readback API |
+
+## Lumetri behaviour
+
+| finding | date | evidence | forecloses |
+|---|---|---|---|
+| **Exposure is asymmetric**: a clean gamma-2.4 gain downward, a highlight-protecting tone map upward. No static curve fits both | 2026-09-15 | `handoff.md:388`; `exposureRule` | Fitting one curve to Exposure across its range |
+| That asymmetry **cancelled an offline Lumetri simulator** and was replaced by measure-and-interpolate | 2026-09-15 | `handoff.md:388` | Rebuilding an offline simulator *without addressing the asymmetry* — see the note below |
+| Lumetri processes **top-down**: Basic and Creative, then RGB Curves, then hue/sat curves, then wheels and HSL — regardless of write order | Adobe docs, confirmed 2026-09-17 | `docs/reviews/codex_deterministic_grading_2026-09-17.md` | Believing that writing a parameter last makes it apply last |
+| **Multiple Lumetri instances can be stacked**, each a full pipeline, so any operation order is reachable | 2026-09-17 (owner) | `src/forward.cjs` `pipeline()` | Treating Lumetri's fixed section order as a constraint on achievable order |
+| QE `getParamValue`/`setParamValue` read and write the blob parameters as text — wheels, curves, HSL key. Dots to write, commas on read | 2026-09-16 | premiere-map Round 252 | Searching for a numeric API for the blob parameters |
+
+## The forms (see `src/lumetri_sweeps.json` for the evidence and the caveats)
+
+| control | form | status |
+|---|---|---|
+| Whites | pure gain about 0, `out = in × k` | exact (0.27 out of sample) |
+| Exposure ↓ | linear-light gain, γ 2.4 | exact; **upward unsolved — it is the tone mapper** |
+| Temperature / Tint | per-channel gains; T is R-vs-B, Tint is R+B-vs-G | identified on three statistics |
+| Blacks | toe, exponential, λ ≈ 23 IRE | form confirmed; negative side limited by the **lowest channel's** p1 |
+| Master / channel curve toe | `(v − 100x)/(1 − x)` — fixed point at the **top**, lowers all levels below it, widens spacing by 1/(1−x) | exact |
+| Channel lift | `100y + v(1 − y)` | exact |
+| Contrast | gain about a pivot ≈ 49.6 | **approximate** — median residual 2.09 |
+| Shadows | dark-end control, spares the top | **approximate** — residual 1.7; its quoted pivot is ill-determined |
+| Highlights | band in the upper midtones — *not* a gain, clips nothing at any setting | form identified, not parameterised |
+
+## Measurement traps, learned the hard way
+
+| trap | evidence |
+|---|---|
+| **The noise floor is 0.4 IRE** — one 8-bit code is 0.392, and two frames of one shot a second apart differ by that much. Accuracies below it are meaningless | `color-full-table-plan.md` §0 |
+| **A pivot fit from p1 and p99 is degenerate when p99 barely moves** — `P` just reports p99 back. Blacks returned a "stable" pivot of 84.7 with p99 = 84.7 | `_fitMethod` |
+| **`bands.*.rb` excludes pixels with a channel at 0 or 255**, so the cast goes blind — and *inverts* — as an end is crushed. It read +0.4 on a frame with 9 % of red floored | `curveToe._bandBlind`, `blackEndC229._castSignFlip` |
+| **A channel's independent p1 is not a cast.** Feeding them to `neutralBottoms` in 0.1.80 made the grade worse | `curves.cjs` note |
+| **`curves.format()` rounds writes to 2 dp** — a solved toe of 0.10632 is written 0.11, a 0.37 IRE error, larger than most accuracy claims here | `docs/reviews/codex_…` |
+| **C220 @0.5s is the outlier**, not the typical frame — and it is the frame nearly every model is fitted on | `blackEndC229._c220IsTheOutlier` |
+| A sweep without its **own baseline row** is not a sweep; two Shadows-luma runs were wasted on a 0.5-neutral slider swept from 0 | `curve_sweep` guard |
+
+---
+
+## The open question this index immediately raises
+
+The offline simulator was cancelled because Exposure is asymmetric. **That asymmetry is now known to be
+`autoToneMapEnabled`, a sequence setting that is on by default and can be turned off.** With it off, the
+gamma-2.4 gain may hold in both directions — which would remove the reason the simulator was abandoned.
+
+Nobody has tested that, because the two facts were recorded three days apart in different sections of the
+same prose file and never sat next to each other. That is the whole argument for this index.
+
+**The test:** set `autoToneMapEnabled` false on a working copy, sweep Exposure upward, and check whether
+`100·((v/100)^2.4 · 2^stops)^(1/2.4)` now predicts p99. If it does, `src/forward.cjs` can model Exposure
+in both directions and the pass gains a control it currently refuses to use upward.
