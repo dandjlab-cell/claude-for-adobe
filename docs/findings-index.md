@@ -41,9 +41,9 @@ One line per established fact: what is known, when, where the evidence lives, an
 
 | control | form | status |
 |---|---|---|
-| Whites | pure gain about 0, `out = in × k` | exact (0.27 out of sample) |
-| Exposure ↓ | linear-light gain, γ 2.4 | exact; **upward unsolved — it is the tone mapper** |
-| Temperature / Tint | per-channel gains; T is R-vs-B, Tint is R+B-vs-G | identified on three statistics |
+| Whites | **is Exposure in other units** — 100 points = 1 stop, both `2^(stops/2.4)` | exact; confirmed on two frames, bit-identical on one |
+| Exposure ↓ | same gain as Whites | exact; **upward rolls off — Lumetri's own shoulder, not the sequence tone mapper**, and the shoulder is unmeasured |
+| Temperature / Tint | per-channel gains; T is R-vs-B, Tint is R+B-vs-G | **family identified, constants provisional** — the three estimates disagree by up to 0.059 (Tint −20 blue), never tested on a second frame |
 | Blacks | toe, exponential, λ ≈ 23 IRE | form confirmed; negative side limited by the **lowest channel's** p1 |
 | Master / channel curve toe | `(v − 100x)/(1 − x)` — fixed point at the **top**, lowers all levels below it, widens spacing by 1/(1−x) | exact |
 | Channel lift | `100y + v(1 − y)` | exact |
@@ -55,6 +55,7 @@ One line per established fact: what is known, when, where the evidence lives, an
 
 | trap | evidence |
 |---|---|
+| **A gain is dimensionless; the noise floor is in IRE.** They cannot be compared. A gain uncertainty of 0.02 is 1.6 IRE at an input of 80 — four times the floor. Convert to output units at the level it will be applied, then judge | `whiteBalanceRule._overdeterminedCORRECTED` |
 | **The noise floor is 0.4 IRE** — one 8-bit code is 0.392, and two frames of one shot a second apart differ by that much. Accuracies below it are meaningless | `color-full-table-plan.md` §0 |
 | **A pivot fit from p1 and p99 is degenerate when p99 barely moves** — `P` just reports p99 back. Blacks returned a "stable" pivot of 84.7 with p99 = 84.7 | `_fitMethod` |
 | **`bands.*.rb` excludes pixels with a channel at 0 or 255**, so the cast goes blind — and *inverts* — as an end is crushed. It read +0.4 on a frame with 9 % of red floored | `curveToe._bandBlind`, `blackEndC229._castSignFlip` |
