@@ -369,3 +369,69 @@ lost their tick)".
   knob at a time from zero, so knobs applied together are composed sequentially and interactions are
   approximate; Premiere's tone mapping depends on content, so highlights predicted near 100 are less
   reliable than midtones." The confirm render is the only check on this.
+
+---
+
+# The relationship map — derived, 2026-09-17
+
+The point of measuring every control is not a lookup table per frame. It is to know the **form** of each
+control and how they interfere, so that given a reading the moves and their order are *calculated* rather
+than searched for. Renders then confirm an answer instead of finding one.
+
+## Each control's collateral
+
+Computed from the sweep blocks in `src/lumetri_sweeps.json`: the largest move each slider makes on the
+statistic it steers, against the total it makes on the other two tonal statistics.
+
+| control | steers | moves it | tonal collateral | collateral / effect |
+|---|---|---|---|---|
+| exposure | median | 21.9 | 46.3 | **2.11** |
+| shadows | black point | 9.4 | 16.0 | **1.70** |
+| contrast | spread | 14.5 | 16.4 | 1.13 |
+| temperature | Cb | 5.5 | 4.8 | 0.87 |
+| whites | white point | 23.9 | 16.9 | 0.71 |
+| highlights | white point | 16.9 | 10.6 | 0.63 |
+| tint | Cr | 9.8 | 4.4 | 0.45 |
+| blacks | black point | 12.2 | 4.0 | **0.33** |
+
+Two things in that table are worth saying out loud:
+
+- **Shadows is a bad black-point tool.** It moves the median *more* than the black point (+11.3 against
+  +9.4). The code comment in `grade_rules.cjs` says this; the number is where it comes from.
+- **Blacks is the most surgical control we have** (0.33) and the pass barely uses it — "lowering is not
+  used automatically" in `SKILL.md`, from a run where it went 12 → 1 on one clip and 12 → 10 on the next.
+  That instability is worth re-measuring as a *form* rather than left as a table, because if it has a
+  clean form it is the best black-point slider by this measure.
+
+## Order is set by three constraints, not one
+
+A single "collateral" ranking is not the answer, and pretending it is would put white balance in the
+middle of the pass. There are three independent reasons one move has to precede another:
+
+1. **Collateral** — do not run a high-collateral tool *after* a low-collateral one, or it undoes what was
+   just set. This is what the table above ranks. Exposure and Shadows are the ones to place early.
+2. **Readability** — do not run a tool that *blinds* the statistic another tool needs before that reading
+   is taken. A black point crushes the cast reading: `bands.*.rb` drops any pixel with a channel at 0, and
+   measured on C229 it does not merely go blind but **inverts**, reading −12.5 → +0.4 as the frame is
+   destroyed. This is why the pass cancels casts before it moves the black point, inverting the canon's
+   order, and why `castTrust` exists.
+3. **Headroom** — several controls spend the same finite resource, the distance between the lowest channel
+   and zero. The channel toes (the only tool that can change parade *spacing*), the Master curve and the
+   Shadows wheel luma all draw on it, and what one takes another cannot have. Measured across three
+   frames, what each costs is frame-dependent: the curve's clean ceiling is luma p1 3.9 on C220, 18.8 on
+   C187 and 11.0 on C229, while the wheel's cost runs 0.04 %, 0.01 % and *zero*.
+
+Constraint 1 is a ranking, 2 is a partial order, and 3 is an allocation problem. Only 3 needs solving
+rather than ordering, and it is the joint solve that is still unwritten.
+
+## What a complete rule set buys
+
+Every form known means the pass computes the whole move set from one reading, instead of writing, re-
+reading and correcting. The current pass spends about three renders a clip — one to read, one to confirm,
+often one to correct — and the correction passes exist precisely because the models are imperfect. The
+19:24 run's chain showed ten of fourteen clips landing within ±1.1 of prediction with the corrections
+absorbing the rest; the four that missed were the ones where a *headroom* allocation went wrong, not where
+a form was unknown.
+
+So the remaining work is not more calibration. It is: finish the forms (contrast done, whites and shadows
+in flight), then solve constraint 3 properly.
