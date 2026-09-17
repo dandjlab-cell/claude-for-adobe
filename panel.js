@@ -1353,7 +1353,10 @@ async function curveSweepTool({ seconds, track = 1, points = CURVE_TOE_STEPS, cu
       const m = await measureFrameAt(at, { region: "frame", keepPlayhead: true });
       const b = (m.bands && m.bands.blacks) || {};
       const lv = b.levels || {};
-      rows.push({ x, wrote: text, lumaP1: round2(m.luma.p1), redP1: round2(m.red.p1), greenP1: round2(m.green.p1), blueP1: round2(m.blue.p1),
+      // The median and the white point belong in every row: a black-point tool that drags the midtones is
+      // not free, and the anchored Master curve exists precisely to hold them. The 20:26 wheel-luma sweep
+      // had to borrow p50 from the 2026-09-15 `wheels` block to be judged at all.
+      rows.push({ x, wrote: text, lumaP1: round2(m.luma.p1), lumaP50: round2(m.luma.p50), lumaP99: round2(m.luma.p99), redP1: round2(m.red.p1), greenP1: round2(m.green.p1), blueP1: round2(m.blue.p1),
         blacksRB: b.rb, blacksG: b.g, readable: b.readable,
         // The paired bottoms: the darkest 3% as LEVELS on the same pixels. This is what neutralBottoms is
         // fed and what the fix is judged on - the channel p1s above are three independent percentiles.
@@ -1364,8 +1367,8 @@ async function curveSweepTool({ seconds, track = 1, points = CURVE_TOE_STEPS, cu
   try { await cw.write(before); } catch (error) { rows.push({ restoreFailed: error.message }); }
   const lines = [
     "CHECK PASS: swept " + (isWheelLuma ? "the Shadows wheel's luma slider (0.5 neutral, down darkens the shadow end)" : "the " + which + " curve's bottom point " + (lift ? "UP (output lift, [[0,y]]: raises the floor, clips nothing)" : "DOWN (input toe, [[x,0]]: pulls the channel down, clips below x)")) + " on " + clipName + " at " + at + "s, " + rows.length + " settings, curves restored.",
-    "x → luma p1 | p1 R/G/B | PAIRED bottoms R/G/B (darkest 3%, same pixels) | cast B-R [readable %] | on the floor R/G/B %",
-    ...rows.filter((r) => !r.restoreFailed).map((r) => "  " + r.x + " → " + r.lumaP1 + " | " + r.redP1 + "/" + r.greenP1 + "/" + r.blueP1 +
+    "x → luma p1 / median / p99 | p1 R/G/B | PAIRED bottoms R/G/B (darkest 3%, same pixels) | cast B-R [readable %] | on the floor R/G/B %",
+    ...rows.filter((r) => !r.restoreFailed).map((r) => "  " + r.x + " → " + r.lumaP1 + " / " + r.lumaP50 + " / " + r.lumaP99 + " | " + r.redP1 + "/" + r.greenP1 + "/" + r.blueP1 +
       " | " + r.pairedRed + "/" + r.pairedGreen + "/" + r.pairedBlue +
       " | " + r.blacksRB + " [" + r.readable + "%] | " + r.floorRed + "/" + r.floorGreen + "/" + r.floorBlue),
     "The clip's " + (isSat ? "Luma vs Sat" : isWheelLuma ? "wheels" : "curves") + " before the sweep (put back): " + (isSat ? (before.length ? JSON.stringify(before) : "empty") : isWheelLuma ? JSON.stringify(before) : curvesIdentity(before) ? "identity" : JSON.stringify(before)),
