@@ -134,3 +134,28 @@ test("a destroyed parade end is refused, not reported as neutral", () => {
   assert.equal(castTrust(noBands, "shadows").trusted, true);
   assert.equal(castTrust(noBands, "shadows").noBands, true);
 });
+
+// C229 @9.57s, the frame the pass actually grades, x=0.2 on the anchored Master toe (`blackEndC229`).
+// The sharpest form of the defect: the cast does not just shrink as the end is destroyed, it CROSSES ZERO.
+// -12.5 -> -13.3 -> -14.1 -> -12.2 -> +4.3 -> +0.4, and that last row has luma p1 0.8 with 9.01% of RED on
+// the floor. Read naively it is the best-balanced setting in the sweep - better than neutral's -12.5.
+test("the sign-flipped cast on a destroyed frame is refused, not ranked best", () => {
+  const { verdict, castTrust } = require("../src/grade_rules.cjs");
+  const destroyed = {
+    luma: { min: 0, p1: 0.8, p50: 50.2, p99: 75.3, max: 88 },
+    red: { mean: 50, p1: 0, p99: 75.3 }, green: { mean: 48, p1: 0.8, p99: 75.3 }, blue: { mean: 44, p1: 0, p99: 75.3 },
+    saturation: { p50: 12, p99: 35 }, cast: { cb: -3, cr: 2 }, clipped: { red: 0, green: 0, blue: 0 },
+    floor: { red: 9.01, green: 0.6, blue: 7.14 }, crushed: 0,
+    bands: { blacks: { share: 3, readable: 4, rb: 0.4, g: 0, levels: { red: 2, green: 1.2, blue: 0 } },
+             whites: { share: 3, readable: 100, rb: 0, g: 0, levels: { red: 75, green: 75, blue: 75 } } },
+  };
+  assert.equal(castTrust(destroyed, "shadows").trusted, false, "0.4 looks neutral and must not be believed");
+  const v = verdict(destroyed, "frame");
+  assert.equal(v.balanced, false);
+  assert.ok(v.notes.some((n) => /blacks cannot be read/.test(n)), v.notes.join(" | "));
+  assert.ok(!v.notes.some((n) => /blacks blue by 0\.4/.test(n)), "the flattering number is never printed as a cast");
+  // The paired LEVELS still tell the truth on the same frame - red 2, green 1.2, blue 0 - which is why
+  // bottomsFor reads those and not rb.
+  const lv = destroyed.bands.blacks.levels;
+  assert.ok(lv.red > lv.blue, "levels still show red above blue where rb claims near-neutral");
+});
