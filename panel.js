@@ -757,6 +757,42 @@ async function logLutTool({ action = "status", id, seconds, track = 1 } = {}) {
       const text = lines.join("\n") + "\nLUTs live in " + LUT_HOME + ". The pass also converts log with Premiere's own colour management (chosen from the picture) without any LUT; the maker's LUT is the alternative the editor may prefer. Ask before fetching, and say what will be downloaded and from where.";
       card.done(text, true); return { text };
     }
+    // "use": the whole thing in one call - work out which LUT this clip needs, fetch it if it is not here,
+    // apply it, confirm from the render. The editor should never have to know an id (the owner, 12:05:
+    // "we just have to make the downloading luts part super easy").
+    if (action === "use") {
+      if (seconds === undefined) return err(card, "seconds is required: the timeline position of the log clip");
+      const snap = await readSnapshot();
+      if (snap.error) return err(card, snap.error);
+      const clip = snap.clips.find((c) => c.track === "V" + track && seconds >= c.start && seconds < c.end && c.mediaPath);
+      if (!clip) return err(card, "no footage at " + seconds + "s on V" + track);
+      const hint = logCameraHint({ tags: mediaTags(clip.mediaPath), path: clip.mediaPath });
+      if (!hint) return err(card, "the file's own tags do not name a camera maker, so I cannot tell which conversion it needs. Ask the editor which camera shot it, then use log_lut fetch and apply with that maker's id (" + Object.keys(LUT_REGISTRY).join(", ") + ").");
+      const mine = lutsForMaker(hint);
+      if (!mine.length) return err(card, "no official conversion LUT is registered for " + hint + " yet; Premiere's own colour management converts this footage instead - just run grade_sequence.");
+      const before = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
+      const notes = [];
+      for (const l of mine) {
+        let p = lutLocalPath(l.id);
+        if (!p || !fs.existsSync(p)) {
+          const r = await fetchLut(l.id).catch((e) => ({ error: e.message }));
+          if (r.error || r.page) { notes.push(l.label + ": " + (r.error || "needs a manual download from " + r.page + ", then drop the .cube into " + LUT_HOME + "/" + l.maker)); continue; }
+          p = r.path; notes.push("downloaded " + l.label + " from the maker's page");
+        }
+        const raw = await host("lumetriLUT", String(seconds), String(track), p);
+        if (raw.indexOf("ERR:") === 0) { notes.push(l.label + ": " + raw.slice(4)); continue; }
+        const after = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
+        const moved = Math.abs(after.luma.p1 - before.luma.p1) > 1 || Math.abs(after.luma.p99 - before.luma.p99) > 2;
+        if (moved) {
+          const text = "Using " + l.label + " on this clip. It reads black " + round2(after.luma.p1) + " / white " + round2(after.luma.p99) + " / colour p99 " + round2(after.saturation.p99) + ", where it read " + round2(before.luma.p1) + " / " + round2(before.luma.p99) + " / " + round2(before.saturation.p99) + " as shot. The file is in " + LUT_HOME + "/" + l.maker + " and the LUT is on the clip, so Discard copy removes it." + (notes.length ? " (" + notes.join("; ") + ")" : "");
+          card.done(text, true); return { text };
+        }
+        notes.push(l.label + ": written but the render did not change - this Premiere version may not accept a scripted custom LUT");
+      }
+      await host("lumetriLUT", String(seconds), String(track), "");
+      const text = "Could not put a maker's LUT on this clip automatically. " + notes.join("; ") + ". By hand: Lumetri Color, Basic Correction, Input LUT, Browse, and pick the file from " + LUT_HOME + "/" + hint + ". Premiere's own colour management also converts this footage without any LUT - grade_sequence does that on its own.";
+      card.done(text, false); return { text, isError: true };
+    }
     if (action === "fetch") {
       if (!id || !LUT_REGISTRY[id]) return err(card, "id must be one of: " + Object.keys(LUT_REGISTRY).join(", "));
       const r = await fetchLut(id);
@@ -779,7 +815,7 @@ async function logLutTool({ action = "status", id, seconds, track = 1 } = {}) {
       const text = (action === "apply" ? "applied " + id + " as the clip's Lumetri Input LUT" : "Input LUT cleared") + " (path read back " + (wrote ? "as written" : "as \"" + back + "\"") + ", flag " + flag + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + "." + (action === "apply" && !wrote ? " The write did not stick - this Premiere version may not accept a scripted custom LUT; apply it by hand: Lumetri Color, Basic Correction, Input LUT, Browse, " + lutPath : "") + " This is on the clip in the working copy, so Discard copy removes it.";
       card.done(text, true); return { text };
     }
-    return err(card, "action must be status, fetch, apply or clear");
+    return err(card, "action must be use, status, fetch, apply or clear");
   } catch (error) { return err(card, error.message); }
 }
 
@@ -3439,8 +3475,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { texts: { type: "array", items: { type: "string" }, description: "all the words/labels to look for, in one pass" }, text: { type: "string", description: "a single word (or use texts)" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum; widened automatically beyond 30 frames" } } } },
   // caption_style (captionStyleTool) is built and tested but not registered: it reopens the project, which is
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
-  { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own colour management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
-    inputSchema: { type: "object", properties: { action: { type: "string", enum: ["status", "fetch", "apply", "clear"] }, id: { type: "string", description: "A LUT id from status, for fetch and apply." }, seconds: { type: "number", description: "Timeline position of the clip, for apply and clear." }, track: { type: "number", description: "1-based video track, default 1." } } } },
+  { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. use: the whole thing in one call for a log clip - works out the maker from the file, downloads the official conversion from the maker's own page if it is not on this machine, applies it to that clip and confirms from the render. Ask the editor once before the first download, saying what will be downloaded and from where; after that just use it. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own colour management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
+    inputSchema: { type: "object", properties: { action: { type: "string", enum: ["use", "status", "fetch", "apply", "clear"] }, id: { type: "string", description: "A LUT id from status, for fetch and apply." }, seconds: { type: "number", description: "Timeline position of the clip, for apply and clear." }, track: { type: "number", description: "1-based video track, default 1." } } } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
   { name: "reframe", description: "THE call for a shape change on an OPEN timeline: 'make it 9:16', '4:5', '16:9 version'. Never with a bin (refused): raw footage in a bin is rough_cut's job, and the tracking pass on its cut is this call without a bin. For 'check the framing' with no shape change use snapshot_moments, which moves nothing. One deterministic pass: the open timeline is resized on its working copy. Footage fills the frame and is centred, graphics/titles/guides keep their placement, then Premiere's own Auto Reframe effect goes on every footage clip (Premiere analyses each clip's SOURCE and follows the subject inside the frame). Returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = fill-and-centre only, no tracking.",

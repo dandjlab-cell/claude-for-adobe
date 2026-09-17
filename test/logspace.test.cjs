@@ -77,3 +77,16 @@ test("the maker's LUT goes on the clip through Lumetri's own Input LUT (property
   assert.match(panel, /await host\("lumetriLUT", String\(seconds\), String\(track\), lutPath\)/);
   assert.match(panel, /on the clip in the working copy, so Discard copy removes it/);
 });
+
+test("log_lut use is one call: maker from the file, fetch if missing, apply, judge by the render, clean up if it did not take", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const tool = panel.slice(panel.indexOf("async function logLutTool"), panel.indexOf("// The skin key is learned"));
+  assert.match(tool, /if \(action === "use"\)/);
+  assert.match(tool, /const hint = logCameraHint\(\{ tags: mediaTags\(clip\.mediaPath\), path: clip\.mediaPath \}\)/, "the maker comes from the file, not the editor");
+  assert.match(tool, /if \(!p \|\| !fs\.existsSync\(p\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing");
+  assert.match(tool, /const moved = Math\.abs\(after\.luma\.p1 - before\.luma\.p1\) > 1/, "judged by the render, not the read-back");
+  assert.match(tool, /await host\("lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot when nothing worked");
+  const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "colour", "SKILL.md"), "utf8");
+  assert.match(skill, /`log_lut use` at the clip's time does the lot/, "the skill tells the panel to use the one-call form");
+});
