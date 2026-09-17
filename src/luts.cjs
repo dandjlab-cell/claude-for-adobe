@@ -42,7 +42,10 @@ const REGISTRY = {
 };
 
 const forMaker = (maker) => Object.entries(REGISTRY).filter(([, e]) => e.maker === maker).map(([id, e]) => ({ id, ...e }));
-const localPath = (id) => { const e = REGISTRY[id]; return e && e.file ? path.join(HOME, e.maker, e.file) : null; };
+// A file name Premiere is happy with: spaces, + and - in a LUT's name are a documented cause of it not
+// applying, so the stored copy is plain (researched 2026-09-17).
+const safeName = (name) => String(name).replace(/[^A-Za-z0-9._]+/g, "_").replace(/_+/g, "_");
+const localPath = (id) => { const e = REGISTRY[id]; return e && e.file ? path.join(HOME, e.maker, safeName(e.file)) : null; };
 const isLocal = (id) => { const p = localPath(id); return !!(p && fs.existsSync(p)); };
 
 // Fetch one entry onto this machine. Returns { path } or { page } when there is no direct link, throws on failure.
@@ -52,7 +55,7 @@ async function fetchLut(id) {
   if (!e.url) return { page: e.page, note: e.label + " has no direct link: open the page, accept the maker's terms, save the zip, and drop the .cube into " + path.join(HOME, e.maker) };
   const dir = path.join(HOME, e.maker);
   fs.mkdirSync(dir, { recursive: true });
-  const dest = path.join(dir, e.file);
+  const dest = path.join(dir, safeName(e.file));
   if (fs.existsSync(dest)) return { path: dest, cached: true };
   const zip = path.join(dir, path.basename(e.url));
   const r = spawnSync("curl", ["-sL", "-A", "Mozilla/5.0", "-o", zip, e.url], { encoding: "utf8" });
@@ -71,12 +74,14 @@ async function fetchLut(id) {
 // Premiere's cube parser is strict: Sony's own s709 file (CRLF line endings, two comment lines and a blank
 // line before LUT_3D_SIZE, no DOMAIN lines) was rejected on selection and the menu fell back to the
 // previous entry (11:21). Rewritten the way Adobe's own cubes are laid out, values untouched.
+// Also drops LUT_3D_INPUT_RANGE (a Resolve-ism Premiere rejects outright), any 1D/shaper block and the BOM
+// - the documented causes of a LUT that lists but will not load (researched 2026-09-17).
 function normaliseCube(text, title = "converted") {
-  const lines = String(text).replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  const lines = String(text).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
   let size = null; const data = [];
   for (const l of lines) {
     if (/^LUT_3D_SIZE/i.test(l)) { size = Number(l.split(/\s+/)[1]); continue; }
-    if (/^(TITLE|DOMAIN_MIN|DOMAIN_MAX|LUT_1D_SIZE|LUT_3D_INPUT_RANGE)/i.test(l)) continue;
+    if (/^(TITLE|DOMAIN_MIN|DOMAIN_MAX|LUT_1D_SIZE|LUT_1D_INPUT_RANGE|LUT_3D_INPUT_RANGE|SHAPER)/i.test(l)) continue;
     const v = l.split(/\s+/).map(Number);
     if (v.length === 3 && v.every(Number.isFinite)) data.push(v.map((n) => n.toFixed(6)).join(" "));
   }
@@ -84,4 +89,4 @@ function normaliseCube(text, title = "converted") {
   return ["TITLE \"" + title + "\"", "LUT_3D_SIZE " + size, "DOMAIN_MIN 0.0 0.0 0.0", "DOMAIN_MAX 1.0 1.0 1.0", ...data].join("\n") + "\n";
 }
 
-module.exports = { REGISTRY, HOME, forMaker, localPath, isLocal, fetchLut, normaliseCube };
+module.exports = { REGISTRY, HOME, forMaker, localPath, isLocal, fetchLut, normaliseCube, safeName };

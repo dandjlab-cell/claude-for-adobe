@@ -773,7 +773,10 @@ async function logLutTool({ action = "status", id, seconds, track = 1 } = {}) {
       if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4) + " - apply the file by hand instead: Lumetri Color, Basic Correction, Input LUT, Browse, " + (lutPath || "(none)"));
       const [, back, flag] = raw.split(COL);
       const m = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
-      const text = (action === "apply" ? "applied " + id + " as the clip's Lumetri Input LUT" : "Input LUT cleared") + " (path read back " + (back ? "yes" : "empty") + ", flag " + flag + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + ". This is on the clip in the working copy, so Discard copy removes it.";
+      // The write is known to have broken in some Premiere versions (community reports: worked 22.5-23.3,
+      // broken 23.4-24.0), so the render is the proof, not the read-back.
+      const wrote = action === "apply" ? back === lutPath && String(flag) === "1" : !back;
+      const text = (action === "apply" ? "applied " + id + " as the clip's Lumetri Input LUT" : "Input LUT cleared") + " (path read back " + (wrote ? "as written" : "as \"" + back + "\"") + ", flag " + flag + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + "." + (action === "apply" && !wrote ? " The write did not stick - this Premiere version may not accept a scripted custom LUT; apply it by hand: Lumetri Color, Basic Correction, Input LUT, Browse, " + lutPath : "") + " This is on the clip in the working copy, so Discard copy removes it.";
       card.done(text, true); return { text };
     }
     return err(card, "action must be status, fetch, apply or clear");
