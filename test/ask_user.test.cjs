@@ -52,3 +52,19 @@ test("ask_user is registered as a tool, takes 2-4 options and returns the label 
   assert.match(fn, /hint: o\.description \|\| ""/, "a description becomes its answer's second line, not part of the question");
   assert.match(fn, /The user did not answer/, "an unanswered question is reported as unanswered, never guessed");
 });
+
+test("an answer is a button, not a sentence: the label and its line are capped", () => {
+  // Nothing enforced a length before (the owner, 13:35). The caps are above anything we write ourselves -
+  // the longest answer in the panel is 29 characters, the longest hint 45 - and below what wrecks the card.
+  const fn = between("const ANSWER_MAX", "async function readProject(");
+  assert.match(fn, /const ANSWER_MAX = 32, HINT_MAX = 90;/);
+  assert.match(fn, /clipTo\(label, ANSWER_MAX\)/, "askChoice clips, so no caller can break the card");
+  assert.match(fn, /clipTo\(hint, HINT_MAX\)/);
+  assert.match(fn, /a\.label\.length > ANSWER_MAX/, "ask_user refuses instead of silently cutting the model's words");
+  assert.match(fn, /an answer is a button, not a sentence/, "and the error says how to fix it");
+  // Every answer the panel writes itself is already inside the caps.
+  for (const m of panel.matchAll(/\{ label: "([^"]*)", hint: "([^"]*)" \}/g)) {
+    assert.ok(m[1].length <= 32, 'label too long: "' + m[1] + '" (' + m[1].length + ')');
+    assert.ok(m[2].length <= 90, 'hint too long: "' + m[2] + '" (' + m[2].length + ')');
+  }
+});
