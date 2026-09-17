@@ -1736,18 +1736,17 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             // the post-curve domain is A (p1 - t) / (A - t); back through the first curve that is
             // x2 = x + xAdd * (a - x) / a.
             const xAdd = (A * (p1 - target) / (A - target)) / 100;
-            // The same guard the FIRST write respects: the bottom point maps every channel, so it cannot
-            // pass the lowest channel's floor. Without it here the correction chased the LUMA black point
-            // straight past the limit the first write had honoured - C229 went 0.06 (held at the lowest
-            // channel bottom) -> 0.14 -> 0.17 and put red under zero while blue floated at +8, which is
-            // exactly what the owner's parade showed at 00:00:09:10 (14:53). Headroom is measured on the
-            // current render and mapped back through the curve already written, like xAdd itself.
-            const floorNow = Math.min(fa.red.p1, fa.green.p1, fa.blue.p1);
-            const xAddCap = Math.max(0, (floorNow - GRADE_FLOOR_MIN) / 100);
-            const wanted = curveNow + xAdd * (a - curveNow) / a;
-            const capped = curveNow + xAddCap * (a - curveNow) / a;
-            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, capped, wanted));
-            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")" + (wanted > x2 + 0.002 ? " (held at the lowest channel bottom, " + round2(floorNow) + ": further would put it under zero)" : "")); }
+            // NOT floor-guarded here, and the reason is written down so it is not "fixed" again blind.
+            // 0.1.82 added that guard after a parade showed red under zero. It froze the black point on
+            // almost every clip and balanced fell 7 to 4, including clips that had reached target safely
+            // the run before (C220: black 4.3 with a tick, then the guard blocked the same move). The
+            // cause: the FIRST write is itself floor-limited on nearly every clip, so it already lands the
+            // lowest channel near the margin - headroom measured after it is nil, and the correction stops
+            // existing. The mapping of that headroom back through the curve was derived, not measured,
+            // which is the deeper fault. A real fix needs a swept toe-to-floor model. Until then the damage
+            // rollback below is what catches a correction that crushed the frame.
+            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, curveNow + xAdd * (a - curveNow) / a));
+            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
           }
         }
         if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {

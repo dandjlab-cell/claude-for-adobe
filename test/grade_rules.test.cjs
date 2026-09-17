@@ -418,30 +418,18 @@ test("a frame written for Vision is cheap to write, and its pixels are not decod
 // a channel ends up under zero: C229 on the 2026-09-17 14:52 run was held at 0.06 by the first write ("held
 // at the lowest channel bottom"), then the correction chased the LUMA black point to 0.14 and 0.17 with no
 // guard at all - red under zero, blue floating at +8, which is what the owner's parade showed at 09:10.
-test("the black-point correction cannot push a channel under zero", () => {
+test("the black-point correction is deliberately NOT floor-guarded, and says why", () => {
+  // 0.1.82 guarded it after a parade showed red under zero. The guard froze the correction on almost every
+  // clip - the first write is already floor-limited, so headroom measured after it is ~nil - and balanced
+  // fell 7 to 4, including clips that had reached target safely the run before (C220: 4.3 with a tick).
+  // Reverted 15:15. The next attempt needs a measured toe-to-floor model, not a derived mapping.
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
-  assert.match(seq, /const floorNow = Math\.min\(fa\.red\.p1, fa\.green\.p1, fa\.blue\.p1\);/, "headroom from the current render");
-  assert.match(seq, /const xAddCap = Math\.max\(0, \(floorNow - GRADE_FLOOR_MIN\) \/ 100\);/, "the same margin the first write uses");
-  assert.match(seq, /const x2 = Math\.max\(0, Math\.min\(GRADE_LEVELS_CAP, capped, wanted\)\);/, "capped, not just clamped to the slider range");
-  assert.match(seq, /held at the lowest channel bottom, " \+ round2\(floorNow\)/, "and the row says when it stopped short, and why");
-  // The arithmetic, on C229's real numbers.
-  const A = 0.5, FLOOR_MIN = require("../src/grade_rules.cjs").FLOOR_MIN, CAP = require("../src/grade_rules.cjs").LEVELS_CAP;
-  const allowed = (curveNow, floorNow, p1) => {
-    const xAdd = (A * 100 * (p1 - 4) / (A * 100 - 4)) / 100;
-    const wanted = curveNow + xAdd * (A - curveNow) / A;
-    const capped = curveNow + Math.max(0, (floorNow - FLOOR_MIN) / 100) * (A - curveNow) / A;
-    return Math.min(CAP, capped, wanted);
-  };
-  assert.ok(allowed(0.06, 3.0, 12.2) < 0.10, "0.06 -> 0.14 was the bug; the guard keeps it near 0.07");
-  assert.ok(allowed(0.14, 1.8, 8.2) < 0.145, "a channel already at 1.8 earns almost nothing more (0.17 was the bug)");
-  assert.ok(allowed(0.06, 40, 12.2) > 0.13, "a frame with room still gets the full correction");
+  assert.doesNotMatch(seq, /xAddCap/, "the derived guard is gone, not left half-wired");
+  assert.match(seq, /A real fix needs a swept toe-to-floor model/, "and the note says what a real fix requires");
 });
 
-// "Colour this" with one clip selected had nothing correct to call: grade_shot is STEERED - the caller
-// supplies the goals - so the model invented targets and asked for contrast 85 on a clip the canon caps at
-// 40 (2026-09-17 15:04). The deterministic pass now takes a position and grades that clip alone.
 test("the deterministic pass can grade one clip, and the skill sends single-shot work there", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
