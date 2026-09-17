@@ -2,13 +2,16 @@
 
 **Why this file exists.** On 2026-09-17 a session spent an evening establishing that Premiere's Exposure
 is a clean gamma-2.4 gain downward and tone-maps upward, and recorded it as a new finding. It was already
-in `handoff.md:388`, dated 2026-09-15. The same session then built an offline Lumetri simulator without
+in `handoff.md` — search *"Exposure calibration"*, dated 2026-09-15. The same session then built an offline Lumetri simulator without
 knowing one had been built and cancelled for a stated reason. Neither mistake was carelessness — the
-findings are real and recorded, in 478 lines of prose with no index.
+findings are real and recorded, in a 500+ line prose handoff with no index.
 
 The sibling repo `premiere-map` solved this with a queryable graph and a rule at the top of its CLAUDE.md:
 *query the graph, do not grep markdown for orientation.* This is the cheap version of that. **Grep this
 file before running an experiment.**
+
+Citations are quoted phrases, never line numbers: `handoff.md` grows every session and line references rot
+within a day. An index whose citations do not resolve teaches the next session to stop trusting the index.
 
 One line per established fact: what is known, when, where the evidence lives, and — the part that matters
 — **what it forecloses**, so the next session does not re-open it.
@@ -19,20 +22,20 @@ One line per established fact: what is known, when, where the evidence lives, an
 
 | finding | date | evidence | forecloses |
 |---|---|---|---|
-| Premiere applies the full colour-space transform (primaries + transfer) **before any effect**, so Lumetri always grades converted pixels | 2026-09-17 | `handoff.md:366` | Any model that treats Lumetri as operating on camera-native values |
-| The sequence carries `autoToneMapEnabled` and `autoInputGamutCompressionEnabled`, both **true** by default, and both scriptable | 2026-09-17 | `handoff.md:367`; memory `project_premiere_colour_management_scriptable` | Treating highlight roll-off as a property of Lumetri rather than a setting |
-| **With the tone mapper off, log footage clips** — whites to 100, 5–11 % per channel. "Log holds highlights above display white; the tone mapper is what rolls them off" | 2026-09-17 | `handoff.md:368` | The theory that the clipping seen in sweeps is Lumetri's own |
-| `setOverrideColorSpace` works per project item; 34 spaces listed. Restore with `getOriginalColorSpace()` — the empty object is not writable back | 2026-09-17 | `handoff.md:367` | Needing a plugin for gamut |
-| The override lives on the **project item**, shared with the original sequence — Discard does not undo it | 2026-09-17 | `handoff.md:367`, `:371` | Assuming the working copy isolates colour-space changes |
-| The maker's LUT applies by writing Lumetri **property 4** (the .cube path) then **property 6 = 1**. Verified against the render: 4.7 / 92.2 / 27 against a software prediction of 4.7 / 92.2 / 24 | 2026-09-17 | `handoff.md:371` | The belief that the Input LUT slot is not scriptable (it is, by index, not by name) |
-| Premiere's own scopes have **no readable values** — GPU intermediates. Export Frame plus our own computation is the native path | 2026-09-15 | `handoff.md:386`; premiere-map Round 250 | Any further search for a scope readback API |
+| Premiere applies the full colour-space transform (primaries + transfer) **before any effect**, so Lumetri always grades converted pixels | 2026-09-17 | `handoff.md` — search *"the gamut question is answered"* | Any model that treats Lumetri as operating on camera-native values |
+| The sequence carries `autoToneMapEnabled` and `autoInputGamutCompressionEnabled`, both **true** by default, and both scriptable | 2026-09-17 | `handoff.md` — search *"both log doors probed live"*; memory `project_premiere_colour_management_scriptable` | Treating highlight roll-off as a property of Lumetri rather than a setting |
+| **With the tone mapper off, log footage clips** — whites to 100, 5–11 % per channel. "Log holds highlights above display white; the tone mapper is what rolls them off" | 2026-09-17 | `handoff.md` — search *"the three Sony overrides with the tone mapper OFF"* | The theory that the clipping seen in sweeps is Lumetri's own |
+| `setOverrideColorSpace` works per project item; 34 spaces listed. Restore with `getOriginalColorSpace()` — the empty object is not writable back | 2026-09-17 | `handoff.md` — search *"both log doors probed live"* | Needing a plugin for gamut |
+| The override lives on the **project item**, shared with the original sequence — Discard does not undo it | 2026-09-17 | `handoff.md` — search *"both log doors probed live"*, `:371` | Assuming the working copy isolates colour-space changes |
+| The maker's LUT applies by writing Lumetri **property 4** (the .cube path) then **property 6 = 1**. Verified against the render: 4.7 / 92.2 / 27 against a software prediction of 4.7 / 92.2 / 24 | 2026-09-17 | `handoff.md` — search *"the maker's LUT goes on the CLIP"* | The belief that the Input LUT slot is not scriptable (it is, by index, not by name) |
+| Premiere's own scopes have **no readable values** — GPU intermediates. Export Frame plus our own computation is the native path | 2026-09-15 | `handoff.md` — search *"Native scopes readback"*; premiere-map Round 250 | Any further search for a scope readback API |
 
 ## Lumetri behaviour
 
 | finding | date | evidence | forecloses |
 |---|---|---|---|
-| **Exposure is asymmetric**: a clean gamma-2.4 gain downward, a highlight-protecting tone map upward. No static curve fits both | 2026-09-15 | `handoff.md:388`; `exposureRule` | Fitting one curve to Exposure across its range |
-| That asymmetry **cancelled an offline Lumetri simulator** and was replaced by measure-and-interpolate | 2026-09-15 | `handoff.md:388` | Rebuilding an offline simulator *without addressing the asymmetry* — see the note below |
+| **Exposure is asymmetric**: a clean gamma-2.4 gain downward, a highlight-protecting tone map upward. No static curve fits both | 2026-09-15 | `handoff.md` — search *"Exposure calibration"*; `exposureRule` | Fitting one curve to Exposure across its range |
+| That asymmetry **cancelled an offline Lumetri simulator** and was replaced by measure-and-interpolate | 2026-09-15 | `handoff.md` — search *"Exposure calibration"* | Rebuilding an offline simulator *without addressing the asymmetry* — see the note below |
 | Lumetri processes **top-down**: Basic and Creative, then RGB Curves, then hue/sat curves, then wheels and HSL — regardless of write order | Adobe docs, confirmed 2026-09-17 | `docs/reviews/codex_deterministic_grading_2026-09-17.md` | Believing that writing a parameter last makes it apply last |
 | **Multiple Lumetri instances can be stacked**, each a full pipeline, so any operation order is reachable | 2026-09-17 (owner) | `src/forward.cjs` `pipeline()` | Treating Lumetri's fixed section order as a constraint on achievable order |
 | QE `getParamValue`/`setParamValue` read and write the blob parameters as text — wheels, curves, HSL key. Dots to write, commas on read | 2026-09-16 | premiere-map Round 252 | Searching for a numeric API for the blob parameters |
@@ -79,7 +82,7 @@ units* — 100 Whites points = 1 stop, both a gamma-2.4 gain, confirmed on two f
 field-for-field on one. Downward they are the same operation exactly. **Upward they split: at the same
 gain, Whites clips 2.74 % of red while Exposure rolls off and clips nothing.** A sequence-level tone
 mapper acts on the composited result and cannot know which slider produced a value — if it were doing the
-roll-off, Whites would roll off too. So the shoulder is inside Lumetri's Exposure, `handoff.md:388`
+roll-off, Whites would roll off too. So the shoulder is inside Lumetri's Exposure, `handoff.md` — search *"Exposure calibration"*
 stands, and the non-undoable `setSettings` write was never needed.
 
 **What the hypothesis bought anyway**, which is why it was worth forming: it produced the comparison that

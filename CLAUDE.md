@@ -6,8 +6,8 @@
 >
 > It is one line per established fact, with **what each one forecloses**. It exists because on
 > 2026-09-17 a session spent an evening re-deriving a finding that was three days old, then rebuilt a
-> component that had already been built and cancelled for a stated reason — both recorded, both in the
-> 478-line `docs/handoff.md`, neither findable.
+> component that had already been built and cancelled for a stated reason — both recorded, both in a 500+ line
+> `docs/handoff.md`, neither findable.
 >
 > This is the same rule the sibling repo `premiere-map` puts at the top of its own instructions: *do not
 > grep prose for orientation.* The index is the orientation surface. `docs/handoff.md` is the
