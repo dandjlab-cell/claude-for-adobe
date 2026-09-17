@@ -9,7 +9,7 @@
 // Usage: scripts/scan-history.cjs <range>...   e.g. "origin/main..HEAD" or "abc123 --not --remotes=origin"
 "use strict";
 const { execFileSync } = require("node:child_process");
-const { patterns } = require("./privacy-patterns.cjs");
+const { patterns, EXCLUDE } = require("./privacy-patterns.cjs");
 
 const ranges = process.argv.slice(2);
 if (!ranges.length) { console.error("usage: scan-history.cjs <git log range>..."); process.exit(2); }
@@ -30,6 +30,7 @@ for (const line of patch.split("\n")) {
   if (line.startsWith("commit ")) { commit = line.slice(7, 14); continue; }
   if (line.startsWith("+++ b/")) { file = line.slice(6); continue; }
   if (!line.startsWith("+") || line.startsWith("+++")) continue;
+  if (EXCLUDE.includes(file)) continue; // the guard's own fixtures
   for (const [re, what] of patterns()) {
     re.lastIndex = 0;
     const m = re.exec(line);

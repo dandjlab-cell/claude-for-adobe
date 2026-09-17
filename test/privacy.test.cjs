@@ -9,11 +9,11 @@ const os = require("node:os");
 // project names. What counts as private lives in scripts/privacy-patterns.cjs, shared with the pre-push
 // history scan, so there is one answer and not two that drift apart. Test fixtures use /Volumes/X.
 const ROOT = path.join(__dirname, "..");
-const { patterns, TEXT, PRIVATE_WORDS } = require("../scripts/privacy-patterns.cjs");
+const { patterns, TEXT, PRIVATE_WORDS, EXCLUDE } = require("../scripts/privacy-patterns.cjs");
 const PATTERNS = patterns();
 
 test("no private paths, emails, or client names in tracked files", () => {
-  const files = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).split("\n").filter((f) => f && TEXT.test(f) && f !== "test/privacy.test.cjs");
+  const files = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).split("\n").filter((f) => f && TEXT.test(f) && !EXCLUDE.includes(f));
   const hits = [];
   for (const f of files) {
     const src = fs.readFileSync(path.join(ROOT, f), "utf8");

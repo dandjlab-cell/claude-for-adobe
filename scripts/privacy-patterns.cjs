@@ -26,4 +26,10 @@ function patterns() {
 
 const TEXT = /\.(cjs|js|jsx|json|md|sh|command|html|css|txt|xml|yml|yaml|swift)$/i;
 
-module.exports = { patterns, TEXT, PRIVATE_WORDS };
+// The guard's own files. They have to contain a private-LOOKING path to prove they can spot a real one:
+// the test plants a fake client drive path in a throwaway repo and requires the scan to fail on it. Scanning
+// these files therefore flags the fixture and blocks every push - which is what happened the first time this
+// hook ran (14:05). They are excluded by name, and a test checks they hold nothing that matches for real.
+const EXCLUDE = ["test/privacy.test.cjs", "scripts/scan-history.cjs", "scripts/privacy-patterns.cjs"];
+
+module.exports = { patterns, TEXT, PRIVATE_WORDS, EXCLUDE };
