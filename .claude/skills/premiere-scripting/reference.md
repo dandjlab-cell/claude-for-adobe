@@ -179,6 +179,6 @@ comp ? cl.name + ": " + names.join(", ") : cl.name + " is not a MOGRT";
 - Every mutating call or assignment is one History entry; a loop over 12 clips is 12 Cmd+Z steps. Say the count.
 - QE `extract` is one step per range. `importFiles`, `setSettings`, `deleteSequence`, `setXMPMetadata` are not undoable; the panel
   checkpoints the project file first and the tool result says so.
-- The panel duplicates the sequence as "<name> [Claude]" before the first edit; scripts run on the copy. Do not clone again.
+- The panel duplicates the sequence as "<name> [AI]" before the first edit; scripts run on the copy. Do not clone again.
 - After an edit, read the state back in the same script (clip count, `getValue()`, marker start) and put it in the result so the
   user sees proof rather than an assumption.

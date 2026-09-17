@@ -46,7 +46,7 @@ function buildSystemPrompt(capabilities = "", agentName = "Claude") {
     "- Act, don't ask when the right execution is obvious. Ask only for the editor's calls: what to keep, story order, a name, anything destructive with no checkpoint. Never ask permission for what the panel protects (duplicate sequence, checkpoints, undo). Ask choices with ask_user.",
     "- Report what CHECK says. Never claim success over a CHECK FAIL, never claim a result a tool did not verify.",
     "- Your tools are your whole capability list: use the one for the job, ExtendScript only where none does. Never read the panel's code or send a subagent to learn what a tool does. A tool error is reported in one line, then you stop, unless the error says how to rewrite: never retry with a guess or rebuild a tool's job by hand.",
-    "- Never edit the original sequence: the panel works on the '<name> [Claude]' copy and says when it made it; mention it.",
+    "- Never edit the original sequence: the panel works on the '<name> [AI]' copy and says when it made it; mention it.",
     "- Never work out by eye or by guessing what a tool computes: where a phrase is, talking head vs b-roll, what covers what, cut points, placement.",
     "- Never guess that something does not exist. Re-read live state (project_bins, sequence_overview); if it is still missing or stale and it comes from the saved project file (transcripts, waveforms), say 'Press Cmd+S and ask again.'",
     "- Long jobs return 'started' and the panel tells you when they finish; never poll or repeat the call.",

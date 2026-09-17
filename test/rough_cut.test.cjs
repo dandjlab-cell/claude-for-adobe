@@ -85,11 +85,19 @@ test('bound cleanup refuses a stale plan before making a working copy',async()=>
   assert.equal(result.isError,true);assert.match(result.text,/changed/);
 });
 
-test('collision suffix keeps an existing working copy registered',async()=>{
-  const start=source.indexOf('async function ensureWorkingCopy('),end=source.indexOf('\n}',start)+2;
-  const ctx={ui:{dupSequence:{checked:true}},readProject:async()=>({sequenceId:'copy',sequence:'Interview [Claude] v2'}),ownSequences:new Set(),workingCopies:new Map([['copy',{originalId:'original'}]]),renderCopies(){},log(){},host(){throw new Error('must not clone again');}};
+// The tag is "[AI]" and not the agent's name - the same panel runs Codex (the owner, 13:40) - and a copy
+// made under the old "[Claude]" tag must still be recognised, or an old project gets duplicated twice.
+for (const name of ['Interview [AI] v2','Interview [Claude] v2']) test('collision suffix keeps an existing working copy registered: '+name,async()=>{
+  const start=source.indexOf('const COPY_TAG = '),end=source.indexOf('\n}',source.indexOf('async function ensureWorkingCopy('))+2;
+  const ctx={ui:{dupSequence:{checked:true}},readProject:async()=>({sequenceId:'copy',sequence:name}),ownSequences:new Set(),workingCopies:new Map([['copy',{originalId:'original'}]]),renderCopies(){},log(){},host(){throw new Error('must not clone again');}};
   vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);
   await ctx.ensureWorkingCopy();assert.equal(ctx.workingCopies.has('copy'),true);
+});
+
+test('a new working copy is tagged [AI], not the agent name',()=>{
+  assert.match(source,/const COPY_TAG = "\[AI\]"/);
+  assert.match(source,/cloneActive", p\.sequence \+ " " \+ COPY_TAG/);
+  assert.doesNotMatch(source,/sequence \+ " \[(?:Claude|Codex)\]"/,'no agent name is ever written into a sequence name');
 });
 
 test('rough cut starts from selected Project clips without a bin or open timeline',async()=>{

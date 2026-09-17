@@ -375,21 +375,27 @@ async function discardCopy(copyId) {
 // Sequences the panel itself built this session: edits go straight on them, no working copy (a copy of a
 // copy protected nothing and doubled the sequences in the bin).
 const ownSequences = new Set();
+// The working copy's tag. Not the agent's name: the same panel runs Codex, and a sequence called
+// "Interview [Codex]" next to "Interview [Claude]" is two names for one idea (the owner, 13:40). "[Claude]"
+// is still matched so copies made before 2026-09-17 are recognised and never duplicated a second time.
+const COPY_TAG = "[AI]";
+const COPY_TAG_RE = / \[(?:AI|Claude)\](?: v\d+)?$/;
 async function ensureWorkingCopy() {
   if (!ui.dupSequence.checked) return "";
   const p = await readProject();
   if (!p.sequenceId) throw new Error("no active sequence");
   if (ownSequences.has(p.sequenceId)) return "";
-  // A copy the editor renamed (no more "[Claude]") is theirs now: forget it, so the next edit gets a fresh copy.
-  if (workingCopies.has(p.sequenceId) && !/ \[Claude\](?: v\d+)?$/.test(p.sequence)) { workingCopies.delete(p.sequenceId); renderCopies(); log("working copy renamed by the editor, released: " + p.sequence); }
-  if (workingCopies.has(p.sequenceId) || / \[Claude\](?: v\d+)?$/.test(p.sequence)) return "";
+  // A copy the editor renamed (no more "[AI]") is theirs now: forget it, so the next edit gets a fresh copy.
+  // "[Claude]" is the old tag, still recognised: copies made before 2026-09-17 must not be duplicated again.
+  if (workingCopies.has(p.sequenceId) && !COPY_TAG_RE.test(p.sequence)) { workingCopies.delete(p.sequenceId); renderCopies(); log("working copy renamed by the editor, released: " + p.sequence); }
+  if (workingCopies.has(p.sequenceId) || COPY_TAG_RE.test(p.sequence)) return "";
   const existing = [...workingCopies.entries()].find(([, c]) => c.originalId === p.sequenceId);
   if (existing) {
     await host("openSequence", existing[0]);
     timeline = await readSnapshot();
     return "[The panel switched to the existing working copy \"" + existing[1].copyName + "\"; \"" + p.sequence + "\" stays untouched.]\n";
   }
-  const out = await host("cloneActive", p.sequence + " [Claude]");
+  const out = await host("cloneActive", p.sequence + " " + COPY_TAG);
   if (out.indexOf("ERR:") === 0) throw new Error(out.slice(4));
   const [copyId, copyName] = out.split("|");
   workingCopies.set(copyId, { copyName, originalId: p.sequenceId, originalName: p.sequence });
@@ -779,6 +785,26 @@ async function chooseLogConversion(at, track, mediaPath, region, timed, onRender
 // fetched, fetches from the maker's own direct link (no searching), and applies it as the clip's input
 // interpretation. `action`: "status" (what is log here, which maker, which LUTs exist, local or fetchable),
 // "fetch" (one id), "apply" (one id at a timeline position, then a scopes confirm), "clear".
+// The maker's own conversion LUT, on this machine, ready to apply. Downloads it if it is not here yet -
+// without asking, because the answer is always yes and the folder is always the same one (the owner, 13:40).
+// Returns { path, label, from, cached } or { note } saying what a human has to do instead (a maker that
+// gates its LUTs behind a click-through, or a file whose tags name no camera at all).
+async function lutForMaker(maker) {
+  if (!maker) return { note: "the file's own tags do not name a camera maker, so I cannot tell which conversion it needs. Ask the editor which camera shot it, then log_lut fetch and apply with that maker's id (" + Object.keys(LUT_REGISTRY).join(", ") + ")." };
+  const mine = lutsForMaker(maker);
+  if (!mine.length) return { note: "no official conversion LUT is registered for " + maker + " yet; Premiere's own colour management converts this footage instead - grade_sequence with log \"premiere\"." };
+  for (const l of mine) { const p = lutLocalPath(l.id); if (p && fs.existsSync(p)) return { path: p, label: l.label, from: lutSite(l), cached: true }; }
+  const notes = [];
+  for (const l of mine) {
+    try {
+      const r = await fetchLut(l.id);
+      if (r.path) return { path: r.path, label: l.label, from: lutSite(l), cached: !!r.cached };
+      notes.push(r.note);
+    } catch (error) { notes.push(l.label + ": " + error.message); }
+  }
+  return { note: notes.join("; ") };
+}
+
 async function logLutTool({ action = "status", id, file, seconds, track = 1, where = "clip" } = {}) {
   const card = addTool("log_lut " + action + (id ? " " + id : "") + (seconds !== undefined ? " @" + seconds + "s" : ""), "");
   try {
@@ -799,7 +825,8 @@ async function logLutTool({ action = "status", id, file, seconds, track = 1, whe
     }
     // "use": the whole thing in one call - work out which LUT this clip needs, fetch it if it is not here,
     // apply it, confirm from the render. The editor should never have to know an id (the owner, 12:05:
-    // "we just have to make the downloading luts part super easy").
+    // "we just have to make the downloading luts part super easy"), or be asked where to save it (13:40:
+    // "we save it where we always would save it") - lutForMaker below does both without a question.
     if (action === "use") {
       if (seconds === undefined) return err(card, "seconds is required: the timeline position of the log clip");
       const snap = await readSnapshot();
@@ -807,29 +834,24 @@ async function logLutTool({ action = "status", id, file, seconds, track = 1, whe
       const clip = snap.clips.find((c) => c.track === "V" + track && seconds >= c.start && seconds < c.end && c.mediaPath);
       if (!clip) return err(card, "no footage at " + seconds + "s on V" + track);
       const hint = logCameraHint({ tags: mediaTags(clip.mediaPath), path: clip.mediaPath });
-      if (!hint) return err(card, "the file's own tags do not name a camera maker, so I cannot tell which conversion it needs. Ask the editor which camera shot it, then use log_lut fetch and apply with that maker's id (" + Object.keys(LUT_REGISTRY).join(", ") + ").");
-      // Always the maker's own file (the owner, 13:10): Premiere's bundled LUTs are not an alternative here.
-      const mine = lutsForMaker(hint);
-      if (!mine.length) return err(card, "no official conversion LUT is registered for " + hint + " yet; Premiere's own colour management converts this footage instead - just run grade_sequence.");
+      const got = await lutForMaker(hint);
+      if (!got.path) return err(card, got.note);
       const before = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
-      const notes = [];
-      for (const l of mine) {
-        let p = lutLocalPath(l.id);
-        if (!p || !fs.existsSync(p)) {
-          const r = await fetchLut(l.id).catch((e) => ({ error: e.message }));
-          if (r.error || r.page) { notes.push(l.label + ": " + (r.error || "needs a manual download from " + r.page + ", then drop the .cube into " + LUT_HOME + "/" + l.maker)); continue; }
-          p = r.path; notes.push("downloaded " + l.label + " from the maker's page");
-        }
-        // "clip" = Lumetri's own Input LUT (goes with Discard); "source" = Interpret Footage (stays).
+      const notes = got.note ? [got.note] : [];
+      {
+        const l = got, p = got.path;
+        // "clip" = Lumetri's own Input LUT (comes off with the copy); "source" = Interpret Footage (stays).
         const raw = await host(where === "source" ? "setInputLUT" : "lumetriLUT", String(seconds), String(track), p);
-        if (raw.indexOf("ERR:") === 0) { notes.push(l.label + ": " + raw.slice(4)); continue; }
+        if (raw.indexOf("ERR:") === 0) { notes.push(l.label + ": " + raw.slice(4)); }
+        else {
         const after = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
         const moved = Math.abs(after.luma.p1 - before.luma.p1) > 1 || Math.abs(after.luma.p99 - before.luma.p99) > 2;
         if (moved) {
-          const text = "Using " + l.label + (where === "source" ? " in the file's source settings (stays after Discard)" : " on this clip (goes with Discard)") + ". It reads black " + round2(after.luma.p1) + " / white " + round2(after.luma.p99) + " / colour p99 " + round2(after.saturation.p99) + ", where it read " + round2(before.luma.p1) + " / " + round2(before.luma.p99) + " / " + round2(before.saturation.p99) + " as shot. The file is in " + LUT_HOME + "/" + l.maker + " and stays there; " + (where === "source" ? "the setting is on the file, so it survives Discard copy" : "the LUT is on the clip, so Discard copy removes it") + "." + (notes.length ? " (" + notes.join("; ") + ")" : "");
+          const text = "Using " + l.label + (where === "source" ? " in the file's source settings" : " on this clip") + ". It reads black " + round2(after.luma.p1) + " / white " + round2(after.luma.p99) + " / colour p99 " + round2(after.saturation.p99) + ", where it read " + round2(before.luma.p1) + " / " + round2(before.luma.p99) + " / " + round2(before.saturation.p99) + " as shot. The file is in " + LUT_HOME + "/" + hint + " and stays there; " + (where === "source" ? "the setting is on the file, so it survives the copy being discarded" : "the LUT is on the clip, so discarding the copy removes it") + "." + (notes.length ? " (" + notes.join("; ") + ")" : "");
           card.done(text, true); return { text };
         }
         notes.push(l.label + ": written but the render did not change - this Premiere version may not accept a scripted custom LUT");
+        }
       }
       await host(where === "source" ? "setInputLUT" : "lumetriLUT", String(seconds), String(track), "");
       const text = "Could not put a maker's LUT on this clip automatically. " + notes.join("; ") + ". By hand: Lumetri Color, Basic Correction, Input LUT, Browse, and pick the file from " + LUT_HOME + "/" + hint + ". Premiere's own colour management also converts this footage without any LUT - grade_sequence does that on its own.";
@@ -1347,21 +1369,21 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       // 12:05) - it says what it found and what the two routes are, and the editor picks.
       // Buttons, not a paragraph (the owner, 12:40: "the interface needs to be clickable options") - through
       // askChoice, the same control ask_user gives the model, so there is one question card in the panel and
-      // not a bespoke one here. ONE question: the conversion is always the maker's own official LUT (the
-      // owner, 13:10: "we should actually not use any Premiere's LUTs, they are no good - it shouldn't even
-      // be an option, we always download"), so all that is left to decide is WHERE it goes. The question
-      // names the site it comes from, so nobody is asked to approve an unnamed download. Not answering, or
-      // "Leave it log", leaves the clip as shot.
+      // not a bespoke one here. The download is NOT a question: the conversion is always the maker's own
+      // official LUT and it always lands in the same folder (the owner, 13:40: "we don't ask where it goes
+      // ... we save it where we always would"). It is fetched first, said out loud with the site it came
+      // from, and only then is there something to decide: which slot it goes in.
       if (log === "ask") {
         const hint = logCameraHint({ tags: mediaTags(c.mediaPath), path: c.mediaPath });
         const maker = hint ? hint[0].toUpperCase() + hint.slice(1) : null;
-        const from = hint ? lutsForMaker(hint).filter((l) => !lutIsLocal(l.id)).map((l) => lutSite(l)).filter(Boolean)[0] : null;
+        const got = await lutForMaker(hint);
+        if (!got.path) { lines.push(label + ": " + logNote + ". " + got.note); logSkipped++; continue; }
         const where = await askChoice(
-          label + " is " + (maker ? maker + " log" : "log, and the file does not name the camera") + ". I'll convert it with " +
-            (maker ? maker + "'s" : "the maker's") + " own official LUT" + (from ? ", downloaded from " + from : " (already on this machine)") + ". Where does it go?",
-          ["This clip - Lumetri's Input LUT, goes with Discard copy", "Source settings - every cut of the file, stays after Discard copy", "Leave it log"]);
+          label + " is " + (maker ? maker + " log" : "log, and the file does not name the camera") + ". " +
+            (got.cached ? "I have " + got.label + " here." : "Downloaded " + got.label + " from " + got.from + ".") + " Where should it go?",
+          ["Lumetri's Input LUT on this clip - comes off with the copy", "The file's source settings - every cut of the file, and it stays", "Leave it log"]);
         if (!where || where === "Leave it log") { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
-        log = /^Source/.test(where) ? "lut-source" : "lut"; // and the rest of the run follows it
+        log = /source settings/.test(where) ? "lut-source" : "lut"; // and the rest of the run follows it
       }
       if (/^lut(-source)?$/.test(log)) {
         const toSource = log === "lut-source";

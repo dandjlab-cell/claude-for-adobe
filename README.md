@@ -136,7 +136,7 @@ asked. Every tool call appears as a collapsible card with the code and the resul
 ## Edits go to a duplicate sequence
 
 Before the first edit on a sequence, the panel duplicates it inside the project (`sequence.clone()`),
-names the copy `<name> [Claude]`, and makes it active. Every edit lands on the copy; the original is
+names the copy `<name> [AI]`, and makes it active. Every edit lands on the copy; the original is
 never touched. The **Working copies** list has **Open original** and **Discard copy** buttons, so
 reverting is opening the original and deleting the copy. Nothing is written to disk. Turn this off
 with the **Edit a duplicate sequence** checkbox if you want edits in place.

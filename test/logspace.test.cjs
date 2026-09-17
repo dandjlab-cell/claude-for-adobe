@@ -81,10 +81,11 @@ test("the maker's LUT goes on the clip through Lumetri's own Input LUT (property
 test("log_lut use is one call: maker from the file, fetch if missing, apply, judge by the render, clean up if it did not take", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
-  const tool = panel.slice(panel.indexOf("async function logLutTool"), panel.indexOf("// The skin key is learned"));
+  const tool = panel.slice(panel.indexOf("async function lutForMaker"), panel.indexOf("// The skin key is learned"));
   assert.match(tool, /if \(action === "use"\)/);
   assert.match(tool, /const hint = logCameraHint\(\{ tags: mediaTags\(clip\.mediaPath\), path: clip\.mediaPath \}\)/, "the maker comes from the file, not the editor");
-  assert.match(tool, /if \(!p \|\| !fs\.existsSync\(p\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing");
+  assert.match(tool, /for \(const l of mine\) \{ const p = lutLocalPath\(l\.id\); if \(p && fs\.existsSync\(p\)\) return/, "what is already here is never downloaded again");
+  assert.match(tool, /const r = await fetchLut\(l\.id\);/, "and what is missing is fetched without a question (13:40)");
   assert.match(tool, /const moved = Math\.abs\(after\.luma\.p1 - before\.luma\.p1\) > 1/, "judged by the render, not the read-back");
   assert.match(tool, /await host\(where === "source" \? "setInputLUT" : "lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot it used when nothing worked");
   assert.match(tool, /where === "source" \? "setInputLUT" : "lumetriLUT"/, "clip = Lumetri's Input LUT, source = Interpret Footage");
@@ -101,11 +102,13 @@ test("the grade never changes a source setting on its own: ONE question, with bu
   assert.ok(ask, "the ask block is still there");
   assert.equal(ask.match(/await askChoice\(/g).length, 1, "one question, through the panel's one question card - the conversion is not a choice, only where it goes");
   assert.doesNotMatch(panel, /builtinFor|builtin-source/, "Premiere's own LUTs are not offered anywhere: they are not an alternative (the owner, 13:10)");
-  assert.match(ask, /own official LUT" \+ \(from \? ", downloaded from " \+ from : /, "the question names the site the file comes from before anything is fetched");
-  assert.match(ask, /Where does it go\?/);
-  assert.match(ask, /This clip[\s\S]*?goes with Discard copy[\s\S]*?Source settings[\s\S]*?stays after Discard copy[\s\S]*?Leave it log/, "each answer carries its own cost");
+  assert.match(ask, /const got = await lutForMaker\(hint\);/, "the file is fetched BEFORE the question: where to save it was never a question (13:40)");
+  assert.match(ask, /"Downloaded " \+ got\.label \+ " from " \+ got\.from/, "and the question says what was downloaded and from where");
+  assert.match(ask, /Where should it go\?/, "the only question is which slot it goes in");
+  assert.match(ask, /Lumetri's Input LUT on this clip[\s\S]*?comes off with the copy[\s\S]*?The file's source settings[\s\S]*?and it stays[\s\S]*?Leave it log/, "each answer carries its own cost");
+  assert.doesNotMatch(ask, /Discard copy/, "the button says \"the copy\", not the name of a button elsewhere in the panel (13:40)");
   assert.match(ask, /if \(!where \|\| where === "Leave it log"\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining, or not answering, leaves the clip as shot");
-  assert.match(ask, /log = \/\^Source\/\.test\(where\) \? "lut-source" : "lut"/, "the answer sets the route for the rest of the run");
+  assert.match(ask, /log = \/source settings\/\.test\(where\) \? "lut-source" : "lut"/, "the answer sets the route for the rest of the run");
   assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: toSource \? "source" : "clip" \}\)/, "the LUT goes where the editor asked");
 });
 
