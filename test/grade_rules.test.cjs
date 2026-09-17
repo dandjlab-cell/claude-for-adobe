@@ -563,3 +563,22 @@ test("when a channel cannot come all the way down, the others come UP to meet it
   assert.ok(floorCap >= 0.02, "with the Master curve's room preserved: floorCap " + floorCap.toFixed(4) + " (down-only left 0.005)");
   assert.ok(levelsFor(bot.predicted, bot.curves, m), "so a black point is set at all, which is what the 17:59 run lost");
 });
+
+// panel.js is one 390KB scope and the tests read it as text, so a `const` used above its own declaration
+// passes every assertion and throws at runtime - swallowed, in this case, by the row builder's own catch.
+// That is exactly what the black-point chain did on its first edit: the shot-match row builder sits above
+// the declaration and `continue`s before reaching it.
+test("the black-point chain is never referenced above its own declaration", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const declared = panel.indexOf("const bpChain = [");
+  assert.ok(declared > 0, "it is declared");
+  let from = 0, uses = 0;
+  for (;;) {
+    const at = panel.indexOf("bpChain", from);
+    if (at < 0) break;
+    assert.ok(at >= declared, "bpChain used at " + at + ", declared at " + declared + " - a TDZ ReferenceError at runtime");
+    from = at + 1; uses++;
+  }
+  assert.ok(uses >= 3, "declaration plus at least one real use");
+});

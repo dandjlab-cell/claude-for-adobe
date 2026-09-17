@@ -1679,6 +1679,14 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     else if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
     if (bot) parts.push("black balance: " + bot.why);
+    // The black point is the one value in the pass with no predicted-vs-actual anywhere: every slider
+    // reports before→achieved through planShot, while the black balance and the curve report only what they
+    // ASKED for. The 18:39 run predicted ~9.6 after the curve and the frame read 11.0, and nothing in the
+    // row said which step lost it - shadows can only move p1 0.08 a unit (its sweep) and contrast +40 moves
+    // it DOWN ~2.9, so the miss was neither. These are free: the numbers already exist, nothing is rendered.
+    const bpChain = [["as read", (m.frame || m).luma.p1]];
+    if (bot) bpChain.push(["black balance", (bot.predicted.frame || bot.predicted).luma.p1]);
+    if (lev) bpChain.push(["curve " + lev.blackIn.toFixed(2), (lev.predicted.frame || lev.predicted).luma.p1]);
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
     // The colorists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
     // Sat, the QE text door, probed 2026-09-16), never on a colored end, judged on the frame as read.
@@ -1968,7 +1976,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (_) {}
     const took = tookOf();
     log("grade " + label + took);
-    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
+    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (confirm && bpChain.length > 1 ? " [black point " + bpChain.map(([w, n]) => round2(n) + " " + w).join(" → ") + " → " + round2(f1.luma.p1) + " read" + (Math.abs(f1.luma.p1 - bpChain[bpChain.length - 1][1]) > 1.5 ? ", MODEL OFF BY " + round2(f1.luma.p1 - bpChain[bpChain.length - 1][1]) : "") + "]" : "") + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
