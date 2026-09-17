@@ -3776,7 +3776,24 @@ async function boot() {
       // The rhythm rules monitor every edit rather than waiting to be asked: if a tool changed the timeline, the
       // cut is checked (holes on V1, flash gaps and blinks on the b-roll tracks, scroll stop on vertical) and any
       // finding is appended to that tool's own result, where the model cannot miss it.
-      const run = async () => { if (signal && signal.aborted) return { text: "CLAUDE_FOR_ADOBE_ERROR:This call was abandoned before it ran; nothing ran.", isError: true }; const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline); const out = await TOOLS[name](args, { signal });
+      // Every write we make fires a Premiere change event, and each one used to schedule a fresh snapshot and
+      // a project read on the SAME single host thread the tool is working on. The 13:22 grade log shows the
+      // cost: "host snapshot took 4063ms", "host projectInfo took 4416ms", again and again between clip rows,
+      // with the grade's own calls queued behind them - the same source read that takes 2.2s on a quiet clip
+      // took 5.9s on a contended one. The cut loop already suspended refreshes for exactly this reason; now
+      // every tool call does, with one snapshot at the end, which is also what the fingerprint below needs.
+      const run = async () => { if (signal && signal.aborted) return { text: "CLAUDE_FOR_ADOBE_ERROR:This call was abandoned before it ran; nothing ran.", isError: true }; const t0 = Date.now(); const fpBefore = timelineFingerprint(timeline);
+        const wasSuspended = refreshSuspended;
+        refreshSuspended = true; clearTimeout(snapshotTimer); clearTimeout(ledgerTimer);
+        let out;
+        try { out = await TOOLS[name](args, { signal }); }
+        finally {
+          if (!wasSuspended) {
+            refreshSuspended = false;
+            try { await snapshotTimeline(); } catch (error) { log("snapshot after " + name + " failed: " + error.message); }
+            try { await refreshProject(); } catch (_) {}
+          }
+        }
         if (timelineFingerprint(timeline) !== fpBefore) { refreshLedgerSoon(); const note = require(path.join(extensionRoot, "src", "rhythm.cjs")).rhythmReport(timeline); if (note) { if (typeof out.text === "string") out.text += note; else if (Array.isArray(out.content)) out.content.push({ type: "text", text: note.trim() }); log("rhythm " + note.split("\n").filter(Boolean).length + " line(s) after " + name); } } const first = String(out.text || (out.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ") || "").split("\n").find((l) => l.trim()) || ""; log("tool " + name + " " + ((Date.now() - t0) / 1000).toFixed(1) + "s " + (out.isError ? "ERROR " : "-> ") + first.slice(0, 180)); return out; };
       const next = toolQueue.then(run, run);
       toolQueue = next.catch(() => {});
@@ -3784,7 +3801,7 @@ async function boot() {
     }, onLog: log });
     log("mcp server at " + mcp.url);
     await refreshProject();
-    setInterval(() => { refreshProject().catch(() => {}); }, PROJECT_POLL_MS);
+    setInterval(() => { if (!refreshSuspended) refreshProject().catch(() => {}); }, PROJECT_POLL_MS); // not while a tool holds the host thread
     await bindHostEvents();
     await snapshotTimeline();
     renderCopies();

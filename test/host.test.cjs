@@ -155,5 +155,22 @@ test("an abandoned call cancels its approval card and runs nothing", () => {
   assert.ok(run.indexOf("if (signal && signal.aborted) return abandonedErr();", run.indexOf("askInline(")) > 0, "checked again after the wait, before running");
   assert.equal((run.match(/if \(signal && signal\.aborted\) return abandonedErr\(\);/g) || []).length, 3, "checked at entry, after the approval wait, and right before evalScript dispatch");
   assert.match(src, /onCall: \(name, args, signal\) =>/);
-  assert.match(src, /const out = await TOOLS\[name\]\(args, \{ signal \}\);/);
+  assert.match(src, /try \{ out = await TOOLS\[name\]\(args, \{ signal \}\); \}/, "the call still runs through the queue, now inside the refresh guard");
+});
+
+// A tool holds Premiere's single host thread for as long as it runs, and every write it makes fires a change
+// event back at the panel. Refreshing on those events puts a 3-5 second snapshot and project read in front of
+// the tool's own next call: the 2026-09-17 13:22 grade logged "host snapshot took 4063ms" and "host
+// projectInfo took 4416ms" repeatedly between clip rows, and identical source reads came out 2.2s or 5.9s
+// depending only on what the panel was doing to itself. Refreshes wait for the tool to finish.
+test("the panel does not refresh itself while a tool holds the host thread", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const run = src.slice(src.indexOf("const run = async () => {"), src.indexOf("const next = toolQueue.then"));
+  assert.match(run, /refreshSuspended = true; clearTimeout\(snapshotTimer\); clearTimeout\(ledgerTimer\);/, "suspended for the whole call");
+  assert.match(run, /const wasSuspended = refreshSuspended;/, "a button job that already suspended stays in charge of resuming");
+  assert.match(run, /finally \{[\s\S]*?if \(!wasSuspended\) \{[\s\S]*?refreshSuspended = false;/, "resumed even when the tool throws");
+  assert.match(run, /await snapshotTimeline\(\);/, "one snapshot at the end - the fingerprint compare below needs it");
+  assert.ok(run.indexOf("await snapshotTimeline()") < run.indexOf("timelineFingerprint(timeline) !== fpBefore"),
+    "the snapshot must land before the fingerprint is compared, or no tool ever reports a timeline change");
+  assert.match(src, /setInterval\(\(\) => \{ if \(!refreshSuspended\) refreshProject\(\)/, "the 1 Hz project poll waits too");
 });
