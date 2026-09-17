@@ -10,7 +10,9 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
-const HOME = path.join(os.homedir(), "Library", "Application Support", "claude-for-adobe", "luts");
+// A visible folder, not the hidden Library: the editor has to be able to reach these files for Lumetri's
+// Browse (the owner, 11:38: "getting to that lut is difficult because it's behind a hidden folder").
+const HOME = path.join(os.homedir(), "Documents", "Claude for Premiere", "LUTs");
 
 // id -> { maker, label, space (Premiere's override name it corresponds to), url (direct zip or cube),
 // file (the .cube inside), page (where a human downloads it when url is null) }
@@ -62,7 +64,24 @@ async function fetchLut(id) {
   }
   if (!fs.existsSync(dest)) { const cubes = fs.readdirSync(dir).filter((f) => /\.cube$/i.test(f)); if (cubes.length === 1) fs.renameSync(path.join(dir, cubes[0]), dest); }
   if (!fs.existsSync(dest)) throw new Error("the archive did not contain " + e.file);
+  fs.writeFileSync(dest, normaliseCube(fs.readFileSync(dest, "utf8"), e.label));
   return { path: dest };
 }
 
-module.exports = { REGISTRY, HOME, forMaker, localPath, isLocal, fetchLut };
+// Premiere's cube parser is strict: Sony's own s709 file (CRLF line endings, two comment lines and a blank
+// line before LUT_3D_SIZE, no DOMAIN lines) was rejected on selection and the menu fell back to the
+// previous entry (11:21). Rewritten the way Adobe's own cubes are laid out, values untouched.
+function normaliseCube(text, title = "converted") {
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  let size = null; const data = [];
+  for (const l of lines) {
+    if (/^LUT_3D_SIZE/i.test(l)) { size = Number(l.split(/\s+/)[1]); continue; }
+    if (/^(TITLE|DOMAIN_MIN|DOMAIN_MAX|LUT_1D_SIZE|LUT_3D_INPUT_RANGE)/i.test(l)) continue;
+    const v = l.split(/\s+/).map(Number);
+    if (v.length === 3 && v.every(Number.isFinite)) data.push(v.map((n) => n.toFixed(6)).join(" "));
+  }
+  if (!size || data.length !== size * size * size) throw new Error("not a 3D cube I can read (size " + size + ", " + data.length + " entries)");
+  return ["TITLE \"" + title + "\"", "LUT_3D_SIZE " + size, "DOMAIN_MIN 0.0 0.0 0.0", "DOMAIN_MAX 1.0 1.0 1.0", ...data].join("\n") + "\n";
+}
+
+module.exports = { REGISTRY, HOME, forMaker, localPath, isLocal, fetchLut, normaliseCube };
