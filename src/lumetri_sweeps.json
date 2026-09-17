@@ -2836,7 +2836,8 @@
     "floorGreen": 0.01,
     "floorBlue": 0.35
    }
-  ]
+  ],
+  "_spacingCORRECTION": "CORRECTION 2026-09-17, from an independent review. `_castNeutral` says this control 'does not fix a cast' and that 'the channel curves own the spacing, this owns the level'. That generalises from C187, which is the one frame of three where it happens to be true. Measured paired red-minus-blue from neutral to x=0.25: C220 2.4 -> 0.8 (-1.6), C229 13.0 -> 9.8 (-3.2), C187 29.4 -> 30.6 (+1.2). It DOES move spacing, by up to 3.2 IRE, and the direction is frame-dependent.\n\nTHIS IS A SHIPPED INTERACTION, not a curiosity. bottomsFor sets the channel spacing at step 3 and shadowsLiftFor writes this wheel at step 5, with nothing re-reading the spacing in between. At the live C229 setting (x about 0.31 per blackEndC229._predictionCheck) it removes roughly 1.5 IRE of red-minus-blue - the whole of the NEUTRAL tolerance of 1.5 that the black balance was solved to. The lift is partly undoing the balance it is supposed to be completing. It is arithmetic and can be pre-compensated; it is currently invisible because the confirm render reads the total."
  },
  "shadowsWheelLumaC187": {
   "_source": "Live curve_sweep 2026-09-17 20:5x, C187 (A056_05072025_C187.braw) at 22.02s, wheels verified neutral before the sweep. The SECOND frame this control has been measured on, and the first second-frame sweep of anything in this file.",
@@ -3996,5 +3997,11 @@
     "clipRed": 0
    }
   ]
+ },
+ "exposureRule": {
+  "_source": "Derived 2026-09-17 from the EXISTING `exposure` block - no new sweep. Found by an independent review pointing out that applying one functional family (P + (in-P)k) to every slider would mislabel this one.",
+  "_theRule": "EXPOSURE IS A GAIN IN LINEAR LIGHT: convert to linear with gamma 2.4, multiply by 2^stops, convert back. out = 100 * ((v/100)^2.4 * 2^stops)^(1/2.4). Predicted against measured on every downward row: -2 stops 6.2/20.7/48.2 against 6.3/20.8/48.2; -1 stop 8.2/27.6/64.4 against 8.2/27.5/64.3; -0.5 stops 9.5/31.9/74.3 against 9.8/31.8/74.1. Within 0.3 IRE on p1, the median and p99 simultaneously - and those are three statistics from a one-parameter model, so it is genuinely overdetermined rather than fitted.",
+  "_upwardIsDifferent": "Downward only. Upward Premiere applies a highlight tone map: the plain gain predicts p99 99.2 at +0.5 stops against 91.8 measured. The sibling premiere-map repo reached the same conclusion independently in its Round 250 - 'a plain gamma-2.4 gain downwards, a highlight-protecting tone map upwards, no static curve fits both'. So the rule is exact below zero and needs a separate tone-map term above it, which is not yet measured.",
+  "_planImpact": "This removes one of the five planned second-frame sweeps. It also warns against the fitting procedure the plan proposed: forcing a pivot-gain family onto every slider would have produced a bad fit here and reported 'no form' for a control that has an exact one."
  }
 }
