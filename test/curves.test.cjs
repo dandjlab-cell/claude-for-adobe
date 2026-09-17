@@ -115,12 +115,15 @@ test("neutralBottoms pulls the high channel's toe down to meet the lowest, and n
   assert.equal(after.blue.p1 - after.red.p1, 0, "blacksRB goes to zero");
 });
 
-test("the grade reaches for the curves only once the wheel is done with the blacks", () => {
+// It is deliberately NOT wired into the grade. 0.1.80 wired it fed with each channel's own p1 - which is
+// not a cast - and balanced fell from 8 clips to 4, with black points crushed under target (C220 4.3 -> 1.6)
+// and casts grown (blacks 0.4 -> 3.9 blue). Wiring it again needs the paired band statistic and a measured
+// toe-to-output model; this test exists so the next attempt cannot skip that quietly.
+test("the grade does not write channel toes until the paired statistic and a swept model exist", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
-  const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
-  assert.match(seq, /const BOTTOM_TOL = 2\.5;/);
-  assert.match(seq, /if \(!next\.shadows && bottomsOff > BOTTOM_TOL\)/, "never while the Shadows wheel is still moving, or the two fight");
-  assert.match(seq, /await cw\.write\(toes \? neutralBottoms\(cur, toes\) : cur\)/, "one curve write carries the black point and the cast");
-  assert.match(seq, /parade bottoms " \+ round2\(bottomsOff\) \+ " apart/, "and the row says what it did and why");
+  assert.doesNotMatch(panel, /neutralBottoms/, "not wired: see the note above neutralBottoms in src/curves.cjs");
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "curves.cjs"), "utf8");
+  assert.match(src, /NOT WIRED INTO THE GRADE/, "and the function says why, where the next author will read it");
+  assert.match(src, /paired statistic|PAIRED statistic/i);
 });

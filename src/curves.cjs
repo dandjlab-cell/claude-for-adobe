@@ -179,14 +179,19 @@ function hueBump(centre, shift, width = HUE_BUMP_WIDTH) {
 }
 
 // Line the parade's three bottoms up, per channel, on the RGB curves - the move a colourist makes for a
-// cast in the blacks that the balance did not take out. A colour wheel is a hue-and-saturation rotation of
-// a whole tonal range and it overshoots: on the 14:09 run C202's Shadows pad went 0.13 -> 0.31 -> 0.18 over
-// two corrections and still left the blacks blue by 3.1. A channel's own toe is a levels move, and it lands
-// where the arithmetic says: the channel sitting above the lowest one is crushed down to meet it.
+// cast in the blacks the balance did not take out. Only ever DOWNWARD: lifting a channel's floor would
+// raise the black point that was just set.
 //
-// Only ever DOWNWARD. Lifting a channel's floor would raise the black point that was just set, and a
-// colourist takes a cast out of the blacks by pulling the high channel down, not by pushing the others up.
-// `bottoms` are the three channel p1 readings (0-100). Returns curves with Red/Green/Blue toes set.
+// NOT WIRED INTO THE GRADE, and the reason is the whole lesson. It shipped in 0.1.80 fed with each
+// channel's own p1 and made the grade worse - balanced fell from 8 clips to 4, black points were crushed
+// under target (C220: 4.3 -> 1.6) and casts grew (blacks 0.4 -> 3.9 blue). A channel's independent p1 is
+// NOT a cast: green's p1 sitting above red's says their distributions differ, not that the blacks are
+// green. The cast at the bottom is a PAIRED statistic - bands.blacks, the darkest 3% of pixels with all
+// three channels read at those same pixels - and it carries differences (rb, g), not absolute levels.
+// Before this is wired again it needs those paired numbers AND a measured toe-to-output model, the way the
+// pad model was swept. Guessing the second half is what broke it.
+//
+// `bottoms` are three channel levels (0-100) on a COMMON set of pixels. Returns curves with the toes set.
 function neutralBottoms(current, bottoms, cap = 0.12) {
   const out = Object.assign({}, current || {});
   const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
