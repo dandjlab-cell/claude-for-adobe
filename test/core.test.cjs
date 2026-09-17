@@ -103,3 +103,17 @@ test("a capability refusal stops the turn; a form refusal can be rewritten", () 
   for (const code of ["var c = app.project.activeSequence.videoTracks[0].clips[1]; c.name;", "var x = tracks[i].clips.numItems;", "out.push(clips[i].name);", "if (clips[i]) alert(x);", "outer(inner(a[i]))(x);"]) assert.equal(refused(code), null, code);
   assert.equal(isCapabilityRejection(null), false);
 });
+
+// A slow projectInfo landing after a fast one used to overwrite the newer sequence name, so the panel
+// reported the original while every read correctly hit the [AI] copy (the 18:36 log: 590ms and 3272ms in
+// one burst, either side of the working copy being made active). Source assertion - panel.js has no module
+// boundary to call across - but the three parts of the guard have to all be present for it to pass.
+test("refreshProject drops a reply a newer refresh has overtaken", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const fn = panel.slice(panel.indexOf("let projectGen = 0;"), panel.indexOf("async function refreshTimeline"));
+  assert.match(fn, /const gen = \+\+projectGen;/, "a ticket is taken before the await");
+  assert.ok(fn.indexOf("const gen = ++projectGen;") < fn.indexOf("await readProject()"), "and taken BEFORE it, not after");
+  assert.match(fn, /if \(gen !== projectGen\) return;/, "and the reply is dropped if it was overtaken");
+  assert.ok(fn.indexOf("if (gen !== projectGen) return;") < fn.indexOf("project = next;"), "before anything is assigned from it");
+});

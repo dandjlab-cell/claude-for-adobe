@@ -291,8 +291,17 @@ async function checkMediaAnalysis() {
   } catch (_) {}
 }
 
+// Two refreshes can be in flight at once (a burst of host events, plus the poll), and projectInfo's latency
+// varies wildly - 590ms and 3272ms on the same burst in the 18:36 log. Whichever await resolved last used to
+// win regardless of when it was ISSUED, so a slow call made before the working copy went active landed after
+// the fast one and put the OLD sequence name back: the panel then told the model "active sequence is now
+// Prototype_TEST" while every read was correctly hitting Prototype_TEST [AI]. The read was never wrong, the
+// label was. A generation ticket drops any reply a newer refresh has already overtaken.
+let projectGen = 0;
 async function refreshProject() {
+  const gen = ++projectGen;
   const next = await readProject();
+  if (gen !== projectGen) return; // overtaken: a newer refresh is in flight or has already landed
   const previousPath = project.path;
   const changed = next.path !== previousPath;
   project = next;
