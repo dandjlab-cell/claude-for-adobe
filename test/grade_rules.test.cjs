@@ -27,23 +27,14 @@ test("a shot with a good white point, neutral parade and normal spread is left a
   assert.equal(verdict(f, "frame").balanced, true);
 });
 
-// REWRITTEN 2026-09-17. This test used to assert "never Exposure for a subject: it lifts the blacks with
-// it", from the 18:03 run where Exposure was pushed two stops to force a white point. The objection was
-// real but it never discriminated: Whites and Exposure are the SAME control in different units (100 points
-// = 1 stop, both the gain 2^(stops/2.4)), so Whites lifts the blacks by exactly as much. Matched on C202 -
-// Whites +50 and Exposure +0.5 both land p1 at 16.5; Whites +100 and Exposure +1 both land it at 19.2.
-// What actually differs is the top: at those pairs Whites clips 2.74% and 13.42% of red, Exposure 0% and
-// 0.01%. So the pass had one of a redundant pair banned, and was using the one that blows highlights.
-// The real lesson of 18:03 was about MAGNITUDE, not which knob - and that is what the ceiling checks and
-// the damage guard are for.
-test("a low white point is lifted with Exposure - the same gain as Whites, without the clipping", () => {
+test("a low white point is Whites, never Exposure and never a subject brightness", () => {
   // Clip 1 of the live run: whites at 73, a dark bottle as the subject. The canon sets the white point
   // with the white-point knob; the 18:03 run pushed Exposure two stops to force it and lifted the
   // blacks with it.
   const f = frame(5, 30, 73, [5, 5, 5], [73, 73, 73]);
   const g = goalsFor(withSubject(f, frame(7, 21, 51, [7, 7, 6], [57, 50, 51])), "subject");
-  assert.deepEqual([...g].map((x) => x.param), ["shadows", "exposure", "highlights"], "a dark subject is lifted with Shadows (2026-09-16), then the white point with Exposure, then Highlights finishes");
-  assert.ok([...g].every((x) => x.param !== "whites"), "not Whites: identical gain, but it reaches the white point by clipping");
+  assert.deepEqual([...g].map((x) => x.param), ["shadows", "whites", "highlights"], "a dark subject is lifted with Shadows (2026-09-16), then Whites, then Highlights finishes what the +50 cap leaves");
+  assert.ok([...g].every((x) => x.param !== "exposure"), "never Exposure for a subject: it lifts the blacks with it");
   assert.equal(g[1].cap, undefined, "no fixed cap: the slider runs to 100, the model's ceiling check and the clip guard decide (22:50)");
   assert.equal(g[2].cap, undefined);
   assert.equal(g[2].onlyIf(frame(5, 40, 90, [5, 5, 5], [90, 90, 90])), false, "Highlights is skipped once the white point is in the band");
@@ -59,11 +50,9 @@ test("a whole-shot plan skips a conditional goal the earlier knobs made unnecess
   assert.deepEqual(sets, [], "nothing written for a skipped goal");
 });
 
-test("the sliders compose: the white point, then contrast, with the black point already the curve's", () => {
+test("the sliders compose: whites, contrast, then blacks last, solved on the predicted state", () => {
   const g = goalsFor(frame(14, 40, 65, [14, 14, 14], [65, 65, 65]), "frame"); // lifted, low, flat (spread 51)
-  // The white point is Exposure since 2026-09-17 - the same gain as Whites without the clipping - and
-  // Highlights still finishes, being the only one of the three that cannot blow the top out at all.
-  assert.deepEqual([...g].map((x) => x.param), ["exposure", "highlights", "contrast"], "the black point is the curve's, written before these are solved");
+  assert.deepEqual([...g].map((x) => x.param), ["whites", "highlights", "contrast"], "the black point is the curve's, written before these are solved");
 });
 
 test("white balance is Temperature only for a cast the whole parade shares, capped at half the slider", () => {
