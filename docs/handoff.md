@@ -90,8 +90,40 @@ Nothing is half-written. Two things are *deliberately* parked with the reason re
 
 The owner ended the session with two screengrabs and "same problems again and again ... this is what we do
 next session as proof". Neither is a new bug class - both are the ones already named below - but these are
-the frames the work gets judged on. **Identify the two clips on the test timeline first** (the parades are
-in the chat export for 16:50); they were not timecoded in the message.
+the frames the work gets judged on. They were not timecoded in the message.
+
+> **IDENTIFIED 2026-09-17 evening**, by rendering one frame per source across all 18 clips.
+>
+> **Frame 1 is `A056_05072025_C187.braw` at 22.0s (00:00:21:23)**, clip 21.23-22.81s. Unambiguous on
+> content: three olive-green stems diagonally across a completely defocused warm interior, a fingertip
+> bottom right, a metal collar on the middle stem - the only green-stems shot on the timeline. Lucky
+> accident: this is the frame the whole evening's curve and wheel sweeps were run on, so it is the best
+> characterised frame in the repo (`curveToeC187`, `shadowsWheelLumaC187`).
+>
+> **"The parade never reaches the bottom" is confirmed exactly** - luma p1 23.9, 0.00% of every channel
+> on the floor, ungraded.
+>
+> **But "blue's floor sits lifted above red's and green's" is INVERTED on this clip, by a lot.** Its
+> paired black levels are R 41.2 / G 21.2 / B 11.8 - blue sits 29.4 IRE *below* red. The blacks are
+> strongly warm, not blue, in the ungraded state the description calls for; and after the 19:24 run it is
+> still warm (`blacks warm by -14.1`). There is no state of this clip in which the cast clause is true.
+>
+> The most likely reading, given what the evening established: the owner was pattern-matching to the
+> blue-blacks complaint he had seen on *graded* shots. That complaint was real and is now fixed - the pass
+> was turning warm bottoms into blue ones - but it is not what is wrong with this frame. What is actually
+> wrong with C187 is **flat plus a warm bottom the pass only half-corrects** (it prints `NEEDS: blacks warm
+> by 29.8 ... half of it taken out, the rest is the objects`, correctly, because past COLORED the bottom is
+> the object's own colour). Do not "fix" a blue cast here; there isn't one.
+>
+> **Frame 2 is NOT C228** - that guess was mine and it is wrong. C228 at 7.735s is a woman at a counter
+> holding the blue cloth over a metal hoop; there is no dishwasher in it. Three dishwasher shots exist, and
+> on the described action - the cloth being lifted *out*, hand above, cloth clear of the tines - it is
+> **`A056_05072049_C193.braw` at 15.4s (00:00:15:09)**. The live alternative is **C231 at 12.5s**, which
+> already carries a flat-topped white plateau from a large white wall and a spread of only 9.8-61.6, i.e.
+> the "midtones with no separation" sitting in the *source* rather than in the correction.
+>
+> **Two questions that split it immediately, for the owner:** was the cloth going *in* or coming *out*?
+> (out = C193, in = C233 or C231). Was the white wall in frame? (prominent = C231, a sliver = C193).
 
 1. **Left uncorrected — flat, and the blacks still blue.** Green stems across a warm out-of-focus interior.
    The parade never reaches the bottom: all three channels stop well above 0 and blue's floor sits lifted
@@ -108,6 +140,14 @@ in the chat export for 16:50); they were not timecoded in the message.
 nothing under zero and its body spread clears `SPREAD.bodyFlat` (45), and frame 2 no longer has whites
 pushed to a shelf - judged by the owner's eye on the picture, not only by the numbers, because "balanced"
 already passed on shots he disliked.
+
+**Amended acceptance test for frame 1**, since the original wording asks for something that was never
+wrong: its bottoms meeting "within 2 IRE" is not achievable and should not be attempted. C187's bottom is
+a coloured surface 29.8 off neutral - past `COLORED` - so the canon deliberately takes out half and says
+so. Judge it instead on: **the body spread clearing 45**, **nothing crushed** (the 19:24 run floored
+nothing but reported `MODEL OFF BY 5.91` and `black point 12.9 lifted`), and **the picture no longer
+reading soft and yellow**. The blue-blacks half of the original criterion belongs to frame `00:00:09:10`
+on C229, where it was real and is now measured fixed (`+5.1` before, `-5.5` after).
 
 ## Key Files Changed (this session)
 
