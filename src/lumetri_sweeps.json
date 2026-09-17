@@ -2445,5 +2445,86 @@
    6.0,
    6.3
   ]
+ },
+ "curveToe": {
+  "_source": "Live curve_sweep 2026-09-17 17:05, C220 (A056_05072232_C220.braw) at 0.5 s on the [AI] copy - the SAME frame wheelBands was fitted on (its `neutral` row: p1 8.2, p99 75.7, blacksRB -1.6), so the two blocks are comparable. The Master curve's bottom point at each x, identity elsewhere, the clip's own curves restored after. Answers the question both reverted blue-blacks attempts guessed at: what a bottom-point move at x does to each channel's floor.",
+  "_model": "CONFIRMED: the published levels line. A channel at level `in` lands at (in - 100x)/(1 - x), floored at 0. Measured against every unclamped row: within 0.6 IRE and ALWAYS a touch high (the soft toe), which is what blackInFor's own note already said. So ~1.0 IRE of fall per 0.01 of x, and blackInFor/predictLevels need no correction.",
+  "_rigid": "THE FINDING THAT MATTERS: the toe moves all three channels by the SAME amount. Red-minus-blue spacing across the rows is 4.70 -> 4.80 -> 4.30 (the last already clamping) against a starting 4.70. The Master bottom point is a rigid translation of the parade, so it CANNOT close a gap between the channel floors - it can only push the whole parade down until the lowest channel clamps. The blue blacks are a SPACING defect and the black point is the wrong knob for them; only per-channel toes (neutralBottoms) change spacing.",
+  "_bandBlind": "AND THE TRAP: bands.blacks EXCLUDES any pixel with a channel at 0 or 255 (src/scopes.cjs, the `r > 0 && g > 0 && b > 0` guard). So its blacksRB drift here (-1.6 -> -1.2 -> 0 -> +1.6 -> +2 -> null) is NOT a cast the toe created - it is survivorship, the sample shrinking as blue crushes out of it, and at x=0.2 the band is empty. Rule: bands.blacks is only trustworthy while the floor shares are ~0. Reading it after a deep black point - which is exactly what the correction passes do - reads a biased subset.",
+  "_usable": "On this frame the toe is usable to x=0.05 (luma p1 8.2 -> 3.9, target 4) and no further: blue's own p1 is 4.7, so x > 0.047 puts it on the floor - 0.92% of the frame at 0.05, 5.76% at 0.1, 16.69% at 0.15. The existing cap at the lowest channel's bottom is therefore right, and tight.",
+  "rows": [
+   {
+    "x": 0,
+    "lumaP1": 8.2,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 4.7,
+    "blacksRB": -1.6,
+    "blacksG": -0.8,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.01
+   },
+   {
+    "x": 0.02,
+    "lumaP1": 6.7,
+    "redP1": 7.5,
+    "greenP1": 6.3,
+    "blueP1": 2.7,
+    "blacksRB": -1.2,
+    "blacksG": -0.8,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.02
+   },
+   {
+    "x": 0.05,
+    "lumaP1": 3.9,
+    "redP1": 4.7,
+    "greenP1": 3.5,
+    "blueP1": 0.4,
+    "blacksRB": 0,
+    "blacksG": -0.8,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.92
+   },
+   {
+    "x": 0.1,
+    "lumaP1": 0.4,
+    "redP1": 0.4,
+    "greenP1": 0,
+    "blueP1": 0,
+    "blacksRB": 1.6,
+    "blacksG": -0.8,
+    "floorRed": 0.77,
+    "floorGreen": 1.22,
+    "floorBlue": 5.76
+   },
+   {
+    "x": 0.15,
+    "lumaP1": 0,
+    "redP1": 0,
+    "greenP1": 0,
+    "blueP1": 0,
+    "blacksRB": 2,
+    "blacksG": -0.8,
+    "floorRed": 2.51,
+    "floorGreen": 2.37,
+    "floorBlue": 16.69
+   },
+   {
+    "x": 0.2,
+    "lumaP1": 0,
+    "redP1": 0,
+    "greenP1": 0,
+    "blueP1": 0,
+    "blacksRB": null,
+    "blacksG": null,
+    "floorRed": 3.87,
+    "floorGreen": 3.44,
+    "floorBlue": 28.99
+   }
+  ]
  }
 }

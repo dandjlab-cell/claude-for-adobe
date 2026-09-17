@@ -41,6 +41,12 @@ function measure(rgb) {
     const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const cb = (b - y) / 1.8556, cr = (r - y) / 1.5748; // Rec.709, -127.5..127.5
     hy[Math.min(255, Math.round(y))]++; hr[r]++; hg[g]++; hb[b]++;
+    // A pixel with a channel at 0 or 255 carries no readable difference, so it is left out of the cast
+    // histograms. MEASURED CONSEQUENCE (curve_sweep, C220 @0.5s, 2026-09-17 - `_bandBlind` in
+    // src/lumetri_sweeps.json): as a black point crushes blue out of the frame the darkest-3% sample
+    // shrinks to the pixels blue survived in, and bands.blacks drifts -1.6 -> 0 -> +2 -> null without any
+    // cast having changed. Read bands.blacks only while `floor` is ~0; after a deep black point it is a
+    // biased subset, not a cast. Do not "correct" that drift.
     if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) { const yc = Math.min(255, Math.round(y)); cBR[yc * 511 + b - r + 255]++; cGM[yc * 511 + Math.round(g - (r + b) / 2) + 255]++; cN[yc]++; }
     hs[Math.min(150, Math.round(Math.hypot(cb, cr) / 127.5 * 100))]++; // pure red ~103, pure green ~119: not capped at 100
     sr += r; sg += g; sb += b; scb += cb; scr += cr;

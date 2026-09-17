@@ -151,3 +151,38 @@ test("curve_sweep is registered and is calibration-only - it must not be part of
   assert.match(panel, /\{ name: "curve_sweep", description: "CALIBRATION, not grading/, "and declared to the model as calibration");
   assert.equal(panel.match(/curveSweepTool/g).length, 2, "it is defined and registered, and nothing else calls it - the grade never sweeps mid-run");
 });
+
+// The live toe sweep (curve_sweep, C220 @0.5s, 2026-09-17 17:05) checked against the arithmetic the grade
+// actually uses. This is the measurement both reverted blue-blacks attempts skipped.
+test("the levels line predicts the swept toe, and the toe is a RIGID translation", () => {
+  const rows = require("../src/lumetri_sweeps.json").curveToe.rows;
+  const at = (x) => rows.find((r) => r.x === x);
+  for (const r of rows) {
+    for (const [ch, p1] of [["luma", 8.2], ["red", 9.4], ["green", 7.8], ["blue", 4.7]]) {
+      const predicted = Math.max(0, (p1 - 100 * r.x) / (1 - r.x));
+      const measured = r[ch + "P1"] !== undefined ? r[ch + "P1"] : r.lumaP1;
+      assert.ok(measured - predicted > -0.1, "x=" + r.x + " " + ch + ": the soft toe never lands BELOW the line (" + measured + " vs " + predicted.toFixed(2) + ")");
+      assert.ok(measured - predicted < 0.6, "x=" + r.x + " " + ch + ": within 0.6 IRE of the line (" + measured + " vs " + predicted.toFixed(2) + ")");
+    }
+  }
+  // The whole point: the bottom point moves all three channels together. Red-minus-blue holds until blue
+  // clamps, so no Master toe can close a gap between the channel floors - the blue blacks need per-channel
+  // toes, not a deeper black point. Both reverts aimed the black point at a spacing defect.
+  for (const x of [0, 0.02]) assert.ok(Math.abs((at(x).redP1 - at(x).blueP1) - 4.7) <= 0.15, "x=" + x + ": the parade's spacing is unchanged");
+  assert.ok(at(0.05).floorBlue > 0.5 && at(0).floorBlue < 0.1, "and past the lowest channel's own p1 it stops translating and starts crushing");
+});
+
+// bands.blacks drops any pixel with a channel at 0 or 255, so it goes blind exactly when a black point is
+// working. The sweep's own rows are the proof; this test keeps the next author from reading that drift as
+// a cast and "correcting" it - which is the shape of both reverted changes.
+test("bands.blacks is only trustworthy while nothing is on the floor", () => {
+  const toe = require("../src/lumetri_sweeps.json").curveToe;
+  const rows = toe.rows;
+  assert.equal(rows[rows.length - 1].blacksRB, null, "at x=0.2 the darkest-3% band is empty - 29% of blue is on the floor");
+  const clean = rows.filter((r) => r.floorBlue < 0.1), dirty = rows.filter((r) => r.floorBlue > 1);
+  assert.ok(clean.every((r) => r.blacksRB < 0) && dirty.every((r) => r.blacksRB === null || r.blacksRB > 0),
+    "the sign flips with the crush, not with the picture: survivorship, not a cast");
+  assert.match(toe._bandBlind, /survivorship/);
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "scopes.cjs"), "utf8");
+  assert.match(src, /MEASURED CONSEQUENCE \(curve_sweep/, "and the histogram filter says so where it is written");
+});
