@@ -3815,11 +3815,201 @@
     "floorRed": 0,
     "floorBlue": 0
    }
-  ]
+  ],
+  "_pivotWasIllDetermined": "CORRECTION, 2026-09-17: the P of 95-100 quoted in `_theForm` is NOT well determined. Shadows spares p99 almost exactly (it moves 3.2 in total against p1's 21.1), which makes the two-point fit ill-conditioned in the same way it is outright degenerate for Blacks - see `_fitMethod`. The pivot number should not be used. What survives is the out-of-sample median residual in `_whereItDeparts`, which was doing all the real work in that fit, and the qualitative statement that Shadows is a dark-end control that spares the top."
  },
  "castCoupling": {
   "_source": "Read off the C202 slider sweeps, 2026-09-17. NEUTRAL - what the pass calls a balanced parade end - is 1.5.",
   "_finding": "THE TONAL SLIDERS MOVE THE COLOUR BALANCE THE WHITE BALANCE JUST SET, by more than the acceptance tolerance. blacksRB shift from neutral across each slider's range: shadows 4.7 (3.1x tolerance), whites 2.3 (1.5x), contrast 1.6 (1.1x). Saturation moves with them too - sat p50 runs 17 -> 12 under shadows and 17 -> 22 under whites.",
   "_orderConsequence": "The pass solves the white balance and the pads FIRST, then writes the tonal sliders, and nothing re-checks the cast afterwards except the confirm render. On a clip where Shadows runs to +50 for a dark subject - which the 19:24 run did on four clips - that is about 2.7 of blacksRB moved after the balance was set, nearly twice the tolerance it was solved to. This is a real reason the corrections exist, and it is arithmetic rather than noise: it can be predicted and pre-compensated instead of discovered by a render."
+ },
+ "_fitMethod": {
+  "_warning": "THE TWO-POINT PIVOT FIT IS DEGENERATE FOR ANY CONTROL THAT SPARES p99. Solving out = P + (in - P)k from p1 and p99: if out99 == in99 then P = in99 satisfies the equation for ANY k, so the fitted pivot carries ZERO information and simply reports p99 back. Found 2026-09-17 by the panel's session while fitting Blacks.",
+  "_demonstration": "Blacks returns P = 84.7, 84.7, 84.7, 84.7, 88.3 across its settings - beautifully consistent, and p99 IS 84.7. Reported naively that reads as 'a high-pivot gain with a pivot stable to 0.1', and Blacks is not a gain at all. Whites by contrast returns P = -1.3, -0.4, +0.1, +1.4, nowhere near either fit point, and is genuinely determined.",
+  "_rule": "A pivot is only believable when it sits AWAY from both fit points. When p99 barely moves, fit the pivot from p1 and the MEDIAN instead, or abandon the pivot form and test a toe. And always check the form against a statistic that was not used in the fit - that is what caught Shadows, Highlights and Blacks."
+ },
+ "blacksRule": {
+  "_source": "Second-frame sweep 2026-09-17, C202 @23.94s, ungraded, via slider_sweep.",
+  "_theForm": "A TOE, NOT A GAIN, with an exponential length constant. The median moves 0.13-0.20 of the black point's move; a gain about the apparent pivot requires 0.427 (the median sits 42.7% of the way from pivot to p1), so it is under half at every setting. Fitting the decay from the three statistics per setting gives lambda ~ 23 IRE (24.7, 21.5, 22.8, 25.1, 19.7 across settings): the effect is down to about 5% by 70 IRE. The gain form is not approximately right here, it is wrong - its median residual (+4.8, +4.3, +0.91, -0.45, -1.2, -2.1) exceeds the median's entire range of movement (3.2).",
+  "_theInstabilityExplained": "THE YEAR-OLD BAN WAS HALF RIGHT. SKILL.md says 'lowering is not used automatically' after one run went 12 -> 1 on one clip and 12 -> 10 on the next. The cause is not the control - it is the LOWEST CHANNEL running out of room, and which clip that bites on depends on its channel spread. On this frame the floors are red 17.3 / green 13.7 / blue 9.0, and going down: -20 already has blue p1 at 0 with 2.09% floored and readable at 68%; -50 has 11.61% of blue and 1.53% of green gone with the cast unreadable at 1%; -100 is 21.62/9.80/3.31 with the cast null. Rate here is about 0.45 IRE of blue per slider point, so roughly -2 points per IRE of blue headroom - blue's 9.0 predicted the floor at -20, which is exactly where it landed. One frame, so treat the constant as indicative; the mechanism is not frame-specific.",
+  "_upwardIsClean": "And upward it is completely safe: no floor, no clipping, p99 fixed to within a quantization step across the whole positive range, monotone. It also IMPROVES the cast - blacksRB runs -7.1 -> -3.5 from 0 to +100, i.e. raising Blacks neutralises a blue-heavy shadow. So the most selective control in the set (0.13 on the collateral measure, four times cleaner than anything else) is safe in the direction the pass wants, and the ban belongs only on the negative side, as a per-clip cap taken from the LOWEST channel's p1 rather than a blanket rule.",
+  "rows": [
+   {
+    "value": -100,
+    "lumaP1": 0,
+    "lumaP50": 53.3,
+    "lumaP99": 84.3,
+    "redP1": 0,
+    "greenP1": 0,
+    "blueP1": 0,
+    "blacksRB": null,
+    "readable": 0,
+    "floorRed": 3.31,
+    "floorGreen": 9.8,
+    "floorBlue": 21.62
+   },
+   {
+    "value": -50,
+    "lumaP1": 2.4,
+    "lumaP50": 54.1,
+    "lumaP99": 84.7,
+    "redP1": 11,
+    "greenP1": 0,
+    "blueP1": 0,
+    "blacksRB": 0,
+    "readable": 1,
+    "floorRed": 0.17,
+    "floorGreen": 1.53,
+    "floorBlue": 11.61
+   },
+   {
+    "value": -20,
+    "lumaP1": 11.4,
+    "lumaP50": 54.5,
+    "lumaP99": 84.7,
+    "redP1": 15.3,
+    "greenP1": 11,
+    "blueP1": 0,
+    "blacksRB": -9.8,
+    "readable": 68,
+    "floorRed": 0.01,
+    "floorGreen": 0.03,
+    "floorBlue": 2.09
+   },
+   {
+    "value": 0,
+    "lumaP1": 14.5,
+    "lumaP50": 54.9,
+    "lumaP99": 84.7,
+    "redP1": 17.3,
+    "greenP1": 13.7,
+    "blueP1": 9,
+    "blacksRB": -7.1,
+    "readable": 100,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.01
+   },
+   {
+    "value": 20,
+    "lumaP1": 16.5,
+    "lumaP50": 55.3,
+    "lumaP99": 84.7,
+    "redP1": 18.8,
+    "greenP1": 16.1,
+    "blueP1": 12.5,
+    "blacksRB": -5.9,
+    "readable": 100,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   },
+   {
+    "value": 50,
+    "lumaP1": 19.2,
+    "lumaP50": 55.7,
+    "lumaP99": 84.7,
+    "redP1": 21.2,
+    "greenP1": 18.8,
+    "blueP1": 16.5,
+    "blacksRB": -4.7,
+    "readable": 100,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   },
+   {
+    "value": 100,
+    "lumaP1": 22.7,
+    "lumaP50": 56.5,
+    "lumaP99": 85.1,
+    "redP1": 24.3,
+    "greenP1": 22.7,
+    "blueP1": 20.8,
+    "blacksRB": -3.5,
+    "readable": 100,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   }
+  ]
+ },
+ "highlightsForm": {
+  "_source": "Second-frame sweep 2026-09-17, C202 @23.94s, ungraded, via slider_sweep.",
+  "_theForm": "A BAND CONTROL CENTRED IN THE UPPER MIDTONES - not a gain, and NOT the Whites family. At +100 the median moves +12.6 while p99 moves only +7.8: a mid value moving further than the top is impossible for any gain about any pivot, and unlike the Shadows case this row is clean (floor 0/0/0.01, clip 0/0/0), so the falsification is sound rather than a floor artefact. It also holds at +50 (+6.7 against +5.1). The fitted pivot scatters 7.8, 4.3, -0.3, 1.5, -9.7 with non-overlapping error bars at the ends, and the median residual runs -3.4, -2.3, -0.9, +1.3, +3.4, +7.3 - signed and monotone. The band rolls off approaching 100, which is why max barely moves (97.3 -> 98.0 across the whole positive range). Downward the band sits higher: at -100, p1 -1.2, median -11.8, p99 -13.7.",
+  "_vsWhites": "THEY ARE NOT REDUNDANT AND NOT THE SAME FAMILY, and the pass's habit of 'Whites first, Highlights to finish' is well founded for a reason nobody had stated. Whites is a pure gain about zero: it scales p1 proportionally and drives max into the ceiling (2.74% of red clipped at +50, 13.42% at +100). Highlights CLIPS NOTHING at any setting in either direction, and moves p1 by 2.0 across its whole positive range. Highlights is the tool that cannot blow the top out, not a weaker Whites.",
+  "_theCost": "Per unit of white-point change, Highlights moves the midtone 2.4x as much as Whites: d(median)/d(p99) is 1.6 for Highlights at +100 against 0.67 for Whites at +50. So finishing the white point with Highlights after setting exposure walks the exposure substantially back out - which the pass does not account for.",
+  "rows": [
+   {
+    "value": -100,
+    "lumaP1": 13.3,
+    "lumaP50": 43.1,
+    "lumaP99": 71,
+    "lumaMax": 94.5,
+    "blacksRB": -6.3,
+    "satP50": 12,
+    "clipRed": 0
+   },
+   {
+    "value": -50,
+    "lumaP1": 13.7,
+    "lumaP50": 48.6,
+    "lumaP99": 78.4,
+    "lumaMax": 96.5,
+    "blacksRB": -6.7,
+    "satP50": 15,
+    "clipRed": 0
+   },
+   {
+    "value": -20,
+    "lumaP1": 14.1,
+    "lumaP50": 52.5,
+    "lumaP99": 82.4,
+    "lumaMax": 97.3,
+    "blacksRB": -7.1,
+    "satP50": 16,
+    "clipRed": 0
+   },
+   {
+    "value": 0,
+    "lumaP1": 14.5,
+    "lumaP50": 54.9,
+    "lumaP99": 84.7,
+    "lumaMax": 97.3,
+    "blacksRB": -7.1,
+    "satP50": 17,
+    "clipRed": 0
+   },
+   {
+    "value": 20,
+    "lumaP1": 14.5,
+    "lumaP50": 57.6,
+    "lumaP99": 87.1,
+    "lumaMax": 97.6,
+    "blacksRB": -7.5,
+    "satP50": 18,
+    "clipRed": 0
+   },
+   {
+    "value": 50,
+    "lumaP1": 15.3,
+    "lumaP50": 61.6,
+    "lumaP99": 89.8,
+    "lumaMax": 97.6,
+    "blacksRB": -7.8,
+    "satP50": 19,
+    "clipRed": 0
+   },
+   {
+    "value": 100,
+    "lumaP1": 16.5,
+    "lumaP50": 67.5,
+    "lumaP99": 92.5,
+    "lumaMax": 98,
+    "blacksRB": -8.6,
+    "satP50": 20,
+    "clipRed": 0
+   }
+  ]
  }
 }
