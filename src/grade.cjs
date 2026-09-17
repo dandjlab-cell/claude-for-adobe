@@ -242,6 +242,11 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     plan.push({ ...entry, value, predicted: round(readStat(predicted)), note });
     state = predicted;
   }
+  // The state the model expects after every slider, kept so a caller can compare it with what the confirm
+  // actually reads. Each knob reports its OWN statistic before/achieved, so a value no knob steers - the
+  // black point - had nowhere to show a model miss (2026-09-17: the chain went dark between the curve and
+  // the read, and neither the sweeps nor the row could say which step lost 1.4 points of it).
+  const expected = state;
   for (const p of plan) if (p.value !== undefined) p.readBack = Number(await set(p.value, p.param));
   let after = await measure();
   const judge = (m) => { for (const p of plan) if (p.value !== undefined) { p.achieved = round(STATISTICS[p.statistic](m)); p.residual = round(p.achieved - p.target); p.hit = Math.abs(p.achieved - p.target) <= tolerance; } };
@@ -267,7 +272,7 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     after = await measure(); renders++;
     judge(after); harm = damage(after); backedOff = true;
   }
-  return { before, after, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, allow), backedOff };
+  return { before, after, expected, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, allow), backedOff };
 }
 
 const round = (n) => Math.round(Number(n) * 100) / 100;

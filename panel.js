@@ -1722,6 +1722,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
         const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline });
         renders += confirm ? r.renders : 0; state = r.after; corrected = r.backedOff;
+        if (r.expected) bpChain.push(["sliders", ((r.expected.frame || r.expected).luma || {}).p1]);
         shadowsLifted = r.plan.some((p) => p.param === "shadows" && p.value !== undefined);
         parts.push(r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
       } else if (confirm) { state = await confirmMeasure(); renders++; }
@@ -1976,7 +1977,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (_) {}
     const took = tookOf();
     log("grade " + label + took);
-    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (confirm && bpChain.length > 1 ? " [black point " + bpChain.map(([w, n]) => round2(n) + " " + w).join(" → ") + " → " + round2(f1.luma.p1) + " read" + (Math.abs(f1.luma.p1 - bpChain[bpChain.length - 1][1]) > 1.5 ? ", MODEL OFF BY " + round2(f1.luma.p1 - bpChain[bpChain.length - 1][1]) : "") + "]" : "") + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
+    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (confirm && bpChain.length > 1 ? " [black point " + bpChain.map(([w, n]) => round2(n) + " " + w).join(" → ") + " → " + round2(f1.luma.p1) + " read" + (Math.abs(f1.luma.p1 - bpChain[bpChain.length - 1][1]) > 1 ? ", MODEL OFF BY " + round2(f1.luma.p1 - bpChain[bpChain.length - 1][1]) : "") + "]" : "") + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
