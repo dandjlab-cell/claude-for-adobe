@@ -66,3 +66,14 @@ test("nothing the clip loop uses is read before its declaration (10:34: the log 
     if (decl >= 0 && use >= 0) assert.ok(decl < use, name + " is used at " + use + " before its declaration at " + decl);
   }
 });
+
+test("the maker's LUT goes on the clip through Lumetri's own Input LUT (property 4 = path, 6 = flag), not the project item", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const host = fs.readFileSync(path.join(__dirname, "..", "host", "premiere.jsx"), "utf8");
+  assert.match(host, /function lumetriLUT\(seconds, track, lutPath\)/);
+  assert.match(host, /props\[4\]\.setValue\(want, true\); props\[6\]\.setValue\(1, true\);/, "path then flag");
+  assert.match(host, /props\[6\]\.setValue\(0, true\); props\[4\]\.setValue\("", true\);/, "clearing drops the flag first");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  assert.match(panel, /await host\("lumetriLUT", String\(seconds\), String\(track\), lutPath\)/);
+  assert.match(panel, /on the clip in the working copy, so Discard copy removes it/);
+});

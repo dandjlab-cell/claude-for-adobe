@@ -767,11 +767,13 @@ async function logLutTool({ action = "status", id, seconds, track = 1 } = {}) {
       if (seconds === undefined) return err(card, "seconds is required");
       let lutPath = "";
       if (action === "apply") { if (!id || !LUT_REGISTRY[id]) return err(card, "id must be one of: " + Object.keys(LUT_REGISTRY).join(", ")); lutPath = lutLocalPath(id); if (!lutPath || !fs.existsSync(lutPath)) return err(card, "not on this machine yet: fetch " + id + " first"); }
-      const raw = await host("setInputLUT", String(seconds), String(track), lutPath);
-      if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4) + " - the Interpret Footage door refused; apply the file by hand: Lumetri Color, Basic Correction, Input LUT, Browse, " + (lutPath || "(none)"));
-      const [, lutId, ok, applied] = raw.split(COL);
+      // Lumetri's own Input LUT, on the clip (property 4 = the path, 6 = the custom flag): what Browse sets,
+      // so it lives on the working copy and Discard removes it. Not the project item.
+      const raw = await host("lumetriLUT", String(seconds), String(track), lutPath);
+      if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4) + " - apply the file by hand instead: Lumetri Color, Basic Correction, Input LUT, Browse, " + (lutPath || "(none)"));
+      const [, back, flag] = raw.split(COL);
       const m = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
-      const text = (action === "apply" ? "applied " + id + " as the clip's input LUT" : "input LUT cleared") + " (inputLUTID " + lutId + ", set " + ok + ", interpretation " + applied + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + ". This is on the project item (Interpret Footage): every cut of the file sees it, and Discard copy does not undo it.";
+      const text = (action === "apply" ? "applied " + id + " as the clip's Lumetri Input LUT" : "Input LUT cleared") + " (path read back " + (back ? "yes" : "empty") + ", flag " + flag + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + ". This is on the clip in the working copy, so Discard copy removes it.";
       card.done(text, true); return { text };
     }
     return err(card, "action must be status, fetch, apply or clear");

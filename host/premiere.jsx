@@ -930,6 +930,33 @@ var PCX = (function () {
     return "OK" + COL + id + COL + String(ok) + COL + String(applied);
   }
 
+  // Lumetri's Input LUT as the editor's Browse sets it, on the CLIP: property 4 holds the .cube path as
+  // plain text and property 6 is the flag (1 = custom, 0 = none). Read live 2026-09-17 11:43 from a
+  // hand-browsed LUT; the menu entries and the FootageInterpretation door are not needed. path "" clears.
+  function lumetriLUT(seconds, track, lutPath) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) { var k = tr.clips[c]; if (at >= k.start.seconds && at < k.end.seconds) { cl = k; } }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+    var comp = null;
+    for (var j = 0; j < cl.components.numItems; j++) { var cp = cl.components[j]; if (String(cp.displayName).indexOf("Lumetri") >= 0) { comp = cp; } }
+    if (!comp) return "ERR:no Lumetri on " + cl.name;
+    var props = comp.properties;
+    if (props.numItems < 7) return "ERR:Lumetri has only " + props.numItems + " properties";
+    var want = String(lutPath);
+    try {
+      if (want === "") { props[6].setValue(0, true); props[4].setValue("", true); }
+      else { props[4].setValue(want, true); props[6].setValue(1, true); }
+    } catch (e1) { return "ERR:setValue " + e1; }
+    var back = "", flag = "";
+    try { back = String(props[4].getValue()); } catch (e2) {}
+    try { flag = String(props[6].getValue()); } catch (e3) {}
+    return "OK" + COL + back + COL + flag + COL + cl.name;
+  }
+
   function lumetriIndex(seconds, track, index, expect, value) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
@@ -1778,7 +1805,7 @@ var PCX = (function () {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE, lumetriIndex: lumetriIndex, colorSpaces: colorSpaces, setColorSpace: setColorSpace, setInputLUT: setInputLUT
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE, lumetriIndex: lumetriIndex, colorSpaces: colorSpaces, setColorSpace: setColorSpace, setInputLUT: setInputLUT, lumetriLUT: lumetriLUT
   };
 }());
 "PCX loaded";
