@@ -1,9 +1,9 @@
 // One source frame, decoded OUTSIDE Premiere, as packed RGB24 for src/scopes.cjs measure().
-// This is the read half of background colour work: the panel already knows which file and which
+// This is the read half of background color work: the panel already knows which file and which
 // source time a timeline position maps to, so the agent can measure and iterate a grade without
 // asking Premiere to render anything (the editor keeps working; nothing opens, exports or switches).
 //
-// What this is NOT: Premiere's rendered output. No Lumetri grade, no sequence colour management and
+// What this is NOT: Premiere's rendered output. No Lumetri grade, no sequence color management and
 // no source settings are applied here - these are the camera's own pixels. Use it to iterate; take
 // the exact reading from a real Export Frame measure (scopes.cjs on a QE PNG) before quoting a
 // final number.
@@ -25,9 +25,9 @@ const BRAW_SDK = "/Applications/Blackmagic RAW/Blackmagic RAW SDK/Mac/Libraries"
 const brawAvailable = () => fs.existsSync(BRAW_DECODER) && fs.existsSync(BRAW_SDK);
 
 // One BRAW frame through the SDK: the decode is at the SDK's quarter resolution (1536x864 from 6K),
-// which is plenty for scopes, and applies the clip's own colour science as shot. Whether that matches
+// which is plenty for scopes, and applies the clip's own color science as shot. Whether that matches
 // how Premiere interprets the same clip is checked once, live, against a Premiere export of the same
-// frame - see the colour skill - not assumed.
+// frame - see the color skill - not assumed.
 function brawFrameRgb(file, seconds) {
   if (!brawAvailable()) throw new Error("no BRAW decoder: build bin/braw_to_rgba against the Blackmagic RAW SDK, or use a Premiere frame export");
   const info = spawnSync(BRAW_DECODER, ["--info", file], { encoding: "utf8", cwd: path.dirname(BRAW_DECODER) });

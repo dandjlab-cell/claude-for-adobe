@@ -1,4 +1,4 @@
-// Grading a shot the way a colourist does: read the scopes once, know what each knob will do, set the
+// Grading a shot the way a colorist does: read the scopes once, know what each knob will do, set the
 // knobs, glance at the scopes to confirm. One render before, one after. No searching.
 //
 // The knowledge of what a knob does is src/grade_model.cjs (the internal scopes, built from the live
@@ -7,7 +7,7 @@
 //
 // Why a confirm render at all: the model composes one-knob-at-a-time calibrations, and Premiere's tone
 // mapping depends on the picture, so the prediction is close rather than exact. The confirm is the
-// colourist looking at the scopes after the move. If it shows a residual beyond tolerance, ONE nudge
+// colorist looking at the scopes after the move. If it shows a residual beyond tolerance, ONE nudge
 // is computed from the two real readings (a measured local slope, not a guess), then it stops and
 // reports whatever residual is left. Three renders is the ceiling; two is the norm.
 "use strict";
@@ -15,7 +15,7 @@ const { solveFor } = require("./grade_solve.cjs");
 const { predict, solveKnob, SWEEPS } = require("./grade_model.cjs");
 
 // Statistics a grade is read from and steered by. The parade ones are what white balance IS on a
-// scope: the three channels' whites line up when the picture is neutral, whatever colour the subject
+// scope: the three channels' whites line up when the picture is neutral, whatever color the subject
 // is - a tomato does not fool the parade the way it fools a frame-average cast.
 const whitesBand = (f) => {
   if (!f.bands) return null;
@@ -37,7 +37,7 @@ const STATISTICS = {
   // and still "flat-ish"). Falls back to the ends on an older reading that has no p10/p90.
   body: (m) => { const f = m.frame || m; return f.luma.p90 !== undefined ? f.luma.p90 - f.luma.p10 : (f.luma.p99 - f.luma.p1) * 0.7; },
   // The parade-whites statistics read the WHOLE FRAME even when a subject was measured (`frame` is
-  // attached by the panel): a red product's brightest pixels are red, which is its colour, not the
+  // attached by the panel): a red product's brightest pixels are red, which is its color, not the
   // light. White surfaces and specular hits anywhere in the room are what line up when it is neutral.
   // From PAIRED pixels when the measurement carries the bands (the brightest / darkest 3% of pixels,
   // scopes.cjs); the separately taken channel percentiles are the fallback for older readings.
@@ -182,7 +182,7 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 }
 
 // A whole shot in one go: read the scopes once, choose every knob from the model, write them all, then
-// ONE confirm render for the lot. goals: [{ param, target, statistic? }] in the order a colourist works
+// ONE confirm render for the lot. goals: [{ param, target, statistic? }] in the order a colorist works
 // (white balance, then exposure, then contrast). Each knob is solved on the state predicted after the
 // knobs before it. A target the knob cannot reach inside its calibrated range is taken as far as the
 // knob goes only if that helps, and reported as partial - never mistaken for a hit. A brightness move
@@ -192,7 +192,7 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 const WHITE_CEILING = 95; // the sweep clipped nothing until p99 reached 99.6; 92 blocked moves that were safe
 const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites", "shadows", "blacks"]);
 // `baseline` is the damage the shot ARRIVED with (clipped/crushed of the untouched read); without it
-// the reading passed in is taken as the baseline, which is wrong once colour writes precede the plan.
+// the reading passed in is taken as the baseline, which is wrong once color writes precede the plan.
 async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null }) {
   const before = measured || await measure(); // a caller that has just read the scopes passes the reading
   let renders = measured ? 1 : 2;

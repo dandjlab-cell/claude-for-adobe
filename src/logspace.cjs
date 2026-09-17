@@ -4,12 +4,12 @@
 // judgement." So the pass does what an editor does with the Interpret Footage list: try the plausible
 // entries, look, keep the one that looks like a picture. Measured on a Sony A7S II XAVC S file that
 // declared nothing (eight overrides, tone mapper on, 10:15): S-Log3/S-Gamut3.Cine gave black 9.0 /
-// white 85.1 / colour p99 29 with nothing crushed; S-Log2 LIFTED the floor to 21.6 (the wrong curve on
+// white 85.1 / color p99 29 with nothing crushed; S-Log2 LIFTED the floor to 21.6 (the wrong curve on
 // S-Log3 data); Canon Log3 and V-Log crushed 0.3-0.4%; ARRI LogC3 scored as well as the Sony one on the
 // numbers - which is why the maker named by the container (XAVC = Sony) breaks the tie.
 "use strict";
 
-// What the file DECLARES about its colour, before any frame is decoded. A tagged log file says so in its
+// What the file DECLARES about its color, before any frame is decoded. A tagged log file says so in its
 // transfer characteristic, and then there is nothing to guess: the maker and the curve are both known.
 // Untagged camera MP4s (a Sony A7S II's XAVC S, checked 2026-09-17) declare nothing, which is why the
 // picture test exists at all. Returns { space, maker } or null.

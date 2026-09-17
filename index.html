@@ -30,9 +30,9 @@
     #view-chat.active > * { flex: 0 0 auto; }
     #view-chat.active > #messages { flex: 1 1 auto; min-height: 0; }
     #view-chat.active > #starter { flex: 1 1 auto; min-height: 0; }
-    #caption-options, #cut-options, #colour-options { border-bottom: 1px solid var(--line); background: var(--raised); }
-    #caption-options[hidden], #cut-options[hidden], #colour-options[hidden] { display: none; }
-    #caption-options label, #cut-options label, #colour-options label { display: flex; align-items: center; gap: 4px; color: var(--ink-60); font-size: 12px; }
+    #caption-options, #cut-options, #color-options { border-bottom: 1px solid var(--line); background: var(--raised); }
+    #caption-options[hidden], #cut-options[hidden], #color-options[hidden] { display: none; }
+    #caption-options label, #cut-options label, #color-options label { display: flex; align-items: center; gap: 4px; color: var(--ink-60); font-size: 12px; }
     #selection-bar { font-size: 10.5px; color: var(--ink-40); padding: 4px 12px 0; letter-spacing: .01em; }
     #selection-bar:empty { padding: 0; height: 0; }
     #selection-bar b { color: var(--accent); font-weight: 500; }
@@ -193,12 +193,12 @@
       <div class="scripts">
         <button id="btn-cut" type="button" title="Removes the quiet stretches with the method and thresholds set in Settings. Applied on a duplicate sequence; each cut is one Cmd+Z step.">Cut silences</button>
         <button id="btn-captions" type="button" title="Transcribes the timeline (Whisper, on this Mac) and adds a native caption track. Editable in the Captions panel.">Captions</button>
-        <button id="btn-colour" type="button" title="Balances the picture by the colourist canon - white balance, black and white points, contrast where it is flat, skin onto the line - reading each clip's own file and confirming every move from Premiere's render. Applied on a duplicate sequence.">Colour correct</button>
+        <button id="btn-color" type="button" title="Balances the picture by the colorist canon - white balance, black and white points, contrast where it is flat, skin onto the line - reading each clip's own file and confirming every move from Premiere's render. Applied on a duplicate sequence.">Color correct</button>
       </div>
-      <div id="colour-options" class="scripts" hidden>
-        <button id="btn-colour-all" type="button" class="accent">Whole sequence</button>
-        <button id="btn-colour-clip" type="button">Selected clip</button>
-        <button id="btn-cancel-colour" type="button" class="utility">Cancel</button>
+      <div id="color-options" class="scripts" hidden>
+        <button id="btn-color-all" type="button" class="accent">Whole sequence</button>
+        <button id="btn-color-clip" type="button">Selected clip</button>
+        <button id="btn-cancel-color" type="button" class="utility">Cancel</button>
       </div>
       <div id="cut-options" class="scripts" hidden><button id="btn-run-cut" type="button" hidden></button><button id="btn-cancel-cut" type="button" hidden></button></div>
       <div id="caption-options" class="scripts" hidden>

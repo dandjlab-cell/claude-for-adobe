@@ -854,7 +854,7 @@ var PCX = (function () {
   // A Lumetri scalar by property INDEX (HSL Secondary's own Temperature 101, Tint 102, Contrast 103,
   // Sharpen 104, Saturation 105 and Show Mask 88 share their names with Basic/Creative, which the name
   // walk finds first). `expect` is the displayName the index must carry. Empty value = read.
-  // The clip's colour-space interpretation (Premiere's own log conversion, tone + gamut, applied before
+  // The clip's color-space interpretation (Premiere's own log conversion, tone + gamut, applied before
   // any effect): the override list's names, the current override, the original. Probed live 2026-09-17:
   // getOverrideColorSpaceList is a property of ColorSpace objects; the empty "no override" value cannot
   // be written back, so "" restores with getOriginalColorSpace(). The override lives on the PROJECT ITEM.
@@ -889,12 +889,12 @@ var PCX = (function () {
     var pi = cl.projectItem;
     if (!pi) return "ERR:no project item";
     var target = null;
-    if (String(name) === "") { try { target = pi.getOriginalColorSpace(); } catch (e0) { return "ERR:no original colour space"; } }
+    if (String(name) === "") { try { target = pi.getOriginalColorSpace(); } catch (e0) { return "ERR:no original color space"; } }
     else {
       var lst = pi.getOverrideColorSpaceList;
       if (typeof lst === "function") { try { lst = pi.getOverrideColorSpaceList(); } catch (e1) { lst = null; } }
       if (lst && lst.length) for (var i = 0; i < lst.length; i++) if (String(lst[i].name) === String(name)) target = lst[i];
-      if (!target) return "ERR:no colour space named " + name;
+      if (!target) return "ERR:no color space named " + name;
     }
     var ok = false;
     try { ok = pi.setOverrideColorSpace(target); } catch (e2) { return "ERR:setOverrideColorSpace " + e2; }

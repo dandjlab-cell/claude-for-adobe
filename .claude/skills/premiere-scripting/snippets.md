@@ -64,7 +64,7 @@ res;
 ```
 If the reported key times sit near 0 rather than near `clip.start`, keys are clip-relative: use `at(0)` and `at(1)`.
 
-## 4. Add a sequence marker (verified calls; colour list from docs)
+## 4. Add a sequence marker (verified calls; color list from docs)
 
 ```javascript
 var seq = app.project.activeSequence, sec = 12.5, dur = 2;

@@ -284,7 +284,7 @@ Context: the editor asked the panel to "see the scopes". The model believed its 
 |---|---|---|---|
 | H1 | HIGH | Scope picture used ffmpeg's implicit limited-range BT.601 conversion: pure red at Y 81 against Rec.709's 54 | Explicit `out_color_matrix=bt709`. Probed on exact RGB patches (red 54, green 182, blue 18, white 255, black 0, grey 128). ffmpeg's waveform graticule and vectorscope targets assume limited range, so the display maps full range onto it: a 0/64/128/191/255 step chart lands on 0/25/50/75/100 and 75% bars on their targets. Numbers stay full range |
 | H2 | HIGH | Minimum luma always 0 (p0 returned the first bin even when empty) | Nearest-rank percentile with rank >= 1; a flat grey frame reports 50.2 |
-| M1 | MEDIUM | Colour-space claim unverified | Module, tool description and result say the exported 8-bit frame is read as SDR Rec.709 and is not calibrated against Lumetri; compare shots with each other |
+| M1 | MEDIUM | Color-space claim unverified | Module, tool description and result say the exported 8-bit frame is read as SDR Rec.709 and is not calibrated against Lumetri; compare shots with each other |
 | M2 | MEDIUM | Saturation capped at 100 | Kept to 150; normalisation stated (127.5 Cb/Cr radius: pure red ~103, pure green ~119) |
 | M3 | MEDIUM | Pixel occupancy presented as a diagnosis | Readings are occupancy with qualified meaning (a letterbox fills the luma floor, a saturated title a channel at 255); fallback states thresholds |
 | M4 | MEDIUM | Failed render leaked files and reported success | Per-position try/finally cleanup; zero measured is an error; partial says "Measured N of M" |
@@ -295,7 +295,7 @@ Context: the editor asked the panel to "see the scopes". The model believed its 
 
 All eight resolved. Notes: the display remap keeps the whole 0-255 range, drawn on 220 levels; superwhite/superblack lost in the 8-bit export cannot be recovered. `sendTurn` changes nothing but the turn count. 184 tests, 183 pass, 1 network skip. Not yet validated: calibration against Lumetri Scopes on a known target inside Premiere.
 
-## 2026-09-14 — guard, approvals and working copies after the live colour probe (branch feat/scopes)
+## 2026-09-14 — guard, approvals and working copies after the live color probe (branch feat/scopes)
 
 Context: a live probe on a sandbox project found three problems. (1) The premiere-scripting skill told the model to build newlines with `String.fromCharCode`, which the guard has refused since 2026-09-05; the model followed the docs, was refused, and the per-turn latch blocked the one-line rewrite. (2) A script that added Lumetri Color succeeded, but `run_extendscript` deleted its working copy as "changed nothing": the timeline snapshot compares clips, not effects or parameters. (3) A script waiting for the Run it click sends no MCP progress; the CLI aborted the call after 643 s and the approval card stayed clickable.
 

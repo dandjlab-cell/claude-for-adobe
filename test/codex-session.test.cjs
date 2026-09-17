@@ -73,7 +73,7 @@ test("prepareWorkspace writes the shared rulebook as AGENTS.md and links the sam
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-// Every skill the panel ships must be named in the prompt's skill list. colour was the only one missing,
+// Every skill the panel ships must be named in the prompt's skill list. color was the only one missing,
 // and it showed: "grade this" worked by luck (grade_sequence's own description is explicit enough to find),
 // while "color this" at 2:59 loaded no skill at all - the model hand-rolled a grade out of single-knob
 // tools on one clip and set Contrast to 100, which the deterministic pass would never do.

@@ -56,7 +56,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copyChat: $("copy-chat"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad"), btnColour: $("btn-colour"), colourOptions: $("colour-options"), btnColourAll: $("btn-colour-all"), btnColourClip: $("btn-colour-clip"), btnCancelColour: $("btn-cancel-colour") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copyChat: $("copy-chat"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad"), btnColor: $("btn-color"), colorOptions: $("color-options"), btnColorAll: $("btn-color-all"), btnColorClip: $("btn-color-clip"), btnCancelColor: $("btn-cancel-color") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -384,7 +384,7 @@ function renderCopies() {
 async function discardCopy(copyId) {
   const c = workingCopies.get(copyId);
   if (!c || !await askInline("Delete \"" + c.copyName + "\" and open the original \"" + c.originalName + "\"?", "Discard")) return;
-  // A log colour-space interpretation the grade set stays: it is a fix to how the footage is read, not part
+  // A log color-space interpretation the grade set stays: it is a fix to how the footage is read, not part
   // of the grade (the owner, 10:41: "discard copy can't restore a fix to the source settings").
   log("discard copy: " + await host("deleteSequence", copyId, c.originalId));
   workingCopies.delete(copyId);
@@ -644,7 +644,7 @@ async function scopesTool({ seconds = [], solo_track, region = "frame", source =
         texts.push(scopeReport(m, "timeline " + t + "s from the SOURCE FILE (" + m.clip + " at " + round2(m.sourceSeconds) + "s, " + m.decoded + ")" + (m.cropped ? " — cropped to what the timeline shows (Motion scale/position)" : "") + (m.region !== "frame" ? " — " + m.region.toUpperCase() + " only" : "") + (m.fellBack ? " (" + m.fellBack + ")" : "")));
       } catch (error) { texts.push("at " + t + "s: " + error.message); }
     }
-    texts.push("Decoded from the camera file, NOT Premiere's render: no Lumetri, no sequence colour management. Compare with a plain scopes call at the same time once per footage type before trusting it for reads; never use it to confirm a grade.");
+    texts.push("Decoded from the camera file, NOT Premiere's render: no Lumetri, no sequence color management. Compare with a plain scopes call at the same time once per footage type before trusting it for reads; never use it to confirm a grade.");
     card.done(texts.join("\n"), true);
     setStatus("Thinking…");
     return { text: texts.join("\n") };
@@ -721,7 +721,7 @@ function measureRegion(src, region, reuse = null, seen = undefined, have = null)
   // One launch, not two. The default bin/ocr mode costs 522ms a frame and a grade calls it on every render:
   // text recognition and person segmentation in it are never read here, and its subject pass segments the
   // frame and throws the mask away - so this then called --subject and segmented AGAIN. --grade returns the
-  // three answers a colour read uses, mask included, in 354ms (measured 2026-09-17 13:36, same numbers out).
+  // three answers a color read uses, mask included, in 354ms (measured 2026-09-17 13:36, same numbers out).
   const vision = region === "frame" ? null : (seen !== undefined ? seen : visionForGrade(src));
   // "keyed": the frame is Lumetri's HSL Secondary mask view (Show Mask on) - the selected pixels alone.
   if (region === "keyed") {
@@ -752,7 +752,7 @@ function measureRegion(src, region, reuse = null, seen = undefined, have = null)
   return Object.assign(frame, { region: "frame" });
 }
 
-// What a colour read asks Vision for, in one bin/ocr launch: the faces and hands a row names and the skin
+// What a color read asks Vision for, in one bin/ocr launch: the faces and hands a row names and the skin
 // step keys inside, and the subject's mask the grade measures through. Same shape as visionAll for faces
 // and hands, plus `subjectMask` ({ mask, coverage, box }) when Vision found a subject.
 function visionForGrade(file) { return visionForGradeMany([file])[0] || null; }
@@ -837,7 +837,7 @@ async function chooseLogConversion(at, track, mediaPath, region, timed, onRender
 async function lutForMaker(maker) {
   if (!maker) return { note: "the file's own tags do not name a camera maker, so I cannot tell which conversion it needs. Ask the editor which camera shot it, then log_lut fetch and apply with that maker's id (" + Object.keys(LUT_REGISTRY).join(", ") + ")." };
   const mine = lutsForMaker(maker);
-  if (!mine.length) return { note: "no official conversion LUT is registered for " + maker + " yet; Premiere's own colour management converts this footage instead - grade_sequence with log \"premiere\"." };
+  if (!mine.length) return { note: "no official conversion LUT is registered for " + maker + " yet; Premiere's own color management converts this footage instead - grade_sequence with log \"premiere\"." };
   for (const l of mine) { const p = lutLocalPath(l.id); if (p && fs.existsSync(p)) return { path: p, label: l.label, from: lutSite(l), cached: true }; }
   const notes = [];
   for (const l of mine) {
@@ -864,9 +864,9 @@ async function logLutTool({ action = "status", id, file, seconds, track = 1, whe
         let read = null; try { read = await measureSourceAt(snap.clips.find((c) => c.mediaPath === f).start + 0.5, track, "frame", snap); } catch (_) {}
         const isLog = read ? gradeLooksLikeLog(read) : null;
         const luts = hint ? lutsForMaker(hint) : [];
-        lines.push(path.basename(f) + ": " + (isLog === null ? "could not read" : isLog ? "reads as LOG" : "reads as a display picture") + (read ? " (black " + round2(read.luma.p1) + " / white " + round2(read.luma.p99) + " / colour p99 " + round2(read.saturation.p99) + ")" : "") + "; maker from the file's tags: " + (hint || "unknown - ask the editor which camera shot it") + (luts.length ? "; official LUTs: " + luts.map((l) => l.id + (lutIsLocal(l.id) ? " [on this machine]" : l.url ? " [fetchable]" : " [manual download: " + l.page + "]")).join(", ") : ""));
+        lines.push(path.basename(f) + ": " + (isLog === null ? "could not read" : isLog ? "reads as LOG" : "reads as a display picture") + (read ? " (black " + round2(read.luma.p1) + " / white " + round2(read.luma.p99) + " / color p99 " + round2(read.saturation.p99) + ")" : "") + "; maker from the file's tags: " + (hint || "unknown - ask the editor which camera shot it") + (luts.length ? "; official LUTs: " + luts.map((l) => l.id + (lutIsLocal(l.id) ? " [on this machine]" : l.url ? " [fetchable]" : " [manual download: " + l.page + "]")).join(", ") : ""));
       }
-      const text = lines.join("\n") + "\nLUTs live in " + LUT_HOME + ". The pass also converts log with Premiere's own colour management (chosen from the picture) without any LUT; the maker's LUT is the alternative the editor may prefer. Ask before fetching, and say what will be downloaded and from where.";
+      const text = lines.join("\n") + "\nLUTs live in " + LUT_HOME + ". The pass also converts log with Premiere's own color management (chosen from the picture) without any LUT; the maker's LUT is the alternative the editor may prefer. Ask before fetching, and say what will be downloaded and from where.";
       card.done(text, true); return { text };
     }
     // "use": the whole thing in one call - work out which LUT this clip needs, fetch it if it is not here,
@@ -893,14 +893,14 @@ async function logLutTool({ action = "status", id, file, seconds, track = 1, whe
         const after = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
         const moved = Math.abs(after.luma.p1 - before.luma.p1) > 1 || Math.abs(after.luma.p99 - before.luma.p99) > 2;
         if (moved) {
-          const text = "Using " + l.label + (where === "source" ? " in the file's source settings" : " on this clip") + ". It reads black " + round2(after.luma.p1) + " / white " + round2(after.luma.p99) + " / colour p99 " + round2(after.saturation.p99) + ", where it read " + round2(before.luma.p1) + " / " + round2(before.luma.p99) + " / " + round2(before.saturation.p99) + " as shot. The file is in " + LUT_HOME + "/" + hint + " and stays there; " + (where === "source" ? "the setting is on the file, so it survives the copy being discarded" : "the LUT is on the clip, so discarding the copy removes it") + "." + (notes.length ? " (" + notes.join("; ") + ")" : "");
+          const text = "Using " + l.label + (where === "source" ? " in the file's source settings" : " on this clip") + ". It reads black " + round2(after.luma.p1) + " / white " + round2(after.luma.p99) + " / color p99 " + round2(after.saturation.p99) + ", where it read " + round2(before.luma.p1) + " / " + round2(before.luma.p99) + " / " + round2(before.saturation.p99) + " as shot. The file is in " + LUT_HOME + "/" + hint + " and stays there; " + (where === "source" ? "the setting is on the file, so it survives the copy being discarded" : "the LUT is on the clip, so discarding the copy removes it") + "." + (notes.length ? " (" + notes.join("; ") + ")" : "");
           card.done(text, true); return { text };
         }
         notes.push(l.label + ": written but the render did not change - this Premiere version may not accept a scripted custom LUT");
         }
       }
       await host(where === "source" ? "setInputLUT" : "lumetriLUT", String(seconds), String(track), "");
-      const text = "Could not put a maker's LUT on this clip automatically. " + notes.join("; ") + ". By hand: Lumetri Color, Basic Correction, Input LUT, Browse, and pick the file from " + LUT_HOME + "/" + hint + ". Premiere's own colour management also converts this footage without any LUT - grade_sequence does that on its own.";
+      const text = "Could not put a maker's LUT on this clip automatically. " + notes.join("; ") + ". By hand: Lumetri Color, Basic Correction, Input LUT, Browse, and pick the file from " + LUT_HOME + "/" + hint + ". Premiere's own color management also converts this footage without any LUT - grade_sequence does that on its own.";
       card.done(text, false); return { text, isError: true };
     }
     if (action === "fetch") {
@@ -926,7 +926,7 @@ async function logLutTool({ action = "status", id, file, seconds, track = 1, whe
       // The write is known to have broken in some Premiere versions (community reports: worked 22.5-23.3,
       // broken 23.4-24.0), so the render is the proof, not the read-back.
       const wrote = action === "apply" ? back === lutPath && String(flag) === "1" : !back;
-      const text = (action === "apply" ? "applied " + (file ? path.basename(lutPath) : id) + " as the clip's Lumetri Input LUT" : "Input LUT cleared") + " (path read back " + (wrote ? "as written" : "as \"" + back + "\"") + ", flag " + flag + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + "." + (action === "apply" && !wrote ? " The write did not stick - this Premiere version may not accept a scripted custom LUT; apply it by hand: Lumetri Color, Basic Correction, Input LUT, Browse, " + lutPath : "") + " This is on the clip in the working copy, so Discard copy removes it.";
+      const text = (action === "apply" ? "applied " + (file ? path.basename(lutPath) : id) + " as the clip's Lumetri Input LUT" : "Input LUT cleared") + " (path read back " + (wrote ? "as written" : "as \"" + back + "\"") + ", flag " + flag + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / color p99 " + round2(m.saturation.p99) + "." + (action === "apply" && !wrote ? " The write did not stick - this Premiere version may not accept a scripted custom LUT; apply it by hand: Lumetri Color, Basic Correction, Input LUT, Browse, " + lutPath : "") + " This is on the clip in the working copy, so Discard copy removes it.";
       card.done(text, true); return { text };
     }
     return err(card, "action must be use, status, fetch, apply or clear");
@@ -988,7 +988,7 @@ function biggestFaceBox(file) {
 // The same measurement WITHOUT Premiere: the clip under `seconds` on the track is decoded from its own
 // source file (BRAW through the Blackmagic SDK, everything else through ffmpeg) at the matching source
 // frame. Nothing renders, nothing moves. These are the camera's pixels as the decoder interprets them,
-// not Premiere's render - no Lumetri, no sequence colour management - so it is the READ before a grade,
+// not Premiere's render - no Lumetri, no sequence color management - so it is the READ before a grade,
 // never the confirm after one, and whether it agrees with Premiere's own render is checked once per
 // footage type (scopes source:true against scopes at the same time) before it is trusted.
 // Where in this clip the skin actually shows. The graded frame is the clip's midpoint, and a hand can be
@@ -1007,7 +1007,7 @@ async function findSkinTime(start, end, track, snapshot, visible = null) {
     try { const png = sourcePngAt(t, track, snapshot, visible); if (png) { times.push(t); pngs.push(png); } } catch (_) { /* a time the decoder cannot reach */ }
   }
   try {
-    // The colour mode, not the default one: this only ever reads faces and hands off these frames, and the
+    // The color mode, not the default one: this only ever reads faces and hands off these frames, and the
     // default mode spends ~90ms a frame on text recognition and ~25ms on a person pass nobody here looks at.
     const seen = visionForGradeMany(pngs);
     let best = null;
@@ -1169,7 +1169,7 @@ function lumetriWriter(at, track, lumetriName, region) {
   return { set, read, clipName: () => clip, regionSeen: { measure, which: () => seen, fellBack: () => fell } };
 }
 
-// The colour wheels of the clip at one timeline position, through QE by name: read as {shadows,
+// The color wheels of the clip at one timeline position, through QE by name: read as {shadows,
 // midtones, highlights} of {hue, sat, luma}; write the same shape (all three, dot decimals).
 function wheelWriter(at, track) {
   const call = async (value) => {
@@ -1204,7 +1204,7 @@ function satWriter(at, track) {
   return { read: () => call(""), write: (points) => call(formatSatCurve(points)) };
 }
 
-// Hue vs Hue, the same door: the colourists' tool of choice for skin, and the only one an automatic pass
+// Hue vs Hue, the same door: the colorists' tool of choice for skin, and the only one an automatic pass
 // can reach - Adobe's own engineer on masks: "There is no supported ExtendScript API to either apply
 // effects, or modify masks", and UXP's whole mask surface is hasObjectMask() (researched 15:30).
 function hueCurveWriter(at, track, name) {
@@ -1228,7 +1228,7 @@ async function writeGradeState(at, track, region, s) {
   for (const [p, v] of Object.entries(s.sliders || {})) if (GRADE_PARAMS[p] && isFinite(v)) await lumetriWriter(at, track, GRADE_PARAMS[p].lumetri, region).set(v);
   if (s.hsl && s.hsl.hueCurve) await hueCurveWriter(at, track, "Hue vs Hue").write(hueBump(s.hsl.hueCurve.centre, s.hsl.hueCurve.shift));
 }
-// The key's colour wheels as QE text (Round 253): the Midtones pad alone carries the skin rotation.
+// The key's color wheels as QE text (Round 253): the Midtones pad alone carries the skin rotation.
 const hslPadText = (pad) => "Shadows:0.00,0.00,0.50;Midtones:" + (pad && pad.sat > 0 ? pad.hue.toFixed(2) + "," + pad.sat.toFixed(3) : "0.00,0.000") + ",0.50;Highlights:0.00,0.00,0.50";
 
 function gradeStateSummary(s) {
@@ -1261,7 +1261,7 @@ function hslWriter(at, track) {
 }
 
 // A whole shot in one go: one render to read the scopes, every knob chosen from the calibration model,
-// all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colourist order.
+// all written, one confirm render. goals arrive as [{parameter, target, statistic?}] in colorist order.
 async function gradeShotTool({ goals = [], seconds, track = 1, region = "frame", tolerance } = {}) {
   const at = Number(seconds);
   if (!(at >= 0)) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds required", isError: true };
@@ -1329,7 +1329,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   if (snap.error) return err(card, snap.error);
   let timelineOrder = tf.rows.filter((c) => c.track === "V" + track && !c.graphic).sort((a, b) => a.start - b.start);
   if (!timelineOrder.length) return err(card, "no footage on V" + track);
-  // One clip, same canon. "colour this" with a clip selected had nothing correct to call: grade_shot is
+  // One clip, same canon. "color this" with a clip selected had nothing correct to call: grade_shot is
   // steered - the caller supplies the goals - so the model invented targets and asked for contrast 85,
   // which is a look, not a balance (the owner, 15:04). The deterministic pass lived only in the whole-track
   // form. It takes a position now, and everything below is unchanged: same rules, same caps, same confirms.
@@ -1413,10 +1413,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const ww = wheelWriter(at, track), tw = lumetriWriter(at, track, "Temperature", region), tiw = lumetriWriter(at, track, "Tint", region), cw = curveWriter(at, track), sw = satWriter(at, track);
     const tookOf = () => { const totalMs = Date.now() - clipT0, hostCalls = hostTime.calls - host0.calls; return " [" + (totalMs / 1000).toFixed(1) + "s: read " + (readMs / 1000).toFixed(1) + ", renders " + (renderMs / 1000).toFixed(1) + ", " + hostCalls + " host calls, rest " + (Math.max(0, totalMs - readMs - renderMs) / 1000).toFixed(1) + "]"; };
     // A later cut of a file already graded gets the SAME grade (the owner, 01:08: cuts seconds apart
-    // that look identical must not differ - "if you do, you can't be shifting the colour"). If this cut
+    // that look identical must not differ - "if you do, you can't be shifting the color"). If this cut
     // would clip or crush under it, the shot's tone is backed off to half on every cut, so they still
     // match; the 00:58 run copied the state without that and clipped 4% / crushed 9.4%, the 01:10 run
-    // matched the colour only and the per-cut tone and the clip guard pulled the cuts apart again.
+    // matched the color only and the per-cut tone and the clip guard pulled the cuts apart again.
     const ref = matched[c.name] || null;
     let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null, currentSat = null, satErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
@@ -1460,16 +1460,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (error) { lines.push(label + ": could not measure (" + error.message + ")"); continue; }
     // Log footage is converted, not balanced: the targets below (black 4, white 92) are display-referred
     // and would stretch a log curve into a picture that is neither (23:08, a Sony A7S II file). Said and
-    // left alone until a conversion is in the chain - the maker's LUT, Premiere's own colour management,
+    // left alone until a conversion is in the chain - the maker's LUT, Premiere's own color management,
     // or a transform this pass can write. Only when the read is the source file: a Premiere render carries
     // whatever conversion the clip already has.
     let logPart = null; // eslint-disable-line
     const parts = [], needs = [];
     if (readFrom === "source" && !graded && gradeLooksLikeLog(m)) {
       const f0 = m.frame || m;
-      const logNote = "reads as LOG (black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / colour p99 " + round2(f0.saturation.p99) + ")";
+      const logNote = "reads as LOG (black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / color p99 " + round2(f0.saturation.p99) + ")";
       // Once per source file: the override is on the project item, so every cut of the file converts with it.
-      // A conversion by colour-space interpretation is a SOURCE setting: it changes how the file is read
+      // A conversion by color-space interpretation is a SOURCE setting: it changes how the file is read
       // everywhere and stays when the copy is discarded. The pass never does that on its own (the owner,
       // 12:05) - it says what it found and what the two routes are, and the editor picks.
       // Buttons, not a paragraph (the owner, 12:40: "the interface needs to be clickable options") - through
@@ -1516,7 +1516,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; }
       readFrom = "premiere";
       const cm = conv.m.frame || conv.m;
-      logPart = ("log → " + conv.name + " (a source setting, at your word; " + (conv.declared ? "the file declares this space" : conv.tried + " conversion" + (conv.tried > 1 ? "s" : "") + " tried" + (conv.hint ? ", " + conv.hint + " first from the file's tags" : "") + "; chosen by the picture") + ": black " + round2(cm.luma.p1) + " / white " + round2(cm.luma.p99) + " / colour " + round2(cm.saturation.p99) + ")");
+      logPart = ("log → " + conv.name + " (a source setting, at your word; " + (conv.declared ? "the file declares this space" : conv.tried + " conversion" + (conv.tried > 1 ? "s" : "") + " tried" + (conv.hint ? ", " + conv.hint + " first from the file's tags" : "") + "; chosen by the picture") + ": black " + round2(cm.luma.p1) + " / white " + round2(cm.luma.p99) + " / color " + round2(cm.saturation.p99) + ")");
       }
     }
     const seen = m.region || region;
@@ -1582,12 +1582,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const afterLevels = lev ? lev.predicted : afterBalance;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...goals.needs);
-    if (temp && temp.sceneColour) parts.push("no white balance (" + temp.why + ")");
+    if (temp && temp.sceneColor) parts.push("no white balance (" + temp.why + ")");
     else if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
-    // The colourists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
-    // Sat, the QE text door, probed 2026-09-16), never on a coloured end, judged on the frame as read.
+    // The colorists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
+    // Sat, the QE text door, probed 2026-09-16), never on a colored end, judged on the frame as read.
     // Written with the first batch, not after the corrections: the 00:27 run wrote it last and the
     // blacks cast moved 1-3 points on the final read that nothing then corrected (C200 and C228 lost
     // their tick). In the batch, the corrections rescale from a reading that already carries it.
@@ -1727,7 +1727,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           const p1 = fa.luma.p1, target = lev.target, a = lev.anchor, A = a * 100;
           const predictedMove = curveBaseP1 - curvePredictedP1, actualMove = curveBaseP1 - p1;
           if ((p1 > GRADE_ACCEPT.blackMax || p1 < 1) && predictedMove > 0 && actualMove < predictedMove * 0.25 && !shadowsLifted) { // a Shadows lift for a dark subject raises the black point on purpose: re-solve, do not call the pixels unresponsive // 21:37: a 39% response re-solved to 4.3 the run before; 25% is the line between 'slow' and 'not a black'
-            // The black point did not follow the curve: the darkest pixels are not a black (a coloured
+            // The black point did not follow the curve: the darkest pixels are not a black (a colored
             // surface keeps its luma in one channel while the curve crushes the other two). Pushing
             // further only crushes more - C187 on the 21:26 run went to the cap for nothing.
             if (pass === 0) notes.push("black point read " + round2(p1) + " after a curve predicted to reach " + round2(curvePredictedP1) + ": the darkest pixels do not respond to a levels move, left at " + curveNow.toFixed(2));
@@ -1793,7 +1793,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
                 parts.push("skin: " + skinRegion + " hue " + hueNow + "° (" + (Math.abs(off) <= 3 ? "on the line" : (off > 0 ? "+" : "") + off + "° off the line, inside the " + GRADE_SKIN_HUE[0] + "-" + GRADE_SKIN_HUE[1] + "° corridor left alone") + "), saturation " + round2(skinNow.saturation.p50) + ")".slice(1)); }
               else if (!SKIN_WRITE) parts.push("skin: " + boxes.length + " " + skinRegion + " hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + " (off the line; skin writes are off - nothing written)");
               else {
-                // Hue vs Hue, not the HSL key: the colourists' own hierarchy puts a hue curve above a
+                // Hue vs Hue, not the HSL key: the colorists' own hierarchy puts a hue curve above a
                 // qualifier ("Primaries, Custom curves, Hue vs Hue curves, HSL qualifier using as few
                 // parameters as possible" - Cullen Kelly via Frame.io), and on this footage no key can
                 // separate a hand from an oak table anyway. The curve needs no key, no mask and no tracking:
@@ -1844,7 +1844,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             }
           } catch (error) { needs.push("skin: " + error.message); }
           finally { if (src1) { try { fs.rmSync(src1, { force: true }); } catch (_) {} } }
-        } else { if (src1) { try { fs.rmSync(src1, { force: true }); } catch (_) {} } if (skinNow && boxes.length && !key) needs.push("skin: " + skinRegion + " seen but too few skin-coloured pixels in the box to learn a key"); }
+        } else { if (src1) { try { fs.rmSync(src1, { force: true }); } catch (_) {} } if (skinNow && boxes.length && !key) needs.push("skin: " + skinRegion + " seen but too few skin-colored pixels in the box to learn a key"); }
       }
     } catch (error) { lines.push(label + ": " + error.message); continue; }
 
@@ -1869,9 +1869,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.sort((a, b) => { const ta = /@([\d.]+)s/.exec(a), tb = /@([\d.]+)s/.exec(b); return (ta ? Number(ta[1]) : 0) - (tb ? Number(tb[1]) : 0); }); // ponytail: the reference cut was graded first; the reader wants timeline order
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone: the row says what it is and asks which conversion to use" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
-    + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
+    + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, color space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   const convNames = Object.entries(logConverted).filter(([, v]) => v && v.name).map(([k, v]) => path.basename(k) + " → " + v.name);
-  if (convNames.length) lines.push("Log conversions were set as the clips' colour-space interpretation (Modify > Color, on the project item): " + convNames.join("; ") + ". This is a fix to how the footage is read, not part of the grade: every cut of the file sees it, in every sequence, and it stays when the copy is discarded. To change it: Project panel, right-click the clip, Modify, Color.");
+  if (convNames.length) lines.push("Log conversions were set as the clips' color-space interpretation (Modify > Color, on the project item): " + convNames.join("; ") + ". This is a fix to how the footage is read, not part of the grade: every cut of the file sees it, in every sequence, and it stays when the copy is discarded. To change it: Project panel, right-click the clip, Modify, Color.");
   if (resumeAt !== null) lines.push("Not finished: the run paused after " + secs + "s so the call would return. Everything above is written and confirmed. To do the rest, call grade_sequence again with start_at=" + resumeAt + " (same track and region); the shot match carries over. If renders are creeping (they do through a long Premiere session), restart Premiere first.");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
   lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
@@ -3665,12 +3665,12 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { summary: { type: "string", description: "One line, shown to the user." }, code: { type: "string", description: "ES3 ExtendScript. End with a result expression." } }, required: ["summary", "code"] } },
   { name: "analyze_audio", description: "For every audio clip overlapping a timeline range of the active sequence: levels per window, a waveform sparkline, and silence ranges, in timeline seconds. Read from Premiere's own peak-file waveform cache. Use to answer questions about audio, not before remove_silences (it measures on its own).",
     inputSchema: { type: "object", properties: { start_seconds: { type: "number" }, end_seconds: { type: "number" }, window_ms: { type: "number", description: "Window size, default 100 ms; auto-widened for long ranges." } }, required: ["end_seconds"] } },
-  { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `colour` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or colour question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
+  { name: "scopes", description: "Lumetri Scopes as numbers (measure a person with region \"face\"; the `color` skill says what the numbers mean) for up to 3 timeline positions, measured from Premiere's own full-resolution render with the grade: luma range and median (0-100), RGB parade means and ranges, clipped and crushed shares, vectorscope saturation and whole-frame cast, plus one scope image. The tool for any exposure, contrast or color question, and for matching two shots across a cut: compare their numbers. Reads the exported 8-bit frame as SDR Rec.709, not calibrated against Lumetri's own readout. The grade itself is the editor's Lumetri click.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, region: { type: "string", enum: ["frame", "face", "subject", "hands", "keyed"], description: "\"subject\" measures only Vision's foreground subject, whatever it is - a face, hands, a product; \"face\" measures only the biggest face box (skin without hair and clothes, best for skin tone); \"hands\" the biggest hand box; \"keyed\" only the pixels Lumetri's HSL Secondary key selects (the clip must have Show Mask on: the rest of the frame is a flat grey and is left out). Use one of them whenever the shot has a subject: the background drags whole-frame numbers away from it. Says so when nothing is found." }, solo_track: { type: "number", description: "1-based video track to measure ALONE (other video tracks hidden). Default: the composite." }, source: { type: "boolean", description: "Decode the clip's own source file at the matching frame instead of rendering in Premiere: nothing renders, nothing moves. Camera pixels, not the grade - a read, never a confirm. Check it against a plain call once per footage type." }, track: { type: "number", description: "With source: which video track's clip, default 1." } }, required: ["seconds"] } },
-  { name: "grade", description: "Load the `colour` skill before grading. Sets ONE Lumetri Color parameter on the clip at a timeline position so the scopes read what you asked, in one go: one render to read the scopes, the calibration model chooses the value, one render to confirm (one nudge from the two real readings if the confirm is off, then it stops and reports the residual). Never leaves the slider's range, never leaves the frame clipped or crushed. Give the number the statistic should reach, not the slider value. Defaults: temperature steers whitesRB (the parade's blue-minus-red whites; 0 = neutral whites), exposure steers brightness (luma median), contrast steers spread (luma p99-p1). For a whole shot use grade_shot instead: one render for all the knobs.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should read (0-100 scale; parade differences and cast are signed)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "blackPoint", "whitePoint", "spread", "whitesRB", "whitesG", "blacksRB", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by. \"subject\" = Vision's foreground subject; \"face\" = the biggest face box. Clipping is always judged on the whole frame." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
-  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically, on the working copy. Per clip: the scopes read from the clip's own file (subject region by default), then the colourist canon by rule - white balance (Temperature, only for a cast the whole parade shares) and each end's colour-wheel pad for what is left, one confirm and one nudge; then the black point set exactly with the Master curve's bottom point (a levels move), Whites to the white point with Highlights finishing what its cap leaves, Contrast only if the frame is flat or harsh, Blacks only to lift crushed blacks, Exposure only for a face's skin luma - knobs from the calibration model, written as one set and confirmed ONCE, then one correction (a rollback of what clipped or crushed the frame beyond what the source had, else a direction-aware pad nudge) and one confirm of that. Two renders a clip. Never leaves a slider's range; residuals are reported, never chased. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Long sequences and slow Premiere sessions: the call stops after a time budget (default 150 s) with everything written and confirmed, and says the start_at to pass to continue - call it again until no pause is reported. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["auto", "premiere", "source"], description: "Where the first reading comes from. Default auto: decode each clip's own file (no render, nothing moves; verified identical to Premiere's render on BRAW), falling back to a Premiere render if the file cannot be decoded here." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." }, log: { type: "string", enum: ["ask", "lut", "lut-source", "premiere", "skip"], description: "Log footage. The conversion is ALWAYS the maker's own official LUT, downloaded from their page - Premiere's bundled LUTs are not offered and are not an alternative. The only choice is where it goes. Default ask - the panel puts that to the editor as buttons at the first log clip, naming the site it downloads from, and carries on in the same pass; just call this and let them answer, do not ask in chat yourself. lut = on the clip, in Lumetri's Input LUT, which Discard copy removes. lut-source = in the file's source settings, which stays and covers every cut. premiere = Premiere's colour-management transform, a source setting, no LUT file: the fallback when no official LUT exists for the camera. skip = leave it log. Whichever is chosen, the conversion goes on and the grade follows in the same pass." }, seconds: { type: "number", description: "Grade ONLY the clip covering this timeline second, with the same rules, caps and confirms as a whole-track run. Use this for \"colour this shot\" or when one clip is selected - never grade_shot, which takes goals YOU choose and so cannot apply the canon." }, start_at: { type: "number", description: "Skip clips that start before this timeline second. Used to CONTINUE a run that paused at its time budget - the result says the exact value to pass." }, budget_seconds: { type: "number", description: "Stop cleanly after about this long and report where to continue, so the call always returns (default 150). 0 = no budget: only for an unattended run." } } } },
-  { name: "grade_shot", description: "Grade a whole shot in ONE go: one render to read its scopes, the calibration model chooses every knob, all are written, one render confirms the lot. Two renders per shot. goals are applied in the order given - a colourist's order is white balance (temperature → whitesRB 0), then exposure (→ brightness), then contrast (→ spread). Each knob is solved on the state predicted after the ones before it. Reports, per knob: before, predicted, what the confirm actually read, the residual; and warns if the frame ended up clipped or crushed. Knobs without a calibration (anything but temperature, exposure, contrast) are skipped and named - set those with grade.",     inputSchema: { type: "object", properties: { goals: { type: "array", items: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "exposure", "contrast", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number" }, statistic: { type: "string" } }, required: ["parameter", "target"] }, description: "In the order to apply." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by; clipping is judged on the whole frame regardless." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit per knob, default 1." } }, required: ["goals", "seconds"] } },
-  { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and colour numbers: scopes. Checking edits: snapshot_moments.",
+  { name: "grade", description: "Load the `color` skill before grading. Sets ONE Lumetri Color parameter on the clip at a timeline position so the scopes read what you asked, in one go: one render to read the scopes, the calibration model chooses the value, one render to confirm (one nudge from the two real readings if the confirm is off, then it stops and reports the residual). Never leaves the slider's range, never leaves the frame clipped or crushed. Give the number the statistic should reach, not the slider value. Defaults: temperature steers whitesRB (the parade's blue-minus-red whites; 0 = neutral whites), exposure steers brightness (luma median), contrast steers spread (luma p99-p1). For a whole shot use grade_shot instead: one render for all the knobs.",     inputSchema: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number", description: "What the statistic should read (0-100 scale; parade differences and cast are signed)." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame that is measured." }, statistic: { type: "string", enum: ["brightness", "blackPoint", "whitePoint", "spread", "whitesRB", "whitesG", "blacksRB", "red", "green", "blue", "warmth", "tintCast", "saturation"], description: "Override the parameter's default statistic. Rarely needed." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by. \"subject\" = Vision's foreground subject; \"face\" = the biggest face box. Clipping is always judged on the whole frame." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit, default 0.5." } }, required: ["parameter", "target", "seconds"] } },
+  { name: "grade_sequence", description: "\"Grade this video\" / \"balance everything\": every footage clip on a track, deterministically, on the working copy. Per clip: the scopes read from the clip's own file (subject region by default), then the colorist canon by rule - white balance (Temperature, only for a cast the whole parade shares) and each end's color-wheel pad for what is left, one confirm and one nudge; then the black point set exactly with the Master curve's bottom point (a levels move), Whites to the white point with Highlights finishing what its cap leaves, Contrast only if the frame is flat or harsh, Blacks only to lift crushed blacks, Exposure only for a face's skin luma - knobs from the calibration model, written as one set and confirmed ONCE, then one correction (a rollback of what clipped or crushed the frame beyond what the source had, else a direction-aware pad nudge) and one confirm of that. Two renders a clip. Never leaves a slider's range; residuals are reported, never chased. Graphics and generated layers are skipped. Returns one line per clip: what it read, what was set, whether it is balanced and why not if not. Long sequences and slow Premiere sessions: the call stops after a time budget (default 150 s) with everything written and confirmed, and says the start_at to pass to continue - call it again until no pause is reported. Call it ONCE for \"grade this video\"; use grade / grade_shot afterwards for taste (warmer, more contrast on the interview, match these two). Stop ends it after the current clip.",     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track, default 1." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read exposure by; default subject. White balance always reads the whole frame." }, tolerance: { type: "number", description: "Per-knob hit tolerance, default 1." }, read: { type: "string", enum: ["auto", "premiere", "source"], description: "Where the first reading comes from. Default auto: decode each clip's own file (no render, nothing moves; verified identical to Premiere's render on BRAW), falling back to a Premiere render if the file cannot be decoded here." }, confirm: { type: "boolean", description: "Re-measure in Premiere after the knobs are set (default true). Off = zero renders with source reads, and the result is the model's word only." }, log: { type: "string", enum: ["ask", "lut", "lut-source", "premiere", "skip"], description: "Log footage. The conversion is ALWAYS the maker's own official LUT, downloaded from their page - Premiere's bundled LUTs are not offered and are not an alternative. The only choice is where it goes. Default ask - the panel puts that to the editor as buttons at the first log clip, naming the site it downloads from, and carries on in the same pass; just call this and let them answer, do not ask in chat yourself. lut = on the clip, in Lumetri's Input LUT, which Discard copy removes. lut-source = in the file's source settings, which stays and covers every cut. premiere = Premiere's color-management transform, a source setting, no LUT file: the fallback when no official LUT exists for the camera. skip = leave it log. Whichever is chosen, the conversion goes on and the grade follows in the same pass." }, seconds: { type: "number", description: "Grade ONLY the clip covering this timeline second, with the same rules, caps and confirms as a whole-track run. Use this for \"color this shot\" or when one clip is selected - never grade_shot, which takes goals YOU choose and so cannot apply the canon." }, start_at: { type: "number", description: "Skip clips that start before this timeline second. Used to CONTINUE a run that paused at its time budget - the result says the exact value to pass." }, budget_seconds: { type: "number", description: "Stop cleanly after about this long and report where to continue, so the call always returns (default 150). 0 = no budget: only for an unattended run." } } } },
+  { name: "grade_shot", description: "Grade a whole shot in ONE go: one render to read its scopes, the calibration model chooses every knob, all are written, one render confirms the lot. Two renders per shot. goals are applied in the order given - a colorist's order is white balance (temperature → whitesRB 0), then exposure (→ brightness), then contrast (→ spread). Each knob is solved on the state predicted after the ones before it. Reports, per knob: before, predicted, what the confirm actually read, the residual; and warns if the frame ended up clipped or crushed. Knobs without a calibration (anything but temperature, exposure, contrast) are skipped and named - set those with grade.",     inputSchema: { type: "object", properties: { goals: { type: "array", items: { type: "object", properties: { parameter: { type: "string", enum: ["temperature", "exposure", "contrast", "tint", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"] }, target: { type: "number" }, statistic: { type: "string" } }, required: ["parameter", "target"] }, description: "In the order to apply." }, seconds: { type: "number", description: "Timeline position: picks the clip and the frame." }, region: { type: "string", enum: ["frame", "face", "subject"], description: "What to read and steer by; clipping is judged on the whole frame regardless." }, track: { type: "number", description: "1-based video track, default 1." }, tolerance: { type: "number", description: "How close counts as a hit per knob, default 1." } }, required: ["goals", "seconds"] } },
+  { name: "preview_frames", description: "Render up to 6 frames of the active sequence as images, from Premiere's own Export Frame with the grade applied; max_px at the frame's longest edge (1920 for HD, landscape or vertical) gives full detail. For what something looks like. Exposure and color numbers: scopes. Checking edits: snapshot_moments.",
     inputSchema: { type: "object", properties: { seconds: { type: "array", items: { type: "number" } }, max_px: { type: "number", description: "Longest edge in pixels, default 512; the frame's longest edge for full detail." }, solo_track: { type: "number", description: "1-based video track to render ALONE (other video tracks hidden). Default: the composite." } }, required: ["seconds"] } },
   { name: "layer_frames", description: "One layer alone: every clip on a video track rendered with the other video tracks hidden, so that layer's own placement is judged for the shot alone. Reframe order: footage tracks in step 1 (picture), graphic tracks in step 3 (graphics). Fix with nudge_clip and the same track.",
     inputSchema: { type: "object", properties: { track: { type: "number", description: "1-based video track (1 = V1)" }, max_px: { type: "number" } }, required: ["track"] } },
@@ -3695,7 +3695,7 @@ const TOOL_DEFS = [
   // caption_style (captionStyleTool) is built and tested but not registered: it reopens the project, which is
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
   { name: "ask_user", description: "Ask the editor a question with clickable answers, in the chat. USE THIS INSTEAD OF WRITING OUT A LIST OF OPTIONS AND WAITING FOR THEM TO TYPE - any time the next step depends on a choice only they can make (which of two files, which take, whether a setting goes on the clip or on the source, what to do about something ambiguous), ask it here. Two to four options, each a short label they click, with the cost or consequence in its description - the description is shown as a second line under the label, so keep the label to a few words and never write the trade-off into the label or the question. Returns the label they chose, or that they did not answer. One decision per call: ask twice rather than cramming two questions into one. Do not use it to confirm something you were going to do anyway, and not for anything with an obvious default.", inputSchema: { type: "object", properties: { question: { type: "string", description: "The question, one line, in plain words. No preamble, and do not restate the options in it - the buttons are the options." }, options: { type: "array", description: "Two to four answers.", items: { type: "object", properties: { label: { type: "string", description: "What the button says: a few words, the answer itself, no consequence clause. Under 32 characters - the call is refused past that." }, description: { type: "string", description: "What choosing it means or costs: one short line under 90 characters, shown under the label. Give one wherever the answers differ in consequence." } }, required: ["label"] } } }, required: ["question", "options"] } },
-  { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. use: the whole thing in one call for a log clip - works out the maker from the file, downloads the official conversion from the maker's own page if it is not on this machine, applies it to that clip and confirms from the render. Ask the editor once before the first download, saying what will be downloaded and from where; after that just use it. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own colour management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
+  { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. use: the whole thing in one call for a log clip - works out the maker from the file, downloads the official conversion from the maker's own page if it is not on this machine, applies it to that clip and confirms from the render. Ask the editor once before the first download, saying what will be downloaded and from where; after that just use it. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own color management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
     inputSchema: { type: "object", properties: { action: { type: "string", enum: ["use", "status", "fetch", "apply", "clear"] }, where: { type: "string", enum: ["clip", "source"], description: "Where the LUT goes: clip = Lumetri's Input LUT on that clip, removed by Discard copy (default); source = the file's Interpret Footage LUT, which stays and covers every cut." },  id: { type: "string", description: "A LUT id from status, for fetch and apply." }, file: { type: "string", description: "For apply: a specific LUT FILE the editor asked for by name or path - their own, a client's, or one of Premiere's bundled ones. Only when they ask for that file; the panel does not offer Premiere's own LUTs, which are looks rather than conversions." }, seconds: { type: "number", description: "Timeline position of the clip, for apply and clear." }, track: { type: "number", description: "1-based video track, default 1." } } } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
@@ -3939,14 +3939,14 @@ function beginButtonJob(label) {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return false; }
   if (buttonJob) { addMessage("assistant error", "Wait for the running job (" + buttonJob + ") to finish first."); return false; }
   buttonJob = label; cancelRequested = false;
-  [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions, ui.btnColour, ui.btnColourAll, ui.btnColourClip].forEach((b) => { b.disabled = true; });
+  [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions, ui.btnColor, ui.btnColorAll, ui.btnColorClip].forEach((b) => { b.disabled = true; });
   ui.stop.disabled = false; // Stop ends the job at its next range or step
   return true;
 }
 // Stop for long jobs: Cut silences, Captions and rough_cut check this between ranges and between steps.
 let cancelRequested = false;
 function requestCancel() { cancelRequested = true; setStatus("Stopping after the current step…"); }
-function endButtonJob() { buttonJob = ""; quietCard = null; cancelRequested = false; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions, ui.btnColour, ui.btnColourAll, ui.btnColourClip].forEach((b) => { b.disabled = false; }); }
+function endButtonJob() { buttonJob = ""; quietCard = null; cancelRequested = false; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions, ui.btnColor, ui.btnColorAll, ui.btnColorClip].forEach((b) => { b.disabled = false; }); }
 // Start at the measured 24-pair batch; verified insertion failures fall back to 16 then 8.
 const SILENCE_REBUILD_BATCH_SIZE = 24;
 async function runCutButton(params, label) {
@@ -3998,17 +3998,17 @@ async function runCutButton(params, label) {
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
 // Captions button toggles the options strip under the toolbar; Make captions runs the job.
-function syncStrips() { const open = [ui.cutOptions, ui.captionOptions, ui.colourOptions].filter((e) => !e.hidden).length; const v = document.getElementById("view-chat"); v.classList.toggle("with-options", open >= 1); v.classList.toggle("with-options-2", open >= 2); }
+function syncStrips() { const open = [ui.cutOptions, ui.captionOptions, ui.colorOptions].filter((e) => !e.hidden).length; const v = document.getElementById("view-chat"); v.classList.toggle("with-options", open >= 1); v.classList.toggle("with-options-2", open >= 2); }
 function toggleCaptionOptions(show) { ui.captionOptions.hidden = show === undefined ? !ui.captionOptions.hidden : !show; syncStrips(); if (!ui.captionOptions.hidden) ui.capWords.focus(); }
 function toggleCutOptions(show) { ui.cutOptions.hidden = show === undefined ? !ui.cutOptions.hidden : !show; syncStrips(); if (!ui.cutOptions.hidden) ui.minSilence.focus(); }
-function toggleColourOptions(show) { ui.colourOptions.hidden = show === undefined ? !ui.colourOptions.hidden : !show; syncStrips(); }
+function toggleColorOptions(show) { ui.colorOptions.hidden = show === undefined ? !ui.colorOptions.hidden : !show; syncStrips(); }
 
-// The colour button. Every colour request goes through the same deterministic pass; the only question is
+// The color button. Every color request goes through the same deterministic pass; the only question is
 // how much of the timeline it covers (the owner, 15:20: "for all coloring the model should always defer to
 // our grading pipeline - it's just a matter of scope"). A button cannot mis-route: twice today the model
 // reached the wrong way round it, once because the skill was not named in the prompt and once because no
 // single-clip form of the pass existed, and both times it hand-rolled knobs the canon would never write.
-async function runColourButton(scope) {
+async function runColorButton(scope) {
   let seconds;
   if (scope === "clip") {
     let sel = "";
@@ -4018,9 +4018,9 @@ async function runColourButton(scope) {
     if (!m) { addMessage("assistant error", "Select a clip on the timeline first, or choose Whole sequence."); return; }
     seconds = Number(m[1]) + 0.5;
   }
-  if (!beginButtonJob("Colour")) return;
-  toggleColourOptions(false);
-  const card = addTool("Colour correct" + (scope === "clip" ? " (selected clip)" : " (whole sequence)"), ""); card.open(); quietCard = card;
+  if (!beginButtonJob("Color")) return;
+  toggleColorOptions(false);
+  const card = addTool("Color correct" + (scope === "clip" ? " (selected clip)" : " (whole sequence)"), ""); card.open(); quietCard = card;
   try {
     const out = await gradeSequenceTool(seconds === undefined ? {} : { seconds });
     quietCard = null;
@@ -4063,10 +4063,10 @@ async function runCaptionsButton() {
   finally { endButtonJob(); }
 }
 ui.btnCaptions.onclick = () => toggleCaptionOptions();
-ui.btnColour.onclick = () => toggleColourOptions();
-ui.btnColourAll.onclick = () => runColourButton("all");
-ui.btnColourClip.onclick = () => runColourButton("clip");
-ui.btnCancelColour.onclick = () => toggleColourOptions(false);
+ui.btnColor.onclick = () => toggleColorOptions();
+ui.btnColorAll.onclick = () => runColorButton("all");
+ui.btnColorClip.onclick = () => runColorButton("clip");
+ui.btnCancelColor.onclick = () => toggleColorOptions(false);
 ui.btnMakeCaptions.onclick = runCaptionsButton;
 ui.btnCancelCaptions.onclick = () => toggleCaptionOptions(false);
 // One click: the method and thresholds live in Settings (the options strip is gone; the hidden run/cancel buttons keep old references harmless).

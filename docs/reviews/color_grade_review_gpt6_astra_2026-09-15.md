@@ -17,8 +17,8 @@ Numbers below are **final whole-frame readings**. `BP/WP` means black/white poin
 | C220 @0.5 | BP/WP **1.2/85.5 → 8.2/75.7**; black cast **+0.8 → +3.6** | D rolled all tonal knobs back after crushing. It lost C’s endpoint correction, then nudged shadows farther blue. White cast improved +5.1→+2.0. |
 | C222 @1.645 | **4.3/86.7 → 6.3/87.8** | Lost balanced status solely through the lifted black point. D’s tonal confirm read 4.7, but the subsequent pads lifted the final BP to 6.3. |
 | C223 @3.02 | **5.5/87.1 → 22.7/98.4** | Severe tonal regression despite neutral final casts. D applied Exposure **+2** plus Whites **+8.64** after Blacks. |
-| C227 @4.44 | WP **80.8 → 67.8**; casts **−14.5/−25.9 → −2/+1.9** | Casts improved substantially; tone deteriorated. D rolled all tonal controls back after 1.72% clipping, leaving pads to handle colour alone. |
-| C227 @5.63 | **5.9/79.6 → 12.5/67.1**; casts **+1.2/−2.7 → +8.2/+6.2** | Both tone and colour worsened. Tonal rollback followed by shadow-pad **0.16→0.32** and highlight-pad **0.29→0.37**. |
+| C227 @4.44 | WP **80.8 → 67.8**; casts **−14.5/−25.9 → −2/+1.9** | Casts improved substantially; tone deteriorated. D rolled all tonal controls back after 1.72% clipping, leaving pads to handle color alone. |
+| C227 @5.63 | **5.9/79.6 → 12.5/67.1**; casts **+1.2/−2.7 → +8.2/+6.2** | Both tone and color worsened. Tonal rollback followed by shadow-pad **0.16→0.32** and highlight-pad **0.29→0.37**. |
 | C227 @6.65 | **5.5/80.8 → 18.4/94.9**; casts **+1.2/−10.6 → +6.7/+6.2** | White point improved, but Exposure **+2** and Whites **+34.27** left elevated blacks; pads crossed neutral. |
 | C228 @7.735 | **5.1/85.5 → 18/88.2** | Strong evidence that replacing C’s shadow-luma move lost tonal authority: D used Blacks **−40**, with no Exposure or nudge, and still ended at BP 18. |
 | C229 @9.57 | **5.5/87.1 → 21.2/98.8** | Exposure **+2**, Whites **+24.93**, then capped shadow pad. White cast improved +5.1→0, but both tonal endpoints deteriorated. |
@@ -89,10 +89,10 @@ Consequently:
 
 Within the owner’s scopes-only workflow:
 
-1. Establish white balance from a credible neutral reference, preserving actual product and skin colour.
+1. Establish white balance from a credible neutral reference, preserving actual product and skin color.
 2. Correct broad exposure only when there is evidence that broad exposure is wrong.
 3. Set supported tonal endpoints with Whites/Blacks; use a broader tonal control when the correction required is broader.
-4. Correct residual shadow/highlight colour using the same reference pixels.
+4. Correct residual shadow/highlight color using the same reference pixels.
 5. Confirm the **complete** result, then permit one bounded correction or rollback.
 
 Warm hands/products and a warm illuminant can produce similar global statistics. Same-sign endpoint casts are a useful clue, not proof of white balance. Adobe’s own white-balance procedure specifies sampling an area known to be white or neutral. [Adobe Basic Correction](https://helpx.adobe.com/au/premiere/desktop/correct-color/color-correction-fundamentals/basic-color-correction-options.html)
@@ -199,7 +199,7 @@ Replace differences of independent percentiles with **paired-pixel chroma measur
 - Reuse the same pixels for confirms.
 - Report sample count and dispersion.
 
-Those percentile bands are proposed calibration settings, **not colourist-canon targets**. Without a credible neutral reference, report “neutrality unknown”; do not neutralize coloured products because they occupy an endpoint.
+Those percentile bands are proposed calibration settings, **not colorist-canon targets**. Without a credible neutral reference, report “neutrality unknown”; do not neutralize colored products because they occupy an endpoint.
 
 Changing the statistic requires remeasuring the wheel calibration. The existing p1/p99 matrix cannot simply be reused.
 
@@ -236,7 +236,7 @@ That is a useful exposure estimate away from clipping. It is **not a faithful Lu
 
 > “Premiere’s Exposure is ASYMMETRIC”
 
-A fitted highlight-rolloff term from one frame would repeat the current transfer mistake. Use the actual colour-space transfer function and validate a tone response across input levels before relying on it.
+A fitted highlight-rolloff term from one frame would repeat the current transfer mistake. Use the actual color-space transfer function and validate a tone response across input levels before relying on it.
 
 **Smallest practical correction:**
 
@@ -339,9 +339,9 @@ For the requested one-confirm/one-nudge contract, allocate the budget **per clip
 
 Combining phases safely requires accounting for their interaction. Do not simply delete the intermediate measurement while continuing to call an unmodelled state “predicted.”
 
-## 7. Other important engineering and colour flags
+## 7. Other important engineering and color flags
 
-### P0: the damage baseline starts after colour changes
+### P0: the damage baseline starts after color changes
 
 The panel passes:
 
@@ -351,7 +351,7 @@ to `planShot`, where `state` is already temperature/pad-corrected. Then [grade.c
 
 > `const base = damage(before);`
 
-Thus colour-induced damage becomes the baseline allowance. If there are no tonal goals, that guard never runs.
+Thus color-induced damage becomes the baseline allowance. If there are no tonal goals, that guard never runs.
 
 **Fix:** carry one immutable initial damage baseline through the entire clip, including pad writes and nudges. Restore the last confirmed acceptable state when a correction damages it.
 
@@ -411,9 +411,9 @@ One midpoint cannot establish the entire moving shot’s neutrality or clipping.
 
 | Priority | Exact change | Expected effect |
 |---|---|---|
-| **1. Stop pad amplification** | Disable `nudgePad` in automatic grading now; change both automatic saturation caps **0.5→0.3**; skip identical serialized writes. | Prevents the demonstrated overshoot-amplification mechanism. Particularly relevant to C227 @5.63, C209 @18.83, C202 and C200. Removes 15 renders from D’s execution pattern. Does not promise C’s exact colour results. |
+| **1. Stop pad amplification** | Disable `nudgePad` in automatic grading now; change both automatic saturation caps **0.5→0.3**; skip identical serialized writes. | Prevents the demonstrated overshoot-amplification mechanism. Particularly relevant to C227 @5.63, C209 @18.83, C202 and C200. Removes 15 renders from D’s execution pattern. Does not promise C’s exact color results. |
 | **2. Keep the tonal fixes; remove unsupported extrapolation** | Keep frame-based endpoint statistics and face-only Exposure. Replace the universal **`/0.41`, minimum −40** rule with a calibrated input-level response; meanwhile limit unsupported lowering to **−20**, restoring from current values. | Removes D’s +2-stop white-point chase on C223/C229/C233/C231/C193. Stops pretending that −40 guarantees BP 4. Some lifted-black residuals will remain until calibration establishes a valid solve. |
-| **3. Guard the whole clip against its initial state** | Pass the original damage baseline through every phase; restore previous controls rather than zero; use the single optional correction budget for rollback when needed. | Prevents colour damage being accepted as baseline, protects existing grades, and addresses D’s rollback cases C220/C227/C209 without declaring newly damaged results acceptable. |
+| **3. Guard the whole clip against its initial state** | Pass the original damage baseline through every phase; restore previous controls rather than zero; use the single optional correction budget for rollback when needed. | Prevents color damage being accepted as baseline, protects existing grades, and addresses D’s rollback cases C220/C227/C209 without declaring newly damaged results acceptable. |
 
 **Do not start by raising caps, loosening neutrality thresholds, or adding a guessed gamma/rolloff simulator. The immediate gains come from fixing direction, measurement consistency, and rollback.**
 

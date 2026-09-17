@@ -1,13 +1,13 @@
-// What to do to a shot, decided from its scopes by rule - the colourist canon, not invented numbers.
+// What to do to a shot, decided from its scopes by rule - the colorist canon, not invented numbers.
 //
 // The order and the targets are the industry's (Van Hurkman, Eagles, the broadcast conventions the
-// scopes were built for; sources in the colour skill): white balance the shot, set the black point and
+// scopes were built for; sources in the color skill): white balance the shot, set the black point and
 // the white point, neutralise what is left of the casts by lining the parade up - blacks with the
 // Shadows wheel, whites with the Highlights wheel - then saturation, then skin onto the vectorscope's
 // skin line. Midtones of a product or a hand have no canonical number and are left to taste; only a
 // face has a band.
 //
-// Why the balance is solved BEFORE the tonal sliders here, when a colourist sets the black point first:
+// Why the balance is solved BEFORE the tonal sliders here, when a colorist sets the black point first:
 // the pad model reads the parade's bottoms, and once Blacks has put the black point at 4 a warm
 // bottom's blue channel is on the floor - the pad's response is then clamped, not linear. Read the casts
 // where there is room (the frame as shot), cancel them, then move the ends with the tonal sliders,
@@ -63,7 +63,7 @@ const NEUTRAL = 1.5;             // parade ends within this of each other are ne
 const MIDTONE_CAST = 4;          // the middle band this far off neutral is a cast the eye sees as a tint (pink skin, green walls)
 const TEMPERATURE_CAP = 50;      // a balance is not a look: half the slider
 const PAD_REACH = 12;            // about what a pad at its cap (0.3) cancels, from the 21:00 sweep (6.5 per 0.15)
-const COLOURED = 20;             // a parade end this far off neutral is an object's colour (a red-orange surface in shadow), not the light
+const COLORED = 20;             // a parade end this far off neutral is an object's color (a red-orange surface in shadow), not the light
 // Blacks is a toe control ("black clipping", Adobe), not a lift: the sweep's p1 sits at 0 from -20 down,
 // so nothing below -20 is calibrated and nothing above the toe is reached by it. The -20..0 slope (0.41
 // per unit) is a lower bound taken on a clipped sample; an automatic pass never goes past -20 and says
@@ -74,15 +74,15 @@ const BLACKS_SLOPE = 0.41;
 const frameOf = (m) => m.frame || m;
 
 // Log footage, recognised from the picture. A log encode has a black floor that never reaches the
-// bottom (S-Log2/3 sit near 9-13 on this scale), a top that never reaches the top, and colour at a
+// bottom (S-Log2/3 sit near 9-13 on this scale), a top that never reaches the top, and color at a
 // fraction of a display picture's - measured 2026-09-16 23:10 on a Sony A7S II XAVC S file that declared
 // nothing (no transfer tag, no sidecar): black 12.5-14.5, white 68-71, saturation p99 10-14 on three
 // frames a quarter-hour apart, against 32-39 on the display-referred sandbox. Balancing that as a dull
 // Rec.709 picture stretches the log curve instead of converting it; the pass stands down and says so.
-// Saturation is the discriminator: a dark display picture can share the luma numbers, never the colour.
-// 23:23: a dim Blackmagic clip (black 9.8, white 61.6, colour p99 18) tripped the first version at p99 18,
-// so the colour test is two-sided now - the log file read p99 10-14 AND median 3-4; a dim display picture
-// keeps a coloured median (C231 ~10). Both must be low.
+// Saturation is the discriminator: a dark display picture can share the luma numbers, never the color.
+// 23:23: a dim Blackmagic clip (black 9.8, white 61.6, color p99 18) tripped the first version at p99 18,
+// so the color test is two-sided now - the log file read p99 10-14 AND median 3-4; a dim display picture
+// keeps a colored median (C231 ~10). Both must be low.
 const LOG_SIGNATURE = { blackMin: 8, whiteMax: 78, satMax: 15, satMedianMax: 6 };
 function looksLikeLog(m) {
   const f = frameOf(m);
@@ -94,7 +94,7 @@ function looksLikeLog(m) {
 // blue, strongest at the top, so it is solved to line the WHITES up and only when the blacks lean the
 // same way (a warm bottom under blue tops is two lights, not a white balance - that is the pads' job).
 // Returns null when temperature is not the tool.
-// A colour move that puts a channel on the floor has crushed it: a -50 temperature on warm shadows takes
+// A color move that puts a channel on the floor has crushed it: a -50 temperature on warm shadows takes
 // red below zero (5.7% of C227's pixels on the 21:37 run). The model predicts the channel bottoms, so a
 // move is scaled back until they stay off the floor.
 const FLOOR_MIN = 1.5;
@@ -107,7 +107,7 @@ const channelFloor = (m) => { const f = frameOf(m); return Math.min(f.red.p1, f.
 const channelTop = (m) => { const f = frameOf(m); return Math.max(f.red.p99, f.green.p99, f.blue.p99, f.luma.max || 0); };
 const TOP_MAX = 98.5;
 // `satFloor` (0..1): stop the move where the predicted saturation would fall under that fraction of what
-// the picture has - the scene-colour case, where a full neutralisation drains the objects (C227's oak,
+// the picture has - the scene-color case, where a full neutralisation drains the objects (C227's oak,
 // 01:33) and none at all leaves an orange picture (the owner, 23:12: "it's not balanced").
 function balanceAxis(m, param, from, stat, satFloor = 0, share = 1) {
   const s = solveKnob(m, param, from, stat, stat(m) * (1 - share)); // share < 1: take out only that part of the cast
@@ -115,11 +115,11 @@ function balanceAxis(m, param, from, stat, satFloor = 0, share = 1) {
   let value = s.value, predicted = predict(m, param, from, value), held = null;
   const sat0 = STATISTICS.saturation(m);
   const unsafe = (p) => (channelFloor(p) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN) || (channelTop(p) > TOP_MAX && channelTop(m) <= TOP_MAX) || (satFloor > 0 && sat0 > 0 && STATISTICS.saturation(p) < sat0 * satFloor);
-  while (unsafe(predicted) && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); held = channelFloor(predicted) < FLOOR_MIN ? "floor" : channelTop(predicted) > TOP_MAX ? "ceiling" : "colour"; }
+  while (unsafe(predicted) && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); held = channelFloor(predicted) < FLOOR_MIN ? "floor" : channelTop(predicted) > TOP_MAX ? "ceiling" : "color"; }
   if (Math.abs(value - from) <= 2) return null;
-  return { value, predicted, note: held === "colour" ? " (held back: further would drain the objects' colour)" : held ? " (held back: further would put a channel on the " + held + ")" : "" };
+  return { value, predicted, note: held === "color" ? " (held back: further would drain the objects' color)" : held ? " (held back: further would put a channel on the " + held + ")" : "" };
 }
-const SCENE_SAT_FLOOR = 0.7, SCENE_SHARE = 0.5; // the scene's own colour: at most half of it, never past the saturation floor
+const SCENE_SAT_FLOOR = 0.7, SCENE_SHARE = 0.5; // the scene's own color: at most half of it, never past the saturation floor
 // Temperature on blue-red, then Tint on green-magenta, solved on the state temperature predicts. Both
 // are gains on the top, both clip past +50 (their sweeps), both are the white balance. `tint` is null
 // when the green axis is already neutral.
@@ -137,23 +137,23 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   // zero), the pads take the opposite residuals, each now inside their reach.
   const mixed = Math.abs(blacks) > NEUTRAL && Math.sign(whites) !== Math.sign(blacks) && Math.abs(whites) > PAD_REACH;
   const meanRB = (x) => (STATISTICS.whitesRB(x) + STATISTICS.blacksRB(x)) / 2;
-  // Both ends the same way by more than COLOURED is the scene, not the light (an oak table and hands,
+  // Both ends the same way by more than COLORED is the scene, not the light (an oak table and hands,
   // C227 @4.44, 2026-09-16 01:33: whites -25, blacks -27; a -83 temperature made the wood grey-beige
   // and the skin pale). The C187 rule, applied to the white balance as well: left alone, said out loud.
-  // Whites beyond COLOURED under blacks that lean the OTHER way are an object too (the oak's sheen over
+  // Whites beyond COLORED under blacks that lean the OTHER way are an object too (the oak's sheen over
   // a blue cloth, C227 @5.63, 13:15: "mixed light" split it to -47 and the whole shot went pale): only
-  // blacks that lean the same way by less than COLOURED make a warm top the light. The pads take the
-  // blacks; a coloured top gets no pad either.
-  const sceneColour = Math.abs(whites) > COLOURED && (Math.sign(whites) !== Math.sign(blacks) || Math.abs(blacks) > COLOURED);
-  if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColour) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
+  // blacks that lean the same way by less than COLORED make a warm top the light. The pads take the
+  // blacks; a colored top gets no pad either.
+  const sceneColor = Math.abs(whites) > COLORED && (Math.sign(whites) !== Math.sign(blacks) || Math.abs(blacks) > COLORED);
+  if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColor) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
   // A picture warm at BOTH ends keeps its temperature: half the cast still solved to -49 on the oak-table
-  // fixture, and the owner had called -47 pale (23:20). The scene's colour comes out, when it does, through
+  // fixture, and the owner had called -47 pale (23:20). The scene's color comes out, when it does, through
   // the pads at half strength (padsFor) - which is what a warm bottom under neutral whites needs.
   const afterTemp = temp ? temp.predicted : m;
   const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
-  const sceneWhy = Math.sign(whites) === Math.sign(blacks) ? "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own colour, not the light" : "whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " over blacks that lean the other way: the brightest pixels are an object's colour (a sheen, a lamp), not the light";
-  if (!temp && !tint) return sceneColour ? { value: from, tint: null, predicted: m, why: sceneWhy + " - no white balance (neutralising it would drain the objects)", sceneColour: true } : null;
-  if (temp && sceneColour) { const out = { value: temp.value, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : temp.predicted, why: sceneWhy + ": partly neutralised, temperature " + round(temp.value) + temp.note + (tint ? "; tint " + round(tint.value) : ""), sceneColour: true, partial: true }; return out; }
+  const sceneWhy = Math.sign(whites) === Math.sign(blacks) ? "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own color, not the light" : "whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " over blacks that lean the other way: the brightest pixels are an object's color (a sheen, a lamp), not the light";
+  if (!temp && !tint) return sceneColor ? { value: from, tint: null, predicted: m, why: sceneWhy + " - no white balance (neutralising it would drain the objects)", sceneColor: true } : null;
+  if (temp && sceneColor) { const out = { value: temp.value, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : temp.predicted, why: sceneWhy + ": partly neutralised, temperature " + round(temp.value) + temp.note + (tint ? "; tint " + round(tint.value) : ""), sceneColor: true, partial: true }; return out; }
   const why = [];
   if (temp) why.push(mixed ? "mixed light (whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + ", blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(Math.abs(blacks)) + "): temperature " + round(temp.value) + " splits the difference, the pads take each end" + temp.note
     : "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
@@ -170,13 +170,13 @@ function padsFor(m, current = null) {
   for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
     const cast = castAt(f, wheel);
     if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
-    // A parade end this far off neutral after the white balance is an object's colour, not the light:
+    // A parade end this far off neutral after the white balance is an object's color, not the light:
     // a pad can only part-neutralise it and tints whatever the curve crushed under it (C187, 21:37: a
     // 0.45 cyan pad on a red-orange surface, a flat blue floor in the parade). No pad; said out loud.
     // 23:12: "left alone" read as an orange picture to the owner (a wire ring on a warm table, whites
     // neutral, blacks warm by 25). Half of it comes out, the floor guard below still holds the channels.
-    const scene = Math.hypot(cast[0], cast[1]) > COLOURED;
-    if (scene) needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size much of it is the scene's own colour - half of it taken out, the rest is the objects");
+    const scene = Math.hypot(cast[0], cast[1]) > COLORED;
+    if (scene) needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size much of it is the scene's own color - half of it taken out, the rest is the objects");
     const r = solveCast(wheel, scene ? [-cast[0] * SCENE_SHARE, -cast[1] * SCENE_SHARE] : [-cast[0], -cast[1]]);
     if (!r) continue;
     const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
@@ -202,22 +202,22 @@ function padsFor(m, current = null) {
 const LEVELS_CAP = 0.25;
 // The curve is pinned at the frame's median (kept inside 0.3..0.6) and at 0.8, so the move is a toe
 // pull, not a global stretch: the midtones and the top stay where they are.
-// `asRead` is the frame as read, before any predicted move: the coloured-surface test must see the
+// `asRead` is the frame as read, before any predicted move: the colored-surface test must see the
 // footage, not the state after a predicted pad has been subtracted from it (21:37: C227 and C187 got a
 // curve because the predicted-after-pads cast was under 20).
 function levelsFor(m, current = null, asRead = null) {
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
-  // The darkest pixels of a coloured surface (a red-orange object in shadow: B-R -20 and more) are not a
+  // The darkest pixels of a colored surface (a red-orange object in shadow: B-R -20 and more) are not a
   // black to be put at 4: a master curve cannot lower a luma that comes from one channel without crushing
   // the other two (C187, 21:26 - green and blue on the floor, red untouched, then the pad tinted the floor
   // blue). Until 19:40 that meant no curve at all, and C187 stayed at a black point of 23.5 and read flat
   // (the owner's parade: blue's bottom at 10, red's at 28, nothing under 10). The floor cap below is the
-  // real protection - the bottom point never passes the lowest channel - so a coloured bottom is now pulled
+  // real protection - the bottom point never passes the lowest channel - so a colored bottom is now pulled
   // as far as that allows and no further, and the row says so.
   const cast = castAt(frameOf(asRead || m), "shadows");
-  const coloured = Math.hypot(cast[0], cast[1]) > COLOURED;
+  const colored = Math.hypot(cast[0], cast[1]) > COLORED;
   const target = BLACK_POINT[1] - 1;
   const anchor = Math.max(0.3, Math.min(0.6, f.luma.p50 / 100));
   const want = blackInFor(bp, target, anchor);
@@ -229,7 +229,7 @@ function levelsFor(m, current = null, asRead = null) {
   if (blackIn < 0.02) return null;
   return {
     blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
-    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (coloured ? " (a coloured bottom: only as far as its lowest channel allows)" : "") + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
+    why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (colored ? " (a colored bottom: only as far as its lowest channel allows)" : "") + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
   };
 }
 
@@ -315,11 +315,11 @@ function verdict(after, region = "frame") {
   // with whites 0.8 and blacks 4.7 and red above green and blue through the whole body of the parade. Named
   // here; the tool for it is the Midtones wheel, which has no calibration yet (What's Next 6).
   // 22:14: the band's median is the OBJECTS in the midtones - "warm by 53" was the oak, "34" the copper
-  // pans - so it is a reading, not a verdict: it never fails the balance, and past COLOURED it is the
+  // pans - so it is a reading, not a verdict: it never fails the balance, and past COLORED it is the
   // scene and not said at all. Named in a hint, not a note, until a measure that separates a cast from
   // the objects exists (the midtone tint at the same luma across channels, judged on the subject).
   const mid = f.bands && f.bands.midtones;
-  if (mid && mid.rb !== null && Math.max(Math.abs(mid.rb), Math.abs(mid.g)) > MIDTONE_CAST && Math.max(Math.abs(mid.rb), Math.abs(mid.g)) <= COLOURED) hints.push("midtones " + (Math.abs(mid.rb) > MIDTONE_CAST ? (mid.rb > 0 ? "blue" : "warm") + " by " + round(Math.abs(mid.rb)) : "") + (Math.abs(mid.rb) > MIDTONE_CAST && Math.abs(mid.g) > MIDTONE_CAST ? ", " : "") + (Math.abs(mid.g) > MIDTONE_CAST ? (mid.g > 0 ? "green" : "magenta") + " by " + round(Math.abs(mid.g)) : "") + " (a reading of the middle band, objects included; not judged)");
+  if (mid && mid.rb !== null && Math.max(Math.abs(mid.rb), Math.abs(mid.g)) > MIDTONE_CAST && Math.max(Math.abs(mid.rb), Math.abs(mid.g)) <= COLORED) hints.push("midtones " + (Math.abs(mid.rb) > MIDTONE_CAST ? (mid.rb > 0 ? "blue" : "warm") + " by " + round(Math.abs(mid.rb)) : "") + (Math.abs(mid.rb) > MIDTONE_CAST && Math.abs(mid.g) > MIDTONE_CAST ? ", " : "") + (Math.abs(mid.g) > MIDTONE_CAST ? (mid.g > 0 ? "green" : "magenta") + " by " + round(Math.abs(mid.g)) : "") + " (a reading of the middle band, objects included; not judged)");
   const clipped = Math.max(f.clipped.red, f.clipped.green, f.clipped.blue);
   if (clipped > 0.5) notes.push("clipped " + round(clipped) + "%");
   if (f.crushed > 1) notes.push("crushed " + round(f.crushed) + "%");
@@ -332,23 +332,23 @@ function verdict(after, region = "frame") {
   return { balanced: !notes.length, notes, hints };
 }
 
-// The colourists' cleanup, after the balance: saturation rolled off in the deepest shadows and the
-// near-whites on Luma vs Sat. Never on a coloured end (a parade end more than COLOURED off neutral is an
-// object's colour, and rolling its saturation off drains it); a clip already carrying a Luma vs Sat
+// The colorists' cleanup, after the balance: saturation rolled off in the deepest shadows and the
+// near-whites on Luma vs Sat. Never on a colored end (a parade end more than COLORED off neutral is an
+// object's color, and rolling its saturation off drains it); a clip already carrying a Luma vs Sat
 // curve keeps it. `current` is the curve as read (points). null = nothing to write.
 function satCurveFor(m, current = null) {
   if (current && current.length) return null;
   const f = frameOf(m);
-  const coloured = (wheel) => { const c = castAt(f, wheel); return Math.hypot(c[0], c[1]) > COLOURED; };
-  const shadows = !coloured("shadows"), whites = !coloured("highlights");
+  const colored = (wheel) => { const c = castAt(f, wheel); return Math.hypot(c[0], c[1]) > COLORED; };
+  const shadows = !colored("shadows"), whites = !colored("highlights");
   const points = satRolloff({ shadows, whites });
   if (!points) return null;
-  const ends = shadows && whites ? "shadows and whites" : shadows ? "shadows only (whites are the scene's colour)" : "whites only (blacks are the scene's colour)";
+  const ends = shadows && whites ? "shadows and whites" : shadows ? "shadows only (whites are the scene's color)" : "whites only (blacks are the scene's color)";
   return { points, why: ends + " rolled off by " + ROLLOFF_DEPTH + " (Luma vs Sat)" };
 }
 
 // Skin, inside an HSL Secondary key (2026-09-16): the keyed pixels' hue onto the vectorscope's skin
-// line with the key's own Midtones colour wheel (a rotation of the keyed colour; HSL Tint was a magenta
+// line with the key's own Midtones color wheel (a rotation of the keyed color; HSL Tint was a magenta
 // wash over every keyed pixel - the owner, 12:21), their saturation into the canon's band with HSL
 // Saturation. `m` is the measurement of the skin pixels (Vision's hand or face box on the confirmed
 // render); `from.saturation` is where that knob is. null = already on the line.

@@ -56,7 +56,7 @@ function isIdentity(curves) {
 // The Master curve as a levels move: black input at blackIn, white input at whiteIn (0..1). With an
 // `anchor` (0..1, a luma the picture should keep - the frame's median), the curve is PINNED there, so
 // only the toe below the anchor moves: a two-point line is a global stretch (the sweep's median went
-// 41.6 -> 36 at x 0.10), which is not how a colourist sets a black point. A second pin at 0.8 holds the
+// 41.6 -> 36 at x 0.10), which is not how a colorist sets a black point. A second pin at 0.8 holds the
 // top: Premiere's spline through the anchor bows ABOVE the diagonal on its way to (1,1) - seen on the
 // 21:26 run's C187 curve, whites 91.4 -> 93.7 with nothing else touching them.
 function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
@@ -151,9 +151,9 @@ function spline(points) {
   };
 }
 
-// The colourists' cleanup on Luma vs Sat: saturation rolled off in the deepest shadows and the near-
+// The colorists' cleanup on Luma vs Sat: saturation rolled off in the deepest shadows and the near-
 // whites, the middle pinned so the spline holds it (Frame.io, the Resolve manual, a Premiere user's
-// default preset). Each end is its own half so a coloured end can be left alone.
+// default preset). Each end is its own half so a colored end can be left alone.
 // ponytail: one depth for both ends, from the ±0.5 sweep; per-end depth if a frame ever asks for it.
 const ROLLOFF_DEPTH = 0.35;
 function satRolloff({ shadows = true, whites = true, depth = ROLLOFF_DEPTH } = {}) {
@@ -164,7 +164,7 @@ function satRolloff({ shadows = true, whites = true, depth = ROLLOFF_DEPTH } = {
 }
 
 // A Hue vs Hue nudge on skin: a bump centred on the skin's own hue that returns to zero on either side,
-// so nothing else in the picture rotates. The colourists' hierarchy puts this ABOVE an HSL qualifier
+// so nothing else in the picture rotates. The colorists' hierarchy puts this ABOVE an HSL qualifier
 // ("Primaries, Custom curves, Hue vs Hue curves, HSL qualifier using as few parameters as possible" -
 // Cullen Kelly via Frame.io; "the HSL curves are some of the most powerful tools in Lumetri" - R Neil
 // Haugen), and it is the whole answer to a key that cannot separate skin from a wooden table: a curve
@@ -178,7 +178,7 @@ function hueBump(centre, shift, width = HUE_BUMP_WIDTH) {
   return pts.sort((a, b) => a[0] - b[0]);
 }
 
-// Line the parade's three bottoms up, per channel, on the RGB curves - the move a colourist makes for a
+// Line the parade's three bottoms up, per channel, on the RGB curves - the move a colorist makes for a
 // cast in the blacks the balance did not take out. Only ever DOWNWARD: lifting a channel's floor would
 // raise the black point that was just set.
 //

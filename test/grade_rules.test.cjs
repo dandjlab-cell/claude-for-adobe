@@ -1,5 +1,5 @@
 "use strict";
-// The rules are the colourist canon (black point, white point, parade neutral via the wheels, contrast
+// The rules are the colorist canon (black point, white point, parade neutral via the wheels, contrast
 // only when flat or harsh, skin on the vectorscope line), not invented bands. Checked against real
 // frame readings from the 2026-09-15 live runs.
 const test = require("node:test");
@@ -72,14 +72,14 @@ test("a lifted black point is the curve's job: the Master bottom point, solved e
   assert.equal(lev.predicted.luma.p50, 40, "the median does not move: the curve is a toe pull, not a stretch");
   assert.equal(lev.predicted.luma.p99, 90);
   assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [0.4, 0.4], [0.8, 0.8], [1, 1]], "four points: bottom, the median pin, the 0.8 pin, the top corner");
-  const colouredShadow = frame(20, 45, 90, [30, 12, 4], [90, 90, 90]); // B-R -26 at the bottom: a red-orange surface, not a black
-  // 19:40: a coloured bottom is no longer refused outright (C187 stayed at 23.5 and read flat); it is pulled
+  const coloredShadow = frame(20, 45, 90, [30, 12, 4], [90, 90, 90]); // B-R -26 at the bottom: a red-orange surface, not a black
+  // 19:40: a colored bottom is no longer refused outright (C187 stayed at 23.5 and read flat); it is pulled
   // as far as its lowest channel allows - here blue's bottom at 4 leaves no room at all, so still no curve.
-  const lev1 = levelsFor(colouredShadow);
-  assert.ok(!lev1 || lev1.blackIn <= 0.03, "a coloured dark surface whose lowest channel is already near the floor gets at most a token curve: " + JSON.stringify(lev1 && lev1.blackIn));
+  const lev1 = levelsFor(coloredShadow);
+  assert.ok(!lev1 || lev1.blackIn <= 0.03, "a colored dark surface whose lowest channel is already near the floor gets at most a token curve: " + JSON.stringify(lev1 && lev1.blackIn));
   const room = frame(24, 45, 90, [32, 16, 8], [90, 90, 90]); // C187-like: warm bottom (B-R -24), but blue has room down to 4
   const lev2 = levelsFor(room);
-  assert.ok(lev2 && lev2.blackIn > 0.02 && /coloured bottom/.test(lev2.why), "a coloured bottom with room is pulled as far as its lowest channel allows: " + JSON.stringify(lev2 && { b: lev2.blackIn, why: lev2.why }));
+  assert.ok(lev2 && lev2.blackIn > 0.02 && /colored bottom/.test(lev2.why), "a colored bottom with room is pulled as far as its lowest channel allows: " + JSON.stringify(lev2 && { b: lev2.blackIn, why: lev2.why }));
   assert.ok(lev2.blackIn <= (8 - 1.5) / 100 + 1e-9, "and never past the lowest channel");
   const far = levelsFor(frame(40, 60, 90, [40, 40, 40], [90, 90, 90]));
   assert.equal(far.blackIn, LEVELS_CAP, "a black point of 40 is a picture with no black: the automatic pass stops at the cap");
@@ -174,7 +174,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // 12:54: the key's Midtones wheel carries the skin rotation; the mask view is checked against Vision's
   // boxes first, and a key that took the room is tightened once, else skin is skipped on that clip.
   assert.match(panel, /const SKIN_WRITE = true;/, "skin writes are on");
-  // Skin is corrected with a Hue vs Hue bump, not an HSL key: the colourists' hierarchy puts the curve
+  // Skin is corrected with a Hue vs Hue bump, not an HSL key: the colorists' hierarchy puts the curve
   // above the qualifier, and masks - the other candidate - have no scripting surface at all (15:30).
   assert.match(seqTool, /const hc = hueCurveWriter\(at, track, "Hue vs Hue"\);/, "the skin tool is the hue curve");
   // A hand can be hidden on the graded frame and open a second later (C228, 16:06), so a clip with no skin
@@ -200,15 +200,15 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /wheelWriter\(at, track\)/, "the wheels are written from the sequence tool");
 });
 
-test("a parade end more than 20 off neutral is a coloured surface: no pad, no curve, said out loud", () => {
+test("a parade end more than 20 off neutral is a colored surface: no pad, no curve, said out loud", () => {
   const { levelsFor } = require("../src/grade_rules.cjs");
   const f = frame(22, 45, 90, [32, 12, 4], [90, 90, 90]); // B-R -28 at the bottom: a red-orange object in shadow
   const pads = padsFor(f);
-  // 23:12: "left alone" read as an orange picture; half of an object's colour now comes out through the pad.
-  assert.ok(pads.wheels.shadows && pads.wheels.shadows.sat > 0, "half a Shadows pad on an object's colour: " + JSON.stringify(pads.wheels.shadows));
-  const full = padsFor(frame(22, 45, 90, [22 + 6, 22 - 3, 22 - 8], [90, 90, 90])).wheels.shadows; // the same direction, inside COLOURED
+  // 23:12: "left alone" read as an orange picture; half of an object's color now comes out through the pad.
+  assert.ok(pads.wheels.shadows && pads.wheels.shadows.sat > 0, "half a Shadows pad on an object's color: " + JSON.stringify(pads.wheels.shadows));
+  const full = padsFor(frame(22, 45, 90, [22 + 6, 22 - 3, 22 - 8], [90, 90, 90])).wheels.shadows; // the same direction, inside COLORED
   assert.ok(pads.wheels.shadows.sat < (full ? full.sat * 1.2 : 1), "and not the full pad a light cast would get");
-  assert.ok(pads.needs.some((n) => /the scene's own colour - half of it/.test(n)), pads.needs.join(" | "));
+  assert.ok(pads.needs.some((n) => /the scene's own color - half of it/.test(n)), pads.needs.join(" | "));
   const lev = levelsFor(f, null, f);
   assert.ok(!lev || lev.blackIn <= 0.03, "and at most a token black-point curve when its lowest channel is already at 4");
 });
@@ -237,11 +237,11 @@ test("the white balance has two axes: Temperature on blue-red, Tint on green-mag
 
 const { satCurveFor } = require("../src/grade_rules.cjs");
 
-test("the saturation roll-off skips a coloured end and a curve the clip already carries", () => {
+test("the saturation roll-off skips a colored end and a curve the clip already carries", () => {
   const neutral = frame(5, 45, 90, [5, 5, 5], [90, 90, 90]);
   const both = satCurveFor(neutral);
   assert.ok(both && both.points.length === 9 && /shadows and whites/.test(both.why));
-  // C187 on the live runs: every dark band warm by 25-32 - the objects' colour, not to be drained.
+  // C187 on the live runs: every dark band warm by 25-32 - the objects' color, not to be drained.
   const warmBottom = frame(20, 45, 90, [30, 12, 5], [90, 90, 90]);
   const one = satCurveFor(warmBottom);
   assert.ok(one && /whites only/.test(one.why), one && one.why);
@@ -251,11 +251,11 @@ test("the saturation roll-off skips a coloured end and a curve the clip already 
 
 test("mixed light beyond the pads' reach: temperature splits the difference, the pads take each end", () => {
   // C227 @5.63, 2026-09-16: whites warm by 25, blacks blue by 5.5 - a specular-only balance went to -83,
-  // and (13:15) the split went to -47 and the oak turned pale: a top beyond COLOURED over blacks leaning
-  // the other way is an object's colour, no white balance. Mixed light is a top between the pads' reach
-  // and COLOURED.
+  // and (13:15) the split went to -47 and the oak turned pale: a top beyond COLORED over blacks leaning
+  // the other way is an object's color, no white balance. Mixed light is a top between the pads' reach
+  // and COLORED.
   const oak = temperatureFor(frame(12, 40, 68, [4, 7, 9.5], [80, 67.5, 55])); // blacks B-R +5.5, whites B-R -25, green neutral
-  assert.ok(oak && oak.sceneColour && oak.value === 0 && /object's colour/.test(oak.why), JSON.stringify(oak && { v: oak.value, why: oak.why }));
+  assert.ok(oak && oak.sceneColor && oak.value === 0 && /object's color/.test(oak.why), JSON.stringify(oak && { v: oak.value, why: oak.why }));
   const f = frame(12, 40, 68, [4, 7, 9.5], [80, 72, 63]); // blacks B-R +5.5, whites B-R -17
   const t = temperatureFor(f);
   assert.ok(t && /mixed light/.test(t.why), t && t.why);
@@ -264,12 +264,12 @@ test("mixed light beyond the pads' reach: temperature splits the difference, the
   assert.ok(Math.abs(w + b) < 6, "the two ends end on opposite sides of neutral, about equally: whites " + w.toFixed(1) + ", blacks " + b.toFixed(1));
 });
 
-test("a frame warm at both ends by more than 20 is the scene's colour: no white balance, said out loud", () => {
+test("a frame warm at both ends by more than 20 is the scene's color: no white balance, said out loud", () => {
   // C227 @4.44, 2026-09-16: an oak table and hands, whites -25 / blacks -27; -83 drained it.
   const f = frame(20, 45, 68, [31, 15, 4], [80, 66, 55]);
   const t = temperatureFor(f);
-  assert.ok(t && t.sceneColour && t.value === 0 && t.tint === null, JSON.stringify(t && { v: t.value, s: t.sceneColour }));
-  assert.match(t.why, /scene's own colour/);
+  assert.ok(t && t.sceneColor && t.value === 0 && t.tint === null, JSON.stringify(t && { v: t.value, s: t.sceneColor }));
+  assert.match(t.why, /scene's own color/);
 });
 
 test("skin: the corridor runs from the line up into the oranges; only skin on the red side is brought to the line, skin past the corridor comes down to its yellow end", () => {
@@ -340,10 +340,10 @@ test("log footage is recognised from the picture and never balanced as if it wer
   // A Sony A7S II XAVC S file that declared nothing (23:10): black 12.5, white 70.6, saturation p99 10.
   const log = frame(12.5, 26.7, 70.6, [13.3, 12.5, 12.2], [71.4, 70.2, 70.2], { saturation: { p50: 3, p99: 10 } });
   assert.equal(looksLikeLog(log), true);
-  const darkDisplay = frame(9.8, 40, 66.7, [10, 10, 10], [67, 67, 67], { saturation: { p50: 18, p99: 34 } }); // C233: dim, but coloured
-  assert.equal(looksLikeLog(darkDisplay), false, "a dim display picture shares the luma, never the colour");
+  const darkDisplay = frame(9.8, 40, 66.7, [10, 10, 10], [67, 67, 67], { saturation: { p50: 18, p99: 34 } }); // C233: dim, but colored
+  assert.equal(looksLikeLog(darkDisplay), false, "a dim display picture shares the luma, never the color");
   const dimmer = frame(9.8, 40, 61.6, [10, 10, 10], [62, 62, 62], { saturation: { p50: 10, p99: 18 } }); // C231, 23:23: tripped the first version
-  assert.equal(looksLikeLog(dimmer), false, "a dim, muted display picture is still not log: its median colour is not near zero");
+  assert.equal(looksLikeLog(dimmer), false, "a dim, muted display picture is still not log: its median color is not near zero");
   const graded = frame(18, 58.4, 82.4, [18, 18, 18], [82, 82, 82], { saturation: { p50: 17, p99: 39 } });
   assert.equal(looksLikeLog(graded), false);
   const fs = require("node:fs"), path = require("node:path");
@@ -352,12 +352,12 @@ test("log footage is recognised from the picture and never balanced as if it wer
   assert.match(seqTool, /gradeLooksLikeLog\(m\)\) \{[\s\S]*?reads as LOG[\s\S]*?logSkipped\+\+;\s*continue;/, "a log clip is named and skipped, not stretched");
 });
 
-// A colour read asks Vision for three things: the faces and hands a row names, and the subject's mask the
+// A color read asks Vision for three things: the faces and hands a row names, and the subject's mask the
 // grade measures through. It used to take two bin/ocr launches to get them - the default mode (522ms on a
 // 1536x864 frame: text recognition and person segmentation nobody here reads, and a subject pass that
 // segments the frame then throws the mask away) followed by --subject, which segments it AGAIN. One
 // --grade launch returns the same three answers in 354ms, measured on the same frame (2026-09-17 13:36).
-test("a colour read costs ONE bin/ocr launch, and the mode does no work it does not use", () => {
+test("a color read costs ONE bin/ocr launch, and the mode does no work it does not use", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const region = panel.slice(panel.indexOf("function measureRegion("), panel.indexOf("function visionForGrade("));
@@ -368,7 +368,7 @@ test("a colour read costs ONE bin/ocr launch, and the mode does no work it does 
   assert.doesNotMatch(panel, /subjectMask\(src\)|= visionAll\(/, "the two-launch path is gone, not left beside the new one");
   const swift = fs.readFileSync(path.join(__dirname, "..", "src", "ocr.swift"), "utf8");
   assert.match(swift, /case "grade": parts = \[faces\(cg, file\), hands\(cg, file\), subject\(cg, file, writeMask: true\)\]/);
-  assert.doesNotMatch(swift.slice(swift.indexOf('case "grade"'), swift.indexOf('default: parts')), /text\(|person\(/, "no text or person work in the colour mode");
+  assert.doesNotMatch(swift.slice(swift.indexOf('case "grade"'), swift.indexOf('default: parts')), /text\(|person\(/, "no text or person work in the color mode");
   // The shipped binary must actually have the mode, or every subject read silently falls back to the frame.
   const ocr = path.join(__dirname, "..", "bin", "ocr");
   if (fs.existsSync(ocr)) {
@@ -440,7 +440,7 @@ test("the deterministic pass can grade one clip, and the skill sends single-shot
   assert.ok(seq.indexOf("timelineOrder = one;") < seq.indexOf("const preread ="), "the filter happens before the preread, so only that clip is read");
   const def = panel.slice(panel.indexOf('{ name: "grade_sequence"'), panel.indexOf('{ name: "audio_cut"'));
   assert.match(def, /never grade_shot, which takes goals YOU choose/, "the tool says why grade_shot is not the tool for a balance");
-  const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "colour", "SKILL.md"), "utf8");
+  const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "color", "SKILL.md"), "utf8");
   assert.match(skill, /`grade_sequence` with `seconds`/);
   assert.match(skill, /steered by YOU/, "and the skill says what grade_shot actually is");
 });
@@ -448,21 +448,21 @@ test("the deterministic pass can grade one clip, and the skill sends single-shot
 // A button cannot mis-route. Twice on 2026-09-17 the model reached around the pass - once because the skill
 // was not named in the prompt, once because no single-clip form existed - and both times it hand-rolled
 // knobs the canon would never write. The button calls the pass directly, and only picks scope.
-test("the Colour correct button runs the deterministic pass, and only chooses scope", () => {
+test("the Color correct button runs the deterministic pass, and only chooses scope", () => {
   const fs = require("node:fs"), path = require("node:path");
   const root = path.join(__dirname, "..");
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  for (const id of ["btn-colour", "colour-options", "btn-colour-all", "btn-colour-clip", "btn-cancel-colour"]) assert.ok(html.includes('id="' + id + '"'), "missing " + id);
+  for (const id of ["btn-color", "color-options", "btn-color-all", "btn-color-clip", "btn-cancel-color"]) assert.ok(html.includes('id="' + id + '"'), "missing " + id);
   const panel = fs.readFileSync(path.join(root, "panel.js"), "utf8");
-  const fn = panel.slice(panel.indexOf("async function runColourButton("), panel.indexOf("async function runCaptionsButton("));
+  const fn = panel.slice(panel.indexOf("async function runColorButton("), panel.indexOf("async function runCaptionsButton("));
   assert.match(fn, /await gradeSequenceTool\(seconds === undefined \? \{\} : \{ seconds \}\)/, "the pass itself, whole or one clip - no knobs chosen here");
   assert.doesNotMatch(fn, /gradeTool|gradeShotTool/, "never the steered tools");
   assert.match(fn, /Select a clip on the timeline first/, "and it says what to do when nothing is selected");
-  assert.match(panel, /ui\.btnColourAll\.onclick = \(\) => runColourButton\("all"\);/);
-  assert.match(panel, /ui\.btnColourClip\.onclick = \(\) => runColourButton\("clip"\);/);
+  assert.match(panel, /ui\.btnColorAll\.onclick = \(\) => runColorButton\("all"\);/);
+  assert.match(panel, /ui\.btnColorClip\.onclick = \(\) => runColorButton\("clip"\);/);
   // The button must be disabled while any job runs, like the others.
-  assert.match(panel, /ui\.btnMakeCaptions, ui\.btnColour, ui\.btnColourAll, ui\.btnColourClip\]\.forEach\(\(b\) => \{ b\.disabled = true; \}\);/);
-  const skill = fs.readFileSync(path.join(root, ".claude", "skills", "colour", "SKILL.md"), "utf8");
-  assert.match(skill, /Every colour request goes through the pass\. The only question is scope\./);
+  assert.match(panel, /ui\.btnMakeCaptions, ui\.btnColor, ui\.btnColorAll, ui\.btnColorClip\]\.forEach\(\(b\) => \{ b\.disabled = true; \}\);/);
+  const skill = fs.readFileSync(path.join(root, ".claude", "skills", "color", "SKILL.md"), "utf8");
+  assert.match(skill, /Every color request goes through the pass\. The only question is scope\./);
   assert.match(skill, /Never assemble a grade out of single knobs/);
 });

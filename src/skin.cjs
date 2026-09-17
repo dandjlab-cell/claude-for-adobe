@@ -19,7 +19,7 @@ const PRIOR = { hueMax: 0.14, sat: [0.10, 0.75], light: [0.15, 0.85] };
 
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * p)))];
 
-// How a colourist actually builds a skin key (researched 2026-09-16 from Adobe's own Lumetri procedure,
+// How a colorist actually builds a skin key (researched 2026-09-16 from Adobe's own Lumetri procedure,
 // Resolve's qualifier guidance, Cullen Kelly via Frame.io, Cine Source, Larry Jordan):
 //
 //  - The eyedropper is a SEED, not the key. "Sampling will always leave you with an overly-narrow
@@ -108,7 +108,7 @@ function refineKey(key, skinPixels, framePixels, boxShare, { minKeep = 0.7, step
   return { key: cur, text: formatKey(cur), keeps: Math.round(kept * 1000) / 10, lights: Math.round(lit * 1000) / 10, narrowed, ok: kept >= minKeep, attenuation: attenuationFor(lit, boxShare) };
 }
 
-// A key that also holds the room is normal and usable - colourists accept it, and when they do not they add
+// A key that also holds the room is normal and usable - colorists accept it, and when they do not they add
 // a shape mask on top (the owner, 15:25). What it is not is a licence for a full-strength move: the wood
 // and the cabinets would swing with the skin. So the spill scales the correction instead of vetoing it - at
 // the spill threshold the move is full, at twice the threshold half, never under a quarter. This is the
@@ -141,7 +141,7 @@ function formatKey(key) {
 }
 const EMPTY_KEY = "H:0.50,0.00,0.00;S:0.50,0.00,0.00;L:0.50,0.00,0.00";
 
-// The mask view: unselected pixels are one flat grey (luma 72.2, R=G=B), selected pixels keep their colour.
+// The mask view: unselected pixels are one flat grey (luma 72.2, R=G=B), selected pixels keep their color.
 // Keep only the selected ones as a packed buffer, so the scopes read the keyed pixels alone.
 function keyedPixels(rgb) {
   const out = Buffer.alloc(rgb.length);

@@ -8,19 +8,19 @@ const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { FFMPEG } = require("./media.cjs");
 
-// ponytail: SDR Rec.709 only. A log, HDR or wide-gamut working space needs Premiere's colour pipeline, and a
-// calibration pass against Lumetri colour patches before these numbers can be quoted as Lumetri's.
+// ponytail: SDR Rec.709 only. A log, HDR or wide-gamut working space needs Premiere's color pipeline, and a
+// calibration pass against Lumetri color patches before these numbers can be quoted as Lumetri's.
 const CRUSH_PCT = 1.0;   // share of pixels with luma at the floor (code 0-1) that reads as crushed blacks
 const CLIP_PCT = 0.5;    // share of pixels with a channel at 255 that reads as clipped highlights
 const FLAT_RANGE = 60;   // p1..p99 luma spread (0-100) under this reads as low contrast
-const CAST = 2.5;        // mean Cb or Cr beyond this (-50..50 scale) reads as a colour cast
+const CAST = 2.5;        // mean Cb or Cr beyond this (-50..50 scale) reads as a color cast
 // Casts by luma band, read from PAIRED pixels: the same pixel's B-R and G-(R+B)/2, accumulated per luma
 // code, so any band can be read after one pass. Two kinds of band: by RANK (the darkest / brightest
 // share of pixels - the parade's bottoms and tops, which is what the canon lines up, because the
 // darkest and brightest things in a shot are the ones most likely meant to be neutral) and by LEVEL
 // (fixed luma ranges, roughly what each wheel acts on). The 2026-09-15 20:43 sweep showed why the
 // distinction matters: a 5-30 level band read the shadows warm by 18 on a warm-toned scene under
-// neutral light (highlights +2) - scene colour, not a cast - where the bottoms were nearly aligned.
+// neutral light (highlights +2) - scene color, not a cast - where the bottoms were nearly aligned.
 const RANK_SHARE = 0.03; // darkest / brightest 3% of pixels
 const LEVEL_BANDS = { shadows: [5, 30], midtones: [30, 65], highlights: [65, 95] }; // 0-100
 
@@ -76,13 +76,13 @@ function measure(rgb) {
     bands: {
       blacks: band(rankCodes(true)), whites: band(rankCodes(false)),
       // The darkest / brightest 1%: when this differs from the 3% band, the bottom (or top) is mixed - a
-      // black object and a coloured one sharing the parade's end, which the 3% median cannot show.
+      // black object and a colored one sharing the parade's end, which the 3% median cannot show.
       blacks1: band(rankCodes(true, 0.01)), whites1: band(rankCodes(false, 0.01)),
       shadows: band(codesBetween(...LEVEL_BANDS.shadows)), midtones: band(codesBetween(...LEVEL_BANDS.midtones)), highlights: band(codesBetween(...LEVEL_BANDS.highlights)),
     },
     clipped: { red: share(clipR), green: share(clipG), blue: share(clipB) },
     // A channel on the floor is the mirror of a channel at 255: a warm shadow whose blue is at 0 has
-    // no blue to read, and a curve that puts two channels of a coloured dark surface at 0 has crushed
+    // no blue to read, and a curve that puts two channels of a colored dark surface at 0 has crushed
     // it even though its luma (from the third channel) has not moved - the 21:26 run's C187.
     floor: { red: share(floorR), green: share(floorG), blue: share(floorB) },
     crushed: share(low), pureBlack: share(zero),
@@ -101,7 +101,7 @@ function readings(m) {
   const spread = Math.round((m.luma.p99 - m.luma.p1) * 10) / 10;
   if (spread < FLAT_RANGE) out.push("narrow tonal spread: luma p1-p99 " + m.luma.p1 + "-" + m.luma.p99 + " (flat exposure, or a naturally low-contrast scene)");
   const warm = m.cast.cr > CAST ? "red/warm" : m.cast.cr < -CAST ? "cyan" : "", blue = m.cast.cb > CAST ? "blue" : m.cast.cb < -CAST ? "yellow" : "";
-  if (warm || blue) out.push("frame leans " + [warm, blue].filter(Boolean).join(" and ") + " (mean Cr " + m.cast.cr + ", Cb " + m.cast.cb + "; a whole-frame mean, so a coloured subject can cause it)");
+  if (warm || blue) out.push("frame leans " + [warm, blue].filter(Boolean).join(" and ") + " (mean Cr " + m.cast.cr + ", Cb " + m.cast.cb + "; a whole-frame mean, so a colored subject can cause it)");
   return out.length ? out : ["no endpoint pile-up (luma floor under " + CRUSH_PCT + "%, each channel at 255 under " + CLIP_PCT + "%), tonal spread " + spread + ", no whole-frame lean"];
 }
 

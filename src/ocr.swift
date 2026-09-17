@@ -7,20 +7,20 @@
 //   bin/ocr --text <image...>    text: {"file":"...","items":[{"text":"Codex","conf":0.98,"box":[x0,y0,x1,y1]}]}
 //   bin/ocr --hands <image...>   hands: {"file":"...","hands":[{"box":[..],"chirality":"left|right|unknown","confidence":0..1}]}
 //                                Vision's hand pose (21 joints a hand); the box is the joints' extent. Skin work
-//                                keys the skin colour range inside these boxes, so an oak table never counts as a hand.
+//                                keys the skin color range inside these boxes, so an oak table never counts as a hand.
 //   bin/ocr --person <image...>  person: {"file":"...","mask":"<image>.person.png","coverage":0..1,"box":[..]}
 //                                Vision's person segmentation (people, clothes included) as an 8-bit mask image.
 //   bin/ocr --sounds <audio>     sounds: one line per window {"t0":s,"t1":s,"labels":[["laughter",0.71],...]} using Apple's
 //                                303-class sound classifier (laughter, applause, cheering, sigh, gasp, speech, music, silence...)
 //   bin/ocr --faces <image...>   faces: {"file":"...","faces":[{"box":[..],"yaw":deg,"pitch":deg,"roll":deg,
 //                                        "quality":0..1,"eyes":ratio,"mouth":ratio,"facing":0..,"tilt":0..1}]}
-//   bin/ocr --grade <image...>   what a colour read needs in one pass: {"file":"...","faces":[..],"hands":[..],
+//   bin/ocr --grade <image...>   what a color read needs in one pass: {"file":"...","faces":[..],"hands":[..],
 //                                "subject":{"mask":"<image>.mask.png","coverage":..,"box":[..]}} - no text
 //                                recognition, no person segmentation, and the subject segmented once.
 //   bin/ocr --subject <image...> subject: {"file":"...","mask":"<image>.mask.png","coverage":0..1,"box":[x0,y0,x1,y1]}
 //                                Vision's foreground-instance mask: whatever the subject is (a face, hands, a product),
 //                                as an 8-bit mask image the same size as the frame, white where the subject is. This
-//                                is what colour work measures - the subject, not the room - with no special-casing.
+//                                is what color work measures - the subject, not the room - with no special-casing.
 // Boxes are fractions of the image, origin top-left. yaw/pitch are Vision's head pose in degrees: both near zero
 // means the head faces the lens. quality is Apple's own face capture quality (sharpness, lighting, expression).
 // eyes and mouth are opening ratios from the landmarks (height / width), so a blink and a closed mouth are visible.
@@ -256,9 +256,9 @@ for file in args {
   case "person": let f = person(cg, file, writeMask: true); print("{\"file\":\(json(file)),\(flat(f, "person"))}"); continue
   case "hands": parts.append(hands(cg, file))
   case "text": parts.append(text(cg, file))
-  // What a colour read needs and nothing else. The default mode costs 522ms on a 1536x864 frame and a
+  // What a color read needs and nothing else. The default mode costs 522ms on a 1536x864 frame and a
   // grade calls it once per rendered frame: of that, text recognition (~90ms) and person segmentation
-  // (~25ms) are never looked at by the colour path, and its subject pass runs the instance segmentation
+  // (~25ms) are never looked at by the color path, and its subject pass runs the instance segmentation
   // and throws the mask away - so the panel had to call --subject straight after and segment AGAIN
   // (~170ms). One call, ~300ms, same three answers the grade reads (measured 2026-09-17 13:33).
   case "grade": parts = [faces(cg, file), hands(cg, file), subject(cg, file, writeMask: true)]

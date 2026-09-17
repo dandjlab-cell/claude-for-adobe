@@ -23,7 +23,7 @@ told to do from a panel, or for numbers Premiere does not give back.
 | Speech coverage, talking head vs b-roll | none | | `classify_clips` (voice detection) | Ours. |
 | Scene cuts inside one clip | Scene Edit Detection | `Sequence.performSceneEditDetectionOnSelection` is on 26.3.2 ExtendScript (listed, not yet run from here) | none | Premiere's. Until verified: editor's click (clip right-click > Scene Edit Detection); then the cuts are clips and `seam_frames` sees them. |
 | Sound quality (Enhance Speech, loudness, ducking) | Essential Sound; audio effects | Enhance Speech, ducking, loudness match: editor's click. Effects by name are listed on this build (`qeClip.addAudioEffect`; 94 names in `surface-26.3.2.md`: DeNoise, DeReverb, Hard Limiter, Dynamics...), not yet run from here | `analyze_audio` for numbers only | Premiere's. |
-| Stabilise, colour, match colour | Warp Stabilizer, Lumetri | Warp Stabilizer and Lumetri Color are in the effect list (`addVideoEffect`, listed); `applyLumetriPreset` listed; Auto Color / Auto Tone / Color Match are unbound command ids (click) | none | Premiere's. |
+| Stabilise, color, match color | Warp Stabilizer, Lumetri | Warp Stabilizer and Lumetri Color are in the effect list (`addVideoEffect`, listed); `applyLumetriPreset` listed; Auto Color / Auto Tone / Color Match are unbound command ids (click) | none | Premiere's. |
 | Undo | History | every tool step is one History step; non-undoable calls are checkpointed first | file checkpoints | Premiere's; the panel adds checkpoints for what History cannot undo. |
 
 "Cannot be triggered" means: no ExtendScript or QE call reaches it from a panel (command ids are never callable;

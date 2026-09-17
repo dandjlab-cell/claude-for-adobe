@@ -1,5 +1,5 @@
 "use strict";
-// The colour wheels as knobs: QE's text form both ways, and the linear model fitted from the live
+// The color wheels as knobs: QE's text form both ways, and the linear model fitted from the live
 // sweep (src/lumetri_sweeps.json wheels): one write from a cast reading, one write for a tonal end.
 const test = require("node:test");
 const assert = require("node:assert/strict");

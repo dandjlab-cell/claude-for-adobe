@@ -29,7 +29,7 @@ function mediaInfo(file) {
 
 // Width and height of a media file's first video stream, or null. ffprobe reads BRAW/R3D containers for this.
 const dimsCache = new Map();
-// The container's own tags (format + first video stream): what the file says about its maker and colour.
+// The container's own tags (format + first video stream): what the file says about its maker and color.
 const tagsCache = new Map();
 function mediaTags(file) {
   if (tagsCache.has(file)) return tagsCache.get(file);

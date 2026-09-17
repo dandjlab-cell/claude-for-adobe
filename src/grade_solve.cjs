@@ -5,7 +5,7 @@
 // say don't. Premiere's Exposure is ASYMMETRIC: downwards it is a clean gain - every percentile moves
 // by the same ratio, matching a gamma-2.4 stop to the third digit - while upwards it is a tone mapping
 // that protects highlights, so at +1 the shadows take a full stop and the top barely moves. No static
-// curve reproduces both directions; two fits were tried and both failed. That is Adobe's colour
+// curve reproduces both directions; two fits were tried and both failed. That is Adobe's color
 // science, and copying it offline is a research project.
 //
 // Measuring it is one second. A `scopes` call renders and measures in 0.6-0.8 s, so the cheap, exact

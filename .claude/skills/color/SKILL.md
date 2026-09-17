@@ -1,15 +1,15 @@
 ---
-name: colour
-description: Use when the editor asks to grade, colour correct, color correct, fix the exposure, contrast or white balance, match shots, or make footage look better, cinematic or consistent. Covers the short forms an editor actually types - "grade this", "color this", "colour this", "cc this", "fix the colours", "balance this", "this is too blue / too dark / too warm", "make these match" - and "grade this video". The procedure, which tool at each step, what the numbers mean, and what correct is as a number.
+name: color
+description: Use when the editor asks to grade, color correct, fix the exposure, contrast or white balance, match shots, or make footage look better, cinematic or consistent. Covers the short forms an editor actually types - "grade this", "color this", "cc this", "fix the colors", "balance this", "this is too blue / too dark / too warm", "make these match" - and "grade this video". The procedure, which tool at each step, what the numbers mean, and what correct is as a number.
 ---
 
-# Colour
+# Color
 
-You cannot see. `preview_frames` gives you a small JPEG and you will misjudge colour from it — the
+You cannot see. `preview_frames` gives you a small JPEG and you will misjudge color from it — the
 picture is for composition and framing, not for grade decisions. **The scopes are your eyes.** Every
 judgement below is a number you can measure and a number you can drive.
 
-## Every colour request goes through the pass. The only question is scope.
+## Every color request goes through the pass. The only question is scope.
 
 Never assemble a grade out of single knobs. `grade_sequence` IS the procedure - white balance, the wheel
 pads, the black and white points, contrast, the saturation roll-off, skin - solved from measurements,
@@ -17,14 +17,14 @@ capped, and confirmed from Premiere's own render. Your job is to decide how much
 
 | what they said | the call |
 |---|---|
-| "grade this", "colour correct", "cc this", "fix the colours" (nothing selected) | `grade_sequence` |
-| the same, with a clip selected, or "colour this shot" | `grade_sequence` with `seconds` at that clip |
+| "grade this", "color correct", "cc this", "fix the colors" (nothing selected) | `grade_sequence` |
+| the same, with a clip selected, or "color this shot" | `grade_sequence` with `seconds` at that clip |
 | "grade from here" | `grade_sequence` with `start_at` |
 
 `grade` and `grade_shot` are NOT how a shot gets balanced. They are steered by you - you supply the goals -
 so they cannot apply the canon or hold its caps. Use them only for taste ON TOP of a balanced base.
 
-The editor also has a **Colour correct** button (Whole sequence / Selected clip) that calls the same pass
+The editor also has a **Color correct** button (Whole sequence / Selected clip) that calls the same pass
 with no model in the loop. If they used it, the result is already in the chat: read it, do not repeat it.
 
 ## "Grade this video" / "balance everything"
@@ -36,8 +36,8 @@ the Master curve's bottom point, then Whites to the white point with Highlights 
 only if flat or harsh, Blacks only to lift crushed blacks, Exposure only for a face's skin.
 Knobs from the calibration model, written as one set and confirmed once; then one correction (a
 rollback of what damaged the frame beyond what the source had, else a direction-aware pad nudge)
-and one confirm of that. The first batch also carries the colourists' cleanup - saturation rolled
-off in the deepest shadows and the near-whites on Luma vs Sat (never on a coloured end, never over a
+and one confirm of that. The first batch also carries the colorists' cleanup - saturation rolled
+off in the deepest shadows and the near-whites on Luma vs Sat (never on a colored end, never over a
 curve the clip already carries), so the corrections read a frame that has it. The read is decoded from the clip's own file
 (verified identical to Premiere's render on BRAW: parade to the decimal, median within 0.4), so
 only the confirms render; `confirm: false` makes it render-free at the price of taking the model's
@@ -45,7 +45,7 @@ word, and it then withholds the balanced count. You decide nothing per shot; say
 table and the undo line (Discard copy removes all of it). Stop ends it after the current clip.
 
 **One shot, or a clip selected in the timeline: `grade_sequence` with `seconds`.** Same canon, same caps,
-same confirms, on that clip alone. "Colour this" with a clip selected is this call - not `grade_shot`.
+same confirms, on that clip alone. "Color this" with a clip selected is this call - not `grade_shot`.
 
 `grade_shot` and `grade` are for TASTE on top of a balanced base, and they are steered by YOU: you supply
 the goals, so they cannot apply the canon and will not hold its caps. Reaching for `grade_shot` to balance
@@ -73,7 +73,7 @@ fell back to the whole frame because nothing was found, treat the cast reading w
 
 ## The scale
 
-Everything is 0-100, except cast, which is -50..50. Our numbers matched Lumetri's own scopes on colour
+Everything is 0-100, except cast, which is -50..50. Our numbers matched Lumetri's own scopes on color
 bars, so **read them as IRE / percent directly**: 0 is black, 100 is reference white.
 
 | Reading | What it is |
@@ -85,12 +85,12 @@ bars, so **read them as IRE / percent directly**: 0 is black, 100 is reference w
 | `red/green/blue p99` | the parade's tops: equal when the whites are neutral |
 | `blacksRB` / `whitesRB` | blue minus red at the bottoms / tops; 0 = neutral, > 0 blue, < 0 warm |
 | `cast Cr` / `Cb` | mean chroma; skin hue = the angle of (Cb, Cr) on the vectorscope |
-| `saturation median` | colourfulness, % of the vectorscope radius |
+| `saturation median` | colorfulness, % of the vectorscope radius |
 | `clipped %` / `crushed %` | pixels pinned at 255 / at the floor. **Unrecoverable** |
 
 ## What correct is (the canon, not invented numbers)
 
-From the colourist standard - Van Hurkman's *Color Correction Handbook*, Warren Eagles, and the
+From the colorist standard - Van Hurkman's *Color Correction Handbook*, Warren Eagles, and the
 broadcast conventions the scopes were built around:
 
 - **Black point** at 0-5, not crushed flat. **White point** 90-95 when nothing in shot is true
@@ -119,18 +119,18 @@ broadcast conventions the scopes were built around:
 Sources: Larry Jordan on Van Hurkman's skin findings; the Adobe community neutralising sequence
 (black point, white point, gamma, white balance, saturation, skin line, look); CineD and Warren
 Eagles on balancing with the parade; Frame.io and Color Finale on the skin line and skin luma; Keith
-Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's colour section.
+Jack, *Video Demystified*, on the 123° I-axis. Links in the handoff's color section.
 
 ## What the panel drives today, against that list
 
 | Step | The tool | Status |
 |---|---|---|
 | white balance (whole-parade cast) | Temperature, then Tint | both calibrated; Temperature on the whites' blue-red, Tint on their green-magenta, referenced on the brightest 1% (a specular reflects the light); no fixed cap - held back before a predicted channel reaches the floor or the ceiling; rescaled from the real reading in the correction |
-| shadow cast (what is left) | Shadows wheel pad | read on the darkest 3% of pixels as pixels (the parade's bottoms); 2x2 fitted at sat 0.15 on that statistic, within 0.8 of every sweep row; pad ≤ 0.3, one direction-aware nudge; held back before it puts a channel on the floor; a bottom more than 20 off neutral is a coloured surface and gets no pad |
+| shadow cast (what is left) | Shadows wheel pad | read on the darkest 3% of pixels as pixels (the parade's bottoms); 2x2 fitted at sat 0.15 on that statistic, within 0.8 of every sweep row; pad ≤ 0.3, one direction-aware nudge; held back before it puts a channel on the floor; a bottom more than 20 off neutral is a colored surface and gets no pad |
 | highlight cast (what is left) | Highlights wheel pad | same, on the brightest 3% (the tops) |
 | white point | Whites, then Highlights | no fixed caps (the sliders run to 100); the model stops a move where the frame's white point would pass 95, and the guard backs a clipping move off to half |
 | contrast | Contrast | calibrated; capped at ±60 |
-| black point (lifted) | RGB Curves, Master bottom point | a toe pull pinned at the frame's median and at 0.8 (the 21:26 run's C187 curve bowed above the diagonal without the second pin: whites 91.4 → 93.7); not applied when the bottom band is more than 20 off neutral (a coloured surface, not a black): below the pin output = (in − x)·A/(A − x), above it nothing moves; solved exactly, capped at x 0.25; re-solved once from the confirm's real black point |
+| black point (lifted) | RGB Curves, Master bottom point | a toe pull pinned at the frame's median and at 0.8 (the 21:26 run's C187 curve bowed above the diagonal without the second pin: whites 91.4 → 93.7); not applied when the bottom band is more than 20 off neutral (a colored surface, not a black): below the pin output = (in − x)·A/(A − x), above it nothing moves; solved exactly, capped at x 0.25; re-solved once from the confirm's real black point |
 | crushed blacks | Blacks | a toe control (Adobe: "black clipping"); lifts crushed blacks; lowering is not used automatically (12 → 1 on one clip, 12 → 10 on the next) |
 | lifted dark region (by hand) | Shadows | calibrated: -100 = p1 8.2 → 4.7 but the median 41.6 → 31; for `grade` / `grade_shot` on request |
 | a face's skin luma | Exposure | calibrated (±2 stops, highlight-protected); used for nothing else |
@@ -162,11 +162,11 @@ visible, a 2-point saturation difference is not.
 
 ## Log footage
 
-The pass recognises log from the picture (a black floor that never reaches the bottom, a top that never reaches the top, colour at a fraction of a display picture's) and never balances it as if it were display-referred. What it does instead, in this order, and what to say:
+The pass recognises log from the picture (a black floor that never reaches the bottom, a top that never reaches the top, color at a fraction of a display picture's) and never balances it as if it were display-referred. What it does instead, in this order, and what to say:
 
 1. **Always the maker's own official LUT.** Premiere's bundled LUTs are not an alternative and are never offered - the camera "profiles" in Lumetri's menu are a look, not a conversion, and they are not good (the owner, 13:10). Every conversion is fetched from the maker's own page, and the panel holds the links, so **never search the web for a LUT**. Sony (S-Log3 and S-Log2), Canon, Panasonic, ARRI, Fujifilm and DJI download by themselves. Nikon ships an installer and Blackmagic ships no standalone file at all (its cubes come with the free DaVinci Resolve): for those two the panel gives the editor the maker's page and the folder to drop the `.cube` into. If the camera is not one of those, say so and offer `log: "premiere"`.
 2. **The grade downloads first, then asks the editor itself, with buttons. Do not ask in chat.** At the first log clip `grade_sequence` fetches the maker's LUT into the editor's LUT folder without asking - where it is saved was never a question - and then puts **one** question in the message stream as clickable answers (the same card `ask_user` gives you): it names the camera, says what it downloaded and from where, and asks only which slot the LUT goes in - **Lumetri's Input LUT on this clip** (comes off with the copy) · **the file's source settings** (every cut of the file, and it stays) · **leave it log**. It then carries straight on with whatever is clicked - no second call, no rerun. Just call `grade_sequence` and relay the result.
-3. **What each `log` value does, if you ever need to pass one.** `lut` / `lut-source` = the maker's official LUT on the clip / in source settings. `skip` = leave it. `premiere` = Premiere's colour-management transform (a source setting, no LUT file, chosen from the picture): the fallback for a camera with no official LUT, not a choice to offer alongside one. The conversion goes on first and the grade follows in the same pass. On its own, `log_lut use` at the clip's time does the lot for one clip: works out the maker from the file, downloads if it is not already here, applies it, and reports what the render now reads. `status`, `fetch`, `apply` and `clear` exist for the awkward cases; `use` is the normal one.
+3. **What each `log` value does, if you ever need to pass one.** `lut` / `lut-source` = the maker's official LUT on the clip / in source settings. `skip` = leave it. `premiere` = Premiere's color-management transform (a source setting, no LUT file, chosen from the picture): the fallback for a camera with no official LUT, not a choice to offer alongside one. The conversion goes on first and the grade follows in the same pass. On its own, `log_lut use` at the clip's time does the lot for one clip: works out the maker from the file, downloads if it is not already here, applies it, and reports what the render now reads. `status`, `fetch`, `apply` and `clear` exist for the awkward cases; `use` is the normal one.
 
 Two things to tell the editor when it comes up, and only then: the downloaded files sit in their Documents folder under "Claude for Premiere", so they can pick them by hand with Browse if they ever want to; and Premiere stores a LUT by reference, so a project opened on another machine needs the file there too.
 
@@ -187,7 +187,7 @@ A tone curve without the gamut is a known failure (greens and reds drift); both 
 
 ## What is not reachable
 
-Curves, colour wheels and HSL secondaries are packed values, not numbers, and `grade` cannot drive
+Curves, color wheels and HSL secondaries are packed values, not numbers, and `grade` cannot drive
 them. Basic Correction, Creative's adjustments and Vignette are plain scalars and can be driven.
 Full map: `premiere-scripting/lumetri.md`.
 

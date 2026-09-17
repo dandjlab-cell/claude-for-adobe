@@ -28,7 +28,7 @@ test("pixels with a channel on the floor or at the ceiling carry no cast and are
 
 test("rank bands read the parade's bottoms and tops: the darkest and brightest few percent as pixels", () => {
   // Mostly a warm mid-dark surface, with a small truly dark region that is neutral: the LEVEL band says
-  // warm (scene colour), the RANK band says neutral (the blacks are black) - the canon reads the latter.
+  // warm (scene color), the RANK band says neutral (the blacks are black) - the canon reads the latter.
   const m = measure(frame([3000, 60, 45, 35], [100, 6, 6, 6], [1000, 200, 200, 200]));
   assert.ok(m.bands.shadows.rb < -5, "the 5-30 band is the warm surface: " + m.bands.shadows.rb);
   assert.equal(m.bands.blacks.rb, 0, "the darkest 3% are the neutral blacks");
@@ -42,7 +42,7 @@ test("the green-magenta axis is read the same way", () => {
   assert.equal(m.bands.shadows.rb, 0);
 });
 
-test("a channel on the floor is counted, so a curve that crushes two channels of a coloured surface is seen", () => {
+test("a channel on the floor is counted, so a curve that crushes two channels of a colored surface is seen", () => {
   const m = measure(frame([1000, 60, 0, 0], [1000, 120, 120, 120]));
   assert.equal(m.crushed, 0, "luma is not at the floor: red carries it");
   assert.ok(Math.abs(m.floor.green - 50) < 1 && Math.abs(m.floor.blue - 50) < 1 && m.floor.red === 0, JSON.stringify(m.floor));

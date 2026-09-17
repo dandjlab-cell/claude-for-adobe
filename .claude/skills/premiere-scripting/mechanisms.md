@@ -33,7 +33,7 @@ Two facts that decide the shape of everything below:
 | Cut a clip at scene changes | `Sequence.performSceneEditDetectionOnSelection("ApplyCuts", true, "MediumSensitivity")` | verified 2026-09-05 (`scene_cuts`): a flattened export of a 5-cut edit came back as 6 clips on the exact cuts | select only that clip (`setSelected(1,1)`), call it, re-count for up to 90 s | clips after > before; the cuts are then clips for `seam_frames` and `morph_cut` |
 | Stabilise | Warp Stabilizer effect | listed | `qeClip.addVideoEffect(getVideoEffectByName("Warp Stabilizer"))`, wait on `isDoneAnalyzingForVideoEffects()` | component present on the clip; analysis done |
 | Fit / fill frame | `qeClip.setScaleToFrameSize()`, `projectItem.setScaleToFrameSize()` | listed | | Motion Scale read-back |
-| Flip, crop, blur, key, colour | effects by name (`surface-26.3.2.md` lists 224 video effects: Crop, Horizontal Flip, Gaussian Blur, Ultra Key, Lumetri Color, Track Matte Key, Transform...) | listed | `addVideoEffect(getVideoEffectByName(name))`, then `qeComponent.setParamValue(param, value)` | `getParamValue` read-back |
+| Flip, crop, blur, key, color | effects by name (`surface-26.3.2.md` lists 224 video effects: Crop, Horizontal Flip, Gaussian Blur, Ultra Key, Lumetri Color, Track Matte Key, Transform...) | listed | `addVideoEffect(getVideoEffectByName(name))`, then `qeComponent.setParamValue(param, value)` | `getParamValue` read-back |
 | Lumetri preset | `app.project.applyLumetriPreset(...)`, `getAllLumetriPresetsList()` | listed | | |
 | Auto Color / Auto Tone / Color Match | none scriptable; `cmd.clip.autocolor` (unbound), `cmd.color.autotone` (unbound) | key | | |
 | Speed / duration, reverse, optical flow | `qeClip.setSpeed(...)`, `setReverse`, `setTimeInterpolationType`, `setFrameBlend` | listed (ExtendScript `getSpeed` is read-only) | | `qeClip.speed` read-back |
@@ -104,7 +104,7 @@ Two facts that decide the shape of everything below:
 | Import a project / sequence | `app.project.importSequences(path, ids)`, `qe.project.importProject(...)` | listed (candidate for caption-style import without reopen) | | |
 | Consolidate duplicates | `app.project.consolidateDuplicates()` | listed | | |
 | Proxies | `item.canProxy()`, `hasProxy()`, `attachProxy(path, 0)`, `app.setEnableProxies(1)`; `cmd.clip.createproxies` is the editor's | listed (attach), key (create) | | |
-| Colour labels | `item.setColorLabel(i)`, `getColorLabel()` | listed | | |
+| Color labels | `item.setColorLabel(i)`, `getColorLabel()` | listed | | |
 | Subclip | `item.createSubClip(name, in, out, ...)` | listed | | |
 | Interpretation | `getFootageInterpretation()` (frameRate, pixelAspectRatio, alpha, VR), `setOverrideFrameRate`, `setOverridePixelAspectRatio` | listed | | |
 | Metadata | `getProjectColumnsMetadata()` (verified), `getXMPMetadata` / `setXMPMetadata` (listed) | | | |

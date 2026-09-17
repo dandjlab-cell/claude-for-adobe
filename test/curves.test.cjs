@@ -91,7 +91,7 @@ test("the roll-off shape holds the middle within 0.04 and desaturates only the e
   assert.equal(satRolloff({ shadows: false, whites: false }), null);
 });
 
-// A cast in the blacks that outlived the balance goes to the RGB curves, per channel - the tool a colourist
+// A cast in the blacks that outlived the balance goes to the RGB curves, per channel - the tool a colorist
 // reaches for. The wheel is a hue-and-saturation rotation of a whole tonal range and it overshoots: on the
 // 2026-09-17 14:09 run C202's Shadows pad went 0.13 -> 0.31 -> 0.18 across two corrections and still left
 // the blacks blue by 3.1. A channel's own toe is a levels move and lands where the arithmetic says.

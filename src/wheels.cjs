@@ -1,4 +1,4 @@
-// The Lumetri colour wheels as one-shot knobs: parse and format QE's text, and a linear model of what
+// The Lumetri color wheels as one-shot knobs: parse and format QE's text, and a linear model of what
 // each wheel does to the parade, from the live sweep in src/lumetri_sweeps.json (wheels).
 //
 // QE serialises the wheels as "Shadows:h,s,l;Midtones:h,s,l;Highlights:h,s,l" - hue in degrees

@@ -34,7 +34,7 @@ read-only script that enumerates `displayName` / `matchName` first, then write t
 3. Refused methods: `.quit`, `.openDocument`, `.newProject`, `.closeDocument`, `.save`, `.saveAs`,
    anything starting with `.export` or `.encode`, `encoder`, `renderQueue`. Never save; the panel saves.
    The panel's tools already export for you, so a refused export is never a dead end: frames with the grade
-   (`preview_frames` up to full resolution, `scopes` for exposure and colour numbers) and the audio mix
+   (`preview_frames` up to full resolution, `scopes` for exposure and color numbers) and the audio mix
    (`transcribe_timeline`). Reach for those before any script.
 4. No backslash escapes `\u`, `\x`, `\0`-`\7`. Also refused: string builders (`String.fromCharCode`,
    `charCodeAt`, `unescape`, `encodeURI`...) and computed calls (`obj[k]()`). Return text by pushing lines into an
@@ -65,7 +65,7 @@ read-only script that enumerates `displayName` / `matchName` first, then write t
   the exact call and trap per row, what is UXP-only or impossible, and the verification legend.
 - `lumetri.md`: all 130 Lumetri Color parameters by name and index — which are plain scalars a grade can
   drive today, which are packed blobs (curves, wheels, HSL keys) that need decoding first, and which
-  statistic each measured parameter actually moves. Read before any colour work.
+  statistic each measured parameter actually moves. Read before any color work.
 - `snippets.md`: twelve complete ES3 scripts that pass the panel's gate (enumerate clips, scale/position,
   keyframe, sequence marker, clip markers, SRT caption track, insert at time, nest, volume, MOGRT text,
   find item by path, rename). Each is tagged verified or unverified.

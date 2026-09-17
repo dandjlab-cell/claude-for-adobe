@@ -89,7 +89,7 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   assert.match(tool, /const moved = Math\.abs\(after\.luma\.p1 - before\.luma\.p1\) > 1/, "judged by the render, not the read-back");
   assert.match(tool, /await host\(where === "source" \? "setInputLUT" : "lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot it used when nothing worked");
   assert.match(tool, /where === "source" \? "setInputLUT" : "lumetriLUT"/, "clip = Lumetri's Input LUT, source = Interpret Footage");
-  const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "colour", "SKILL.md"), "utf8");
+  const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "color", "SKILL.md"), "utf8");
   assert.match(skill, /`log_lut use` at the clip's time does the lot/, "the skill tells the panel to use the one-call form");
 });
 

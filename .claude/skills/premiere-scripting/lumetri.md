@@ -72,7 +72,7 @@ Steering Contrast by brightness, or Temperature by luma, reads as "nothing is ha
 **Decoded offline (2026-09-15, premiere-map Round 251, `tools/parse_lumetri_prproj.py`, validated on
 112 projects / 786 instances):** curves are 520-byte records (kind, point count, 32 × (x, y) doubles);
 wheels are (hue°, luma, saturation) triples; the HSL key is 40 bytes (active, then H/S/L centre +
-inner/outer half-widths); packed colours carry all 64 bits the API truncates. The readable `<Lumetri>`
+inner/outer half-widths); packed colors carry all 64 bits the API truncates. The readable `<Lumetri>`
 XML blob in the file is stale - never read it. So any grade can be READ from a saved project, and
 curves/wheels can be WRITTEN by patching the file (batch: the project reopens). Live writes through
 the API for these still need `getColorValue`/`setColorValue` and QE `setParamValue` probed. Not yet
