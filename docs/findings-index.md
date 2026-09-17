@@ -89,6 +89,31 @@ for Whites — exactly backwards if the goal is not to blow the top out.
 
 ---
 
+## Provenance — there were two panel sessions, not one
+
+Most of tonight's live measurement came from the Claude running inside the panel, and it was **two
+different sessions** split by the extension reload onto `9bfa7de`. Anyone reading a commit message that
+says "the panel's Claude" should know which, because they do not share context and the second cannot
+answer for the first.
+
+**Before the reload** (the curve-sweep session): the Shadows wheel luma on C187 and C229, the Master toe
+on C187 unanchored and anchored, the knee past x=0.2, the channel toe on C229, and the identification of
+both proof frames. It found the non-monotonic `readable` — the cast statistic recovering as the picture is
+destroyed — the `points` signature default that had silently swept the wrong range, and it stopped three
+briefs of mine that were wrong: an unanchored sweep asked for an anchored claim, a comparison at equal x
+where equal black point was the question, and an arithmetic slip about where red would land.
+
+**After the reload** (the slider-sweep session): Contrast, Whites, Shadows, Blacks, Highlights and
+Exposure on C202. It found the **degenerate pivot fit** that invalidated the Shadows result and retro-
+applied to earlier work, the **pipeline-position hole** in the forward-model validation plan (`F` on an
+8-bit export sits at a different point in the chain than the thing it models), and the **Whites ≡
+Exposure** identity. It also declined the non-undoable `setSettings` write when the result no longer
+justified it, and stopped rather than routing around an approval it could not get.
+
+It corrected this attribution itself, unprompted, when I credited the whole list to it.
+
+---
+
 ## Doors tried — API probes, expensive to re-test
 
 Each of these cost a live probe. The `forecloses` column is the point: do not spend another one.
