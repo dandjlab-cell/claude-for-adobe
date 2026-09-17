@@ -9,6 +9,32 @@
 // numbers - which is why the maker named by the container (XAVC = Sony) breaks the tie.
 "use strict";
 
+// What the file DECLARES about its colour, before any frame is decoded. A tagged log file says so in its
+// transfer characteristic, and then there is nothing to guess: the maker and the curve are both known.
+// Untagged camera MP4s (a Sony A7S II's XAVC S, checked 2026-09-17) declare nothing, which is why the
+// picture test exists at all. Returns { space, maker } or null.
+const DECLARED = [
+  [/arib[-_ ]?std[-_ ]?b67|hlg/i, null, null], // HLG is a broadcast transfer, not a maker log space: never converted here
+  [/^s[-_ ]?log ?2$|slog2/i, "sony", "Sony S-Log2/S-Gamut"],
+  [/^s[-_ ]?log ?3$|slog3/i, "sony", "Sony S-Log3/S-Gamut3.Cine"],
+  [/log ?c ?4|logc4/i, "arri", "ARRI LogC4/Wide Gamut4"],
+  [/log ?c|logc/i, "arri", "ARRI LogC3/Wide Gamut3"],
+  [/c[-_ ]?log ?3|clog3/i, "canon", "Canon Log3/Cinema Gamut"],
+  [/c[-_ ]?log ?2|clog2/i, "canon", "Canon Log2/Cinema Gamut"],
+  [/v[-_ ]?log|vlog/i, "panasonic", "Panasonic V-Log/V-Gamut"],
+  [/f[-_ ]?log ?2|flog2/i, "fuji", "Fuji F-Log2/F-GamutC"],
+  [/f[-_ ]?log|flog/i, "fuji", "Fuji F-Log/Rec. 2020"],
+  [/n[-_ ]?log|nlog/i, "nikon", "Nikon N-Log/Rec2020"],
+  [/d[-_ ]?log|dlog/i, "dji", "DJI D-Log/D-Gamut"],
+  [/apple ?log/i, "apple", "Apple Log/Rec. 2020"],
+  [/log ?3g10|log3g10/i, "red", "Red Log3G10/Wide Gamut"],
+];
+function declaredSpace(tags = {}) {
+  const text = Object.entries(tags).map(([k, v]) => k + "=" + v).join("\n");
+  for (const [re, maker, space] of DECLARED) if (re.test(text)) return space && maker ? { space, maker } : null;
+  return null;
+}
+
 // What the file says about its maker. ffprobe tags and the path; null when nothing says.
 function cameraHint({ tags = {}, path = "" } = {}) {
   const t = Object.entries(tags).map(([k, v]) => (k + "=" + v).toLowerCase()).join("\n");
@@ -70,4 +96,4 @@ function pick(tried, hint = null) {
   return best && best.score <= ACCEPT ? { name: best.name, score: best.score, rows } : { name: null, score: best ? best.score : null, rows };
 }
 
-module.exports = { cameraHint, makerOf, candidates, score, pick, TARGET, ACCEPT };
+module.exports = { declaredSpace, cameraHint, makerOf, candidates, score, pick, TARGET, ACCEPT };

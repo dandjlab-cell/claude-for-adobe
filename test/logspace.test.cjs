@@ -86,7 +86,8 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   assert.match(tool, /const hint = logCameraHint\(\{ tags: mediaTags\(clip\.mediaPath\), path: clip\.mediaPath \}\)/, "the maker comes from the file, not the editor");
   assert.match(tool, /if \(!p \|\| !fs\.existsSync\(p\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing");
   assert.match(tool, /const moved = Math\.abs\(after\.luma\.p1 - before\.luma\.p1\) > 1/, "judged by the render, not the read-back");
-  assert.match(tool, /await host\("lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot when nothing worked");
+  assert.match(tool, /await host\(where === "source" \? "setInputLUT" : "lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot it used when nothing worked");
+  assert.match(tool, /where === "source" \? "setInputLUT" : "lumetriLUT"/, "clip = Lumetri's Input LUT, source = Interpret Footage");
   const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "colour", "SKILL.md"), "utf8");
   assert.match(skill, /`log_lut use` at the clip's time does the lot/, "the skill tells the panel to use the one-call form");
 });
@@ -95,8 +96,22 @@ test("the grade never changes a source setting on its own: log defaults to ask, 
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
-  assert.match(panel, /budget_seconds = 150, log = "ask" \} = \{\}\)/, "ask is the default");
-  assert.match(seqTool, /if \(log === "ask"\) \{[\s\S]*?both need your word[\s\S]*?logSkipped\+\+;\s*continue;/, "it reports and grades nothing until the editor picks");
-  assert.match(seqTool, /it is a source setting and stays after Discard copy/, "the cost of the interpretation route is stated");
-  assert.match(seqTool, /if \(log === "lut"\) \{\s*const r = await logLutTool\(\{ action: "use", seconds: at, track \}\);/, "the LUT route goes on the clip");
+  assert.match(panel, /budget_seconds = 150, log: logArg = "ask" \} = \{\}\)/, "ask is the default");
+  assert.match(seqTool, /if \(log === "ask"\) \{[\s\S]*?Which conversion[\s\S]*?And where[\s\S]*?logSkipped\+\+;\s*continue;/, "it asks which conversion and where, and grades nothing until told");
+  assert.match(seqTool, /Premiere's transform is source-only/, "the one constraint between the two axes is stated");
+  assert.match(seqTool, /goes with Discard copy[\s\S]*?stays; every cut of the file gets it/, "each destination's cost is stated");
+  assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: log === "lut-source" \? "source" : "clip" \}\)/, "the LUT goes where the editor asked");
+});
+
+test("the file's own declaration comes first: a tagged log file needs no rendering to identify", () => {
+  const { declaredSpace } = require("../src/logspace.cjs");
+  assert.deepEqual(declaredSpace({ color_transfer: "arib-std-b67" }), null, "HLG is not a maker log space we convert");
+  assert.deepEqual(declaredSpace({ color_transfer: "slog3" }), { space: "Sony S-Log3/S-Gamut3.Cine", maker: "sony" });
+  assert.deepEqual(declaredSpace({ TAG: "V-Log" }), { space: "Panasonic V-Log/V-Gamut", maker: "panasonic" });
+  assert.equal(declaredSpace({ major_brand: "XAVC", color_transfer: "unknown" }), null, "the A7S II file declares nothing");
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const fn = panel.slice(panel.indexOf("async function chooseLogConversion"), panel.indexOf("// The makers' official conversion LUTs"));
+  assert.ok(fn.indexOf("const declared = logDeclaredSpace(tags);") < fn.indexOf("const all = logCandidates"), "declaration is read before any candidate is rendered");
+  assert.match(fn, /return \{ name: declared\.space, m, rows: \[\], score: 0, tried: 0, declared: true/, "a declared space costs one render, not a sweep");
 });
