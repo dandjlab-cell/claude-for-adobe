@@ -445,16 +445,35 @@ test("a frame written for Vision is cheap to write, and its pixels are not decod
 // a channel ends up under zero: C229 on the 2026-09-17 14:52 run was held at 0.06 by the first write ("held
 // at the lowest channel bottom"), then the correction chased the LUMA black point to 0.14 and 0.17 with no
 // guard at all - red under zero, blue floating at +8, which is what the owner's parade showed at 09:10.
-test("the black-point correction is deliberately NOT floor-guarded, and says why", () => {
-  // 0.1.82 guarded it after a parade showed red under zero. The guard froze the correction on almost every
-  // clip - the first write is already floor-limited, so headroom measured after it is ~nil - and balanced
-  // fell 7 to 4, including clips that had reached target safely the run before (C220: 4.3 with a tick).
-  // Reverted 15:15. The next attempt needs a measured toe-to-floor model, not a derived mapping.
+// Guarded again 2026-09-17 18:20, on the two conditions this test held it to. 0.1.82's version froze the
+// correction on almost every clip (balanced 7 -> 4; C220 lost a black point of 4.3 it had reached safely)
+// because it was DERIVED and because the first write had already spent the headroom it measured. Both are
+// now answered: curveToe swept the Master bottom point live, and bottomsFor deliberately leaves the Master
+// its room. Without the guard the 18:13 run drove the curve 0.02 -> 0.09 -> 0.15 chasing a black point the
+// frame has no room for and put 3.13% of blue on the floor.
+test("the black-point correction obeys the same floor guard as the first write, on the swept model", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
-  assert.doesNotMatch(seq, /xAddCap/, "the derived guard is gone, not left half-wired");
-  assert.match(seq, /A real fix needs a swept toe-to-floor model/, "and the note says what a real fix requires");
+  assert.match(seq, /const xAdd = Math\.min\(xWant, room\);/, "the correction's move is capped by the room actually left");
+  assert.match(seq, /Math\.min\(fr\.red\.p1, fr\.green\.p1, fr\.blue\.p1\) - GRADE_FLOOR_MIN/, "and the room is the lowest channel's, read AFTER the first write - the post-curve domain, not mapped back through it");
+  assert.match(seq, /`curveToe` has since swept the Master bottom point live/, "the note says which sweep licenses it");
+  // The precondition that made 0.1.82 fail must still hold, or the guard has nothing to cap against.
+  const rules = fs.readFileSync(path.join(__dirname, "..", "src", "grade_rules.cjs"), "utf8");
+  assert.match(rules, /levelsFor needs floorCap >= 0\.02/, "bottomsFor leaves the Master curve its room rather than spending it");
+  assert.ok(require("../src/lumetri_sweeps.json").curveToe, "and the sweep it rests on is in the file");
+});
+
+// And the correction must write onto the curves the black balance produced, not the clip's originals:
+// curveLevels replaces Master only, so passing currentCurves silently discards the channel toes. That is
+// what happened on the 18:13 run - the bottoms were levelled by the first write and wiped by the first
+// correction.
+test("the black-point correction keeps the channel toes instead of writing over them", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(seq, /await cw\.write\(curveLevels\(curve2, 1, lev\.curves, lev\.anchor\)\)/, "composed onto the first write, which carries the toes");
+  assert.doesNotMatch(seq, /curveLevels\(curve2, 1, currentCurves/, "never onto the clip's originals");
 });
 
 test("the deterministic pass can grade one clip, and the skill sends single-shot work there", () => {

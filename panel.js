@@ -1807,18 +1807,25 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             // Compose a second toe pull on the first, below the same anchor: the extra bottom point in
             // the post-curve domain is A (p1 - t) / (A - t); back through the first curve that is
             // x2 = x + xAdd * (a - x) / a.
-            const xAdd = (A * (p1 - target) / (A - target)) / 100;
-            // NOT floor-guarded here, and the reason is written down so it is not "fixed" again blind.
-            // 0.1.82 added that guard after a parade showed red under zero. It froze the black point on
-            // almost every clip and balanced fell 7 to 4, including clips that had reached target safely
-            // the run before (C220: black 4.3 with a tick, then the guard blocked the same move). The
-            // cause: the FIRST write is itself floor-limited on nearly every clip, so it already lands the
-            // lowest channel near the margin - headroom measured after it is nil, and the correction stops
-            // existing. The mapping of that headroom back through the curve was derived, not measured,
-            // which is the deeper fault. A real fix needs a swept toe-to-floor model. Until then the damage
-            // rollback below is what catches a correction that crushed the frame.
+            const xWant = (A * (p1 - target) / (A - target)) / 100;
+            // Floor-guarded again as of 2026-09-17, and this time on a measured model rather than a
+            // derived one. 0.1.82's guard froze the black point on almost every clip (balanced 7 -> 4,
+            // C220 lost a black point of 4.3 it had reached safely) for two reasons, both now gone:
+            //   - it was derived. `curveToe` has since swept the Master bottom point live: the fall is
+            //     (v - 100x) / (1 - x), within 0.6 IRE, so the room left is arithmetic, not a guess. And
+            //     this is applied in the POST-curve domain where `fa` is a real reading, not mapped back
+            //     through the first curve the way 0.1.82 did it.
+            //   - the FIRST write used to spend all the floor headroom itself, leaving the correction
+            //     nothing. bottomsFor now deliberately leaves floorCap >= 0.02, lifting channels instead
+            //     of crushing them when a toe cannot reach (see grade_rules bottomsFor).
+            // Without it the 18:13 run drove the curve 0.02 -> 0.09 -> 0.15 chasing a black point of 4
+            // that this frame has no room for, and put 3.13% of blue on the floor.
+            const fr = fa.frame || fa;
+            const room = Math.max(0, (Math.min(fr.red.p1, fr.green.p1, fr.blue.p1) - GRADE_FLOOR_MIN) / (100 - GRADE_FLOOR_MIN));
+            const xAdd = Math.min(xWant, room);
             const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, curveNow + xAdd * (a - curveNow) / a));
-            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
+            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + (xAdd < xWant - 1e-9 ? "; held at the lowest channel bottom" : "") + ")"); }
+            else if (xAdd < xWant - 1e-9 && pass === 0) notes.push("black point read " + round2(p1) + " and left there: the lowest channel has no room under it");
           }
         }
         if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {
@@ -1827,7 +1834,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           if (temp2 !== null) { await tw.set(temp2); tempBase = tempNow; tempNow = temp2; }
           if (tint2 !== null) { await tiw.set(tint2); tintBase = tintNow; tintNow = tint2; }
           if (Object.keys(next).length) { padBase = Object.assign({}, applied); applied = Object.assign({}, applied, next); await ww.write(applied); }
-          if (curve2 !== null) { await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor)); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
+          // onto lev.curves, NOT currentCurves: lev.curves carries the channel toes of the black balance and
+          // curveLevels only replaces Master. Writing the original curves here threw the black balance away
+          // on the first correction (the 18:13 run: the bottoms were levelled, then wiped).
+          if (curve2 !== null) { await cw.write(curveLevels(curve2, 1, lev.curves, lev.anchor)); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
           state = await confirmMeasure(); renders++;
           parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
         } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }
