@@ -56,6 +56,38 @@ about −2.9. If the second frame reads −1 or −6, transfer has failed.
 
 ---
 
+## 1b. SETTLED, and it changed the picture — the calibration frame is the outlier
+
+Item 2 below was run first, then extended to three frames. The result is worth stating before anything
+else on this list, because it reframes item 1.
+
+| frame | bottom | curve's clean ceiling | wheel's cost to go deeper |
+|---|---|---|---|
+| C220 @0.5s | mild, warm −1.6 | luma p1 3.9 for 0.89 % blue | 0.04 % |
+| C187 @22.02s | strongly coloured, −29.8 | luma p1 18.8, then 3 % → 11 % blue | 0.01 % |
+| C229 @9.57s | warm −12.5 | luma p1 11.0, then red floors | **zero, on every row** |
+
+**C220 — the frame every model in `lumetri_sweeps.json` is fitted on — is the outlier of the three.**
+Its "curve costs 0.89 %" is the cheapest case, and the ~20× wheel advantage it implied does not
+generalise in either direction: on C187 the curve is three orders of magnitude worse, on C229 the
+wheel's cost is exactly zero so there is no ratio at all.
+
+Two further things that were assumed and are now known false:
+
+- **Which channel pays is frame-dependent.** On C187 red and green never floored on any row and blue
+  took everything; on C229 red floors first and overtakes blue (9.01 % against 7.14 % at x=0.2),
+  because a warm bottom is red-dominant in its dark pixels. A solver must read all three.
+- **The cast statistic inverts, not just shrinks.** On C229 `blacksRB` runs −12.5 → −14.1 → +4.3 → +0.4,
+  reporting its *cleanest* number on the row with 9 % of red on the floor. `castTrust` now refuses any
+  end whose band is empty, below 80 % readable, or over 1 % damaged, and the verdict says why rather
+  than printing a number. Both the C187 and C229 rows are regression tests.
+
+**What this does to item 1:** it is no longer "does the calibration transfer" but "the calibration is
+fitted on the least representative of the three frames we have". Sweeping the sliders on a second frame
+is still the right next run; the expectation should be that it disagrees.
+
+---
+
 ## 2. What does the Shadows wheel luma do when a channel is ALREADY near zero?
 
 **The gap.** `shadowsWheelLuma` was swept on a frame whose lowest channel started at 4.7, and it
