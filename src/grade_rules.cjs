@@ -516,7 +516,15 @@ const HSL_PAD = { m: [[-1.5, -8.0], [11.0, -5.0]], cap: 0.3 };
 const HSL_SAT_GAIN = 0.8, HSL_SAT_RANGE = [50, 100];
 const SKIN_SAT_TARGET = 25, SKIN_SAT_TOL = 3, SKIN_HUE_TARGET = SKIN_HUE_TARGET_LO;
 const skinTargetFor = (hue) => (hue < SKIN_HUE[0] ? SKIN_HUE_TARGET_LO : SKIN_HUE_TARGET_HI);
-function skinFor(m, from = { saturation: 100 }) {
+// `attenuation` (0.25..1, from skin.cjs attenuationFor) is the spill rule: a key that also lights the room
+// is usable, but not at full strength, because the wood and the cabinets swing with the skin. The comment
+// above attenuationFor spells out the intent - "the spill scales the correction instead of vetoing it" -
+// and it was NOT IN FORCE: panel.js passed key.attenuation as a third argument to a function that declared
+// two, so JavaScript dropped it silently and every skin move ran at full strength through a leaky key.
+// Found 2026-09-17 while mapping the controls. Restoring documented intent rather than inventing a model,
+// and it can only ever REDUCE a move, which is the safe direction; the confirm still reads what happened.
+function skinFor(m, from = { saturation: 100 }, attenuation = 1) {
+  const att = isFinite(attenuation) && attenuation > 0 && attenuation <= 1 ? attenuation : 1;
   const hue = STATISTICS.skinHue(m), sat = STATISTICS.saturation(m);
   // Saturation gets a margin: the knob reaches 3 points on a hand at full slider (its sweep), so a 1-point
   // shortfall is not worth Saturation 200.
@@ -526,10 +534,11 @@ function skinFor(m, from = { saturation: 100 }) {
   let state = m;
   if (satOff && sat > SKIN_SAT[1]) {
     const v = Math.max(HSL_SAT_RANGE[0], Math.min(HSL_SAT_RANGE[1], 100 + ((SKIN_SAT[1] - 5) / Math.max(1, sat) - 1) / HSL_SAT_GAIN * 100));
-    out.saturation = Math.round(v * 100) / 100;
-    const satPredicted = sat * (1 + HSL_SAT_GAIN * (v - 100) / 100);
+    // Attenuated toward neutral (100): a leaky key desaturates the room along with the hand.
+    out.saturation = Math.round((100 + (v - 100) * att) * 100) / 100;
+    const satPredicted = sat * (1 + HSL_SAT_GAIN * (out.saturation - 100) / 100);
     state = { ...m, saturation: { ...m.saturation, p50: satPredicted } };
-    out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (v === HSL_SAT_RANGE[0] ? " (as far as it goes: " + round(satPredicted) + ")" : ""));
+    out.why.push("saturation " + round(sat) + " → " + round(out.saturation) + (v === HSL_SAT_RANGE[0] ? " (as far as it goes: " + round(satPredicted) + ")" : "") + (att < 1 ? "; scaled to " + Math.round(att * 100) + "% - the key lights more than its subject" : ""));
   } else if (satOff) out.why.push("saturation " + round(sat) + " is under the band: left alone (boosting a pale hand only amplifies its tint)");
   // The pad is decided on the MEASURED hue (14:12: C222's pad was skipped because the saturation sweep's
   // predicted cast put the hue in the band; the render said 136.9 deg).
@@ -541,10 +550,11 @@ function skinFor(m, from = { saturation: 100 }) {
     const [[a, b], [c, e]] = HSL_PAD.m, det = a * e - b * c;
     let x = (e * d[0] - b * d[1]) / det, y = (a * d[1] - c * d[0]) / det, padSat = Math.hypot(x, y), partial = false;
     if (padSat > HSL_PAD.cap) { partial = true; x *= HSL_PAD.cap / padSat; y *= HSL_PAD.cap / padSat; padSat = HSL_PAD.cap; }
+    if (att < 1) { x *= att; y *= att; padSat *= att; }
     let padHue = Math.atan2(y, x) * 180 / Math.PI; if (padHue < 0) padHue += 360;
     out.pad = { hue: Math.round(padHue * 10) / 10, sat: Math.round(padSat * 1000) / 1000 };
     state = { ...state, cast: { cb: state.cast.cb + a * x + b * y, cr: state.cast.cr + c * x + e * y } };
-    out.why.push("hue " + round(hueNow) + "° → Midtones pad " + round(padHue) + "°/" + padSat.toFixed(2) + (partial ? " (as far as the pad goes: " + round(STATISTICS.skinHue(state)) + "°)" : ""));
+    out.why.push("hue " + round(hueNow) + "° → Midtones pad " + round(padHue) + "°/" + padSat.toFixed(2) + (partial ? " (as far as the pad goes: " + round(STATISTICS.skinHue(state)) + "°)" : "") + (att < 1 ? "; scaled to " + Math.round(att * 100) + "% - the key lights more than its subject" : ""));
   }
   if (out.pad === null && out.saturation === null) return null;
   if (out.pad === null) out.why.length = out.why.length; // saturation-only is a real move; a why-only result is not

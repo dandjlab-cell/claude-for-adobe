@@ -62,3 +62,29 @@ test("the mask view's grey is dropped, everything else is the selection", () => 
   assert.equal(k.rgb.length / 3, 2);
   assert.equal(k.share, 50);
 });
+
+// The spill rule: a key that lights the room as well as the subject scales the correction rather than
+// vetoing it (attenuationFor, src/skin.cjs). It was NOT in force — panel.js passed key.attenuation as a
+// third argument to skinFor, which declared two, so JavaScript dropped it and every skin move ran at full
+// strength through a leaky key. Found 2026-09-17 while mapping the controls.
+test("a leaky key scales the skin correction instead of applying it in full", () => {
+  const { skinFor } = require("../src/grade_rules.cjs");
+  const m = { cast: { cb: 8, cr: 20 }, saturation: { p50: 30 }, luma: { p1: 5, p50: 55, p99: 90 } }; // hue 68°, outside the corridor
+  const full = skinFor(m, { saturation: 100 }, 1);
+  const half = skinFor(m, { saturation: 100 }, 0.5);
+  const quarter = skinFor(m, { saturation: 100 }, 0.25);
+  assert.ok(full.pad.sat > half.pad.sat && half.pad.sat > quarter.pad.sat, "the pad scales down with the spill");
+  assert.ok(Math.abs(half.pad.sat - full.pad.sat / 2) < 0.005, "and scales linearly: " + half.pad.sat + " vs " + full.pad.sat / 2);
+  assert.equal(half.pad.hue, full.pad.hue, "the direction is unchanged - only the amount");
+  assert.match(half.why.join(" "), /scaled to 50% - the key lights more than its subject/, "and the row says so");
+  // Saturation is attenuated TOWARD neutral, not toward zero: 100 is the no-op for this knob.
+  const sm = { cast: { cb: -12, cr: 20 }, saturation: { p50: 60 }, luma: { p1: 5, p50: 55, p99: 90 } };
+  const sFull = skinFor(sm, { saturation: 100 }, 1), sQuarter = skinFor(sm, { saturation: 100 }, 0.25);
+  assert.ok(sFull.saturation < sQuarter.saturation && sQuarter.saturation < 100, "a quarter-strength move lands nearer 100: " + sFull.saturation + " -> " + sQuarter.saturation);
+  // Omitting the argument must behave exactly as attenuation 1, so an un-keyed caller is unaffected.
+  assert.deepEqual(skinFor(m, { saturation: 100 }), full);
+  // And the caller must actually pass it — that is the bug this test exists for.
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  assert.match(panel, /gradeSkinFor\(skinNow, \{ saturation: 100 \}, key\.attenuation\)/, "panel.js passes the key's attenuation");
+});
