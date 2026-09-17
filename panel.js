@@ -798,7 +798,8 @@ async function lutForMaker(maker) {
   for (const l of mine) {
     try {
       const r = await fetchLut(l.id);
-      if (r.path) return { path: r.path, label: l.label, from: lutSite(l), cached: !!r.cached };
+      // A maker that licenses more narrowly than the rest says so on the way past, once, when its file lands.
+      if (r.path) return { path: r.path, label: l.label, from: lutSite(l), cached: !!r.cached, terms: r.terms || null };
       notes.push(r.note);
     } catch (error) { notes.push(l.label + ": " + error.message); }
   }
@@ -1380,7 +1381,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (!got.path) { lines.push(label + ": " + logNote + ". " + got.note); logSkipped++; continue; }
         const where = await askChoice(
           label + " is " + (maker ? maker + " log" : "log, and the file does not name the camera") + ". " +
-            (got.cached ? "I have " + got.label + " here." : "Downloaded " + got.label + " from " + got.from + ".") + " Where should it go?",
+            (got.cached ? "I have " + got.label + " here." : "Downloaded " + got.label + " from " + got.from + ".") + (got.terms && !got.cached ? " " + got.terms : "") + " Where should it go?",
           ["Lumetri's Input LUT on this clip - comes off with the copy", "The file's source settings - every cut of the file, and it stays", "Leave it log"]);
         if (!where || where === "Leave it log") { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
         log = /source settings/.test(where) ? "lut-source" : "lut"; // and the rest of the run follows it
