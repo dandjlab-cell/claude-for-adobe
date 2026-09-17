@@ -1246,6 +1246,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // left alone until a conversion is in the chain - the maker's LUT, Premiere's own colour management,
     // or a transform this pass can write. Only when the read is the source file: a Premiere render carries
     // whatever conversion the clip already has.
+    let logPart = null;
+    const parts = [], needs = [];
     if (readFrom === "source" && !graded && gradeLooksLikeLog(m)) {
       const f0 = m.frame || m;
       const logNote = "reads as LOG (black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / colour p99 " + round2(f0.saturation.p99) + ")";
@@ -1266,7 +1268,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; }
       readFrom = "premiere";
       const cm = conv.m.frame || conv.m;
-      parts.push("log → " + conv.name + " (" + conv.tried + " conversion" + (conv.tried > 1 ? "s" : "") + " tried" + (conv.hint ? ", " + conv.hint + " first from the file's tags" : "") + "; chosen by the picture: black " + round2(cm.luma.p1) + " / white " + round2(cm.luma.p99) + " / colour " + round2(cm.saturation.p99) + ")");
+      logPart = ("log → " + conv.name + " (" + conv.tried + " conversion" + (conv.tried > 1 ? "s" : "") + " tried" + (conv.hint ? ", " + conv.hint + " first from the file's tags" : "") + "; chosen by the picture: black " + round2(cm.luma.p1) + " / white " + round2(cm.luma.p99) + " / colour " + round2(cm.saturation.p99) + ")");
     }
     const seen = m.region || region;
     const sawV = m.vision ? [m.vision.faces && m.vision.faces.length ? m.vision.faces.length + " face" + (m.vision.faces.length > 1 ? "s" : "") : "", m.vision.hands && m.vision.hands.length ? m.vision.hands.length + " hand" + (m.vision.hands.length > 1 ? "s" : "") : ""].filter(Boolean).join(", ") : "";
@@ -1274,7 +1276,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const baseline = gradeDamage(m); // what the shot arrived with: the guard for every write on this clip
     const before = "black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(m)) + " / whites " + round2(GRADE_STATS.whitesRB(m)) + " / spread " + round2(GRADE_STATS.spread(f0)) + (seen === "face" ? " / face " + round2(GRADE_STATS.brightness(m)) + " @" + round2(GRADE_STATS.skinHue(m)) + "°" : "") + (readFrom === "premiere" && graded ? " (read from Premiere: the clip already carries a balance)" : "");
     const reuse = m.region !== "frame" && m.box ? { box: m.box } : null;
-    const parts = [], needs = [];
+    if (logPart) parts.push(logPart); // the log conversion happened before the row's arrays existed (10:34: "Cannot access 'parts' before initialization")
     if (ref) {
       const confirmRef = () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render");
       try {

@@ -54,3 +54,14 @@ test("the grade wires the chooser: a log clip is converted through Premiere's li
   const { REGISTRY } = require("../src/luts.cjs");
   assert.ok(REGISTRY["sony-slog3-sgamut3cine-to-709"].url, "the one verified direct link");
 });
+
+test("nothing the clip loop uses is read before its declaration (10:34: the log row pushed to parts before parts existed)", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const loop = panel.slice(panel.indexOf("  for (const c of clips) {\n    if (cancelRequested)"), panel.indexOf("async function audioClipsIn"));
+  for (const name of ["parts", "needs", "logPart", "goals", "state"]) {
+    const decl = loop.search(new RegExp("\\b(?:const|let) " + name + "\\b"));
+    const use = loop.search(new RegExp("\\b" + name + "\\.(?:push|length)\\b|\\b" + name + " = "));
+    if (decl >= 0 && use >= 0) assert.ok(decl < use, name + " is used at " + use + " before its declaration at " + decl);
+  }
+});
