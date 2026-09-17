@@ -18,12 +18,26 @@ const path = require("node:path");
 const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
 const between = (from, to) => panel.slice(panel.indexOf(from), panel.indexOf(to));
 
-test("askChoice is the general control: any number of labels, resolves the one clicked", () => {
+test("askChoice is the general control: any number of answers, resolves the one clicked", () => {
   const fn = between("function askChoice(", "// ask_user: the model's own door");
-  assert.match(fn, /labels\.forEach\(\(label, i\) =>/, "the buttons come from the list, not from named yes/no arguments");
+  assert.match(fn, /for \(const a of answers\)/, "the buttons come from the list, not from named yes/no arguments");
+  assert.match(fn, /typeof a === "string" \? \{ label: a, hint: "" \} : a/, "an answer is a label, or a label and what it costs");
   assert.match(fn, /resolve\(label\)/, "it resolves the label itself, so callers read an answer and not a boolean");
   assert.match(fn, /addMessage\("assistant muted"/, "the question lands in the chat, not in a system dialog");
   assert.match(fn, /signal[\s\S]*?finish\(null, "Cancelled: the call was abandoned"\)/, "an abandoned call stops being clickable");
+});
+
+test("the answers are full-width stacked rows, label over consequence - not columns", () => {
+  // The panel is a side dock of any width. Three buttons abreast wrapped mid-phrase and gave each answer a
+  // different amount of room (the owner, 13:25); stacked rows do not depend on the panel's width at all.
+  const fn = between("function askChoice(", "// ask_user: the model's own door");
+  assert.match(fn, /list\.className = "choices"/);
+  assert.doesNotMatch(fn, /className = "row"/, "the question no longer uses the horizontal button row");
+  assert.match(fn, /createElement\("b"\)[\s\S]*?createElement\("small"\)/, "the label is the first line, its cost the second");
+  const css = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.match(css, /\.message \.choices \{[^}]*flex-direction: column/, "stacked");
+  assert.match(css, /\.message \.choices button \{[^}]*width: 100%/, "each answer takes the panel's width");
+  assert.match(css, /\.message \.choices button \{[^}]*white-space: normal/, "and wraps instead of being clipped in a narrow panel");
 });
 
 test("ask_user is registered as a tool, takes 2-4 options and returns the label chosen", () => {
@@ -34,6 +48,7 @@ test("ask_user is registered as a tool, takes 2-4 options and returns the label 
   assert.match(def, /One decision per call/, "one question at a time, so the answer is unambiguous");
   const fn = between("async function askUserTool(", "async function readProject(");
   assert.match(fn, /\.slice\(0, 4\)/, "four answers at most - past that a question is really two questions");
-  assert.match(fn, /labels\.length < 2/, "and at least two, or it is not a question");
+  assert.match(fn, /answers\.length < 2/, "and at least two, or it is not a question");
+  assert.match(fn, /hint: o\.description \|\| ""/, "a description becomes its answer's second line, not part of the question");
   assert.match(fn, /The user did not answer/, "an unanswered question is reported as unanswered, never guessed");
 });

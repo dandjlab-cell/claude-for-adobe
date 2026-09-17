@@ -132,6 +132,16 @@
     .tool pre.ok { color: var(--ink); }
     .tool pre.error { color: var(--error); }
     .message .row { margin-top: 8px; gap: 6px; display: flex; }
+    /* A question's answers: one full-width row each, never columns. The panel is a side dock and can be any
+       width; three buttons side by side wrapped mid-sentence and each answer got a different amount of room
+       (2026-09-17 13:25). Stacked, the answer reads first and its consequence sits under it in a quieter
+       line, and nothing depends on how wide the editor has dragged the panel. */
+    .message .choices { margin-top: 10px; display: flex; flex-direction: column; gap: 1px; }
+    .message .choices button { width: 100%; text-align: left; padding: 9px 11px; font-weight: 500; display: block; white-space: normal; }
+    .message .choices button:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-tint); }
+    .message .choices b { font-weight: 600; display: block; }
+    .message .choices small { display: block; margin-top: 3px; font-size: 11px; line-height: 1.45; color: var(--ink-60); font-weight: 400; }
+    .message .choices button:hover small { color: var(--ink); }
 
     .composer { border-top: 1px solid var(--line); padding: 10px 12px 8px; display: grid; gap: 8px; }
     textarea { width: 100%; min-height: 58px; max-height: 160px; resize: none; border: 1px solid var(--line); background: var(--sunken); padding: 8px 10px; }

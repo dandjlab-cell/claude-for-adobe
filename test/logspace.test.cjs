@@ -105,7 +105,9 @@ test("the grade never changes a source setting on its own: ONE question, with bu
   assert.match(ask, /const got = await lutForMaker\(hint\);/, "the file is fetched BEFORE the question: where to save it was never a question (13:40)");
   assert.match(ask, /"Downloaded " \+ got\.label \+ " from " \+ got\.from/, "and the question says what was downloaded and from where");
   assert.match(ask, /Where should it go\?/, "the only question is which slot it goes in");
-  assert.match(ask, /Lumetri's Input LUT on this clip[\s\S]*?comes off with the copy[\s\S]*?The file's source settings[\s\S]*?and it stays[\s\S]*?Leave it log/, "each answer carries its own cost");
+  assert.match(ask, /label: "On this clip", hint: "Lumetri's Input LUT\. Comes off with the copy\."/, "each answer is a short label with its cost on the line under it");
+  assert.match(ask, /label: "In the file's source settings", hint: "Every cut of the file gets it, and it stays\."/);
+  assert.match(ask, /label: "Leave it log"/);
   assert.doesNotMatch(ask, /Discard copy/, "the button says \"the copy\", not the name of a button elsewhere in the panel (13:40)");
   assert.match(ask, /if \(!where \|\| where === "Leave it log"\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining, or not answering, leaves the clip as shot");
   assert.match(ask, /logMode = \/source settings\/\.test\(where\) \? "lut-source" : "lut"/, "the answer sets the route for the rest of the run");

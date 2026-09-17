@@ -220,27 +220,39 @@ function askInline(text, yesLabel = "Yes", noLabel = "Cancel", allLabel = "", si
 // (the owner, 12:52: "similar to how that is available for the desktop Claude Code version ... don't
 // reinvent the wheel", and 12:58: "I want to avoid hard coding it to one specific ask"). Resolves the
 // chosen label, or null if the call was abandoned.
-function askChoice(text, labels, signal = null) {
+//
+// An answer is "Text" or { label, hint }: the label is what the editor is choosing, the hint is what it
+// costs. They are two lines of one full-width row, not one long sentence squeezed into a column - three
+// buttons abreast wrapped mid-phrase and gave each answer a different amount of room (the owner, 13:25:
+// "the panel questions need a better design ... can it take up more screen, also be panel aware?").
+function askChoice(text, answers, signal = null) {
   return new Promise((resolve) => {
     const q = quietCard; quietCard = null;
-    const el = addMessage("assistant muted", text + "\n");
+    const el = addMessage("assistant muted", text);
     quietCard = q;
-    const row = document.createElement("div"); row.className = "row";
+    const list = document.createElement("div"); list.className = "choices";
     let done = false;
-    const finish = (label, shown) => { if (done) return; done = true; row.remove(); el.textContent += (shown || label) + "."; resolve(label); };
-    labels.forEach((label, i) => { const b = document.createElement("button"); b.textContent = label; if (i) b.className = "utility"; b.onclick = () => finish(label); row.append(b); });
-    el.appendChild(row);
+    const finish = (label, shown) => { if (done) return; done = true; list.remove(); el.textContent += "\n" + (shown || label) + "."; resolve(label); };
+    for (const a of answers) {
+      const { label, hint } = typeof a === "string" ? { label: a, hint: "" } : a;
+      const b = document.createElement("button");
+      const strong = document.createElement("b"); strong.textContent = label; b.appendChild(strong);
+      if (hint) { const s = document.createElement("small"); s.textContent = hint; b.appendChild(s); }
+      b.onclick = () => finish(label);
+      list.append(b);
+    }
+    el.appendChild(list);
     if (signal) { if (signal.aborted) finish(null, "Cancelled: the call was abandoned"); else signal.addEventListener("abort", () => finish(null, "Cancelled: the call was abandoned"), { once: true }); }
     followBottom(ui.messages);
   });
 }
 
-// ask_user: the model's own door to that card.
+// ask_user: the model's own door to that card. Each option's description becomes its answer's second line,
+// so the question stays one sentence and the trade-offs sit where the editor is looking when they decide.
 async function askUserTool({ question, options = [] } = {}, { signal } = {}) {
-  const labels = options.map((o) => (typeof o === "string" ? o : o && o.label)).filter(Boolean).slice(0, 4);
-  if (!question || labels.length < 2) return { text: "CLAUDE_FOR_ADOBE_ERROR:ask_user needs a question and at least two options", isError: true };
-  const why = options.filter((o) => o && o.label && o.description).map((o) => o.label + " - " + o.description);
-  const picked = await askChoice(question + (why.length ? "\n" + why.join("\n") : ""), labels, signal);
+  const answers = options.map((o) => (typeof o === "string" ? { label: o, hint: "" } : o && o.label ? { label: o.label, hint: o.description || "" } : null)).filter(Boolean).slice(0, 4);
+  if (!question || answers.length < 2) return { text: "CLAUDE_FOR_ADOBE_ERROR:ask_user needs a question and at least two options", isError: true };
+  const picked = await askChoice(question, answers, signal);
   return { text: picked ? "The user chose: " + picked : "The user did not answer; the question is still open. Do not guess - ask again or stop here." };
 }
 
@@ -1382,7 +1394,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         const where = await askChoice(
           label + " is " + (maker ? maker + " log" : "log, and the file does not name the camera") + ". " +
             (got.cached ? "I have " + got.label + " here." : "Downloaded " + got.label + " from " + got.from + ".") + (got.terms && !got.cached ? " " + got.terms : "") + " Where should it go?",
-          ["Lumetri's Input LUT on this clip - comes off with the copy", "The file's source settings - every cut of the file, and it stays", "Leave it log"]);
+          [{ label: "On this clip", hint: "Lumetri's Input LUT. Comes off with the copy." },
+           { label: "In the file's source settings", hint: "Every cut of the file gets it, and it stays." },
+           { label: "Leave it log", hint: "No conversion; the clip is skipped." }]);
         if (!where || where === "Leave it log") { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
         logMode = /source settings/.test(where) ? "lut-source" : "lut"; // and the rest of the run follows it
       }
@@ -3575,7 +3589,7 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { texts: { type: "array", items: { type: "string" }, description: "all the words/labels to look for, in one pass" }, text: { type: "string", description: "a single word (or use texts)" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum; widened automatically beyond 30 frames" } } } },
   // caption_style (captionStyleTool) is built and tested but not registered: it reopens the project, which is
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
-  { name: "ask_user", description: "Ask the editor a question with clickable answers, in the chat. USE THIS INSTEAD OF WRITING OUT A LIST OF OPTIONS AND WAITING FOR THEM TO TYPE - any time the next step depends on a choice only they can make (which of two files, which take, whether a setting goes on the clip or on the source, what to do about something ambiguous), ask it here. Two to four options, each a short label they click; put the cost or consequence of each in its description, not in the question. Returns the label they chose, or that they did not answer. One decision per call: ask twice rather than cramming two questions into one. Do not use it to confirm something you were going to do anyway, and not for anything with an obvious default.", inputSchema: { type: "object", properties: { question: { type: "string", description: "The question, one line, in plain words. No preamble, and do not restate the options in it - the buttons are the options." }, options: { type: "array", description: "Two to four answers.", items: { type: "object", properties: { label: { type: "string", description: "What the button says: a few words, the answer itself." }, description: { type: "string", description: "Optional: what choosing it means or costs, one short line." } }, required: ["label"] } } }, required: ["question", "options"] } },
+  { name: "ask_user", description: "Ask the editor a question with clickable answers, in the chat. USE THIS INSTEAD OF WRITING OUT A LIST OF OPTIONS AND WAITING FOR THEM TO TYPE - any time the next step depends on a choice only they can make (which of two files, which take, whether a setting goes on the clip or on the source, what to do about something ambiguous), ask it here. Two to four options, each a short label they click, with the cost or consequence in its description - the description is shown as a second line under the label, so keep the label to a few words and never write the trade-off into the label or the question. Returns the label they chose, or that they did not answer. One decision per call: ask twice rather than cramming two questions into one. Do not use it to confirm something you were going to do anyway, and not for anything with an obvious default.", inputSchema: { type: "object", properties: { question: { type: "string", description: "The question, one line, in plain words. No preamble, and do not restate the options in it - the buttons are the options." }, options: { type: "array", description: "Two to four answers.", items: { type: "object", properties: { label: { type: "string", description: "What the button says: a few words, the answer itself, no consequence clause." }, description: { type: "string", description: "What choosing it means or costs: one short line, shown under the label. Give one wherever the answers differ in consequence." } }, required: ["label"] } } }, required: ["question", "options"] } },
   { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. use: the whole thing in one call for a log clip - works out the maker from the file, downloads the official conversion from the maker's own page if it is not on this machine, applies it to that clip and confirms from the render. Ask the editor once before the first download, saying what will be downloaded and from where; after that just use it. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own colour management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
     inputSchema: { type: "object", properties: { action: { type: "string", enum: ["use", "status", "fetch", "apply", "clear"] }, where: { type: "string", enum: ["clip", "source"], description: "Where the LUT goes: clip = Lumetri's Input LUT on that clip, removed by Discard copy (default); source = the file's Interpret Footage LUT, which stays and covers every cut." },  id: { type: "string", description: "A LUT id from status, for fetch and apply." }, file: { type: "string", description: "For apply: a specific LUT FILE the editor asked for by name or path - their own, a client's, or one of Premiere's bundled ones. Only when they ask for that file; the panel does not offer Premiere's own LUTs, which are looks rather than conversions." }, seconds: { type: "number", description: "Timeline position of the clip, for apply and clear." }, track: { type: "number", description: "1-based video track, default 1." } } } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
