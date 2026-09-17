@@ -245,6 +245,16 @@ function bottomsFor(m, current = null) {
 //
 // Interpolated from the swept rows, not fitted: six points, and the response tapers below 0.35. The
 // slider is an OFFSET, so what transfers to another frame is how much it SUBTRACTS, not where it lands.
+//
+// TRANSFER, measured once (shadowsWheelLumaC187): this table is keyed on C220's luma p1 and it
+// UNDER-states the offset on another picture - across 0.5 -> 0.25 luma p1 falls 6.6 on C220 and 9.4 on
+// C187. So asking for N points of black point tends to deliver a little MORE than N, about 10% at the
+// shallow end and up to 40% at the extreme. That direction is an overshoot, not a shortfall, which is why
+// the floor cap below is not the only protection: the confirm render reads the real black point and the
+// row's chain prints predicted against read, so an overshoot shows up as MODEL OFF BY rather than hiding.
+// The paired bottoms transfer far better than luma p1 does (-6..-10 on both frames), which says luma p1
+// is the wrong key and a paired-level key would be the better model. Not changed yet - one second frame
+// is an observation, not a fit.
 const WHEEL_LUMA_P1 = [[0.5, 8.2], [0.45, 6.3], [0.4, 4.7], [0.35, 3.1], [0.3, 2.4], [0.25, 1.6]];
 const WHEEL_LUMA_FLOOR = 0.3; // under this the sweep starts putting blue on the floor (0.15% at 0.3, 0.35% at 0.25)
 const wheelLumaP1 = (l) => {
