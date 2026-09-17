@@ -159,3 +159,45 @@ test("the sign-flipped cast on a destroyed frame is refused, not ranked best", (
   const lv = destroyed.bands.blacks.levels;
   assert.ok(lv.red > lv.blue, "levels still show red above blue where rb claims near-neutral");
 });
+
+// Which signal actually predicts a corrupt cast. Eight rows across three frames, reported cast against the
+// truth the paired LEVELS still carry. `readable` is a perfect classifier; the frame-wide damage share is
+// worse than useless - it rejects accurate readings and accepts corrupt ones. Flooring a channel only
+// corrupts the cast when it removes pixels from the BAND, which is what readable measures.
+test("readable classifies a corrupt cast; the damage share does not", () => {
+  const { castTrust, CAST_READABLE } = require("../src/grade_rules.cjs");
+  // [name, readable, frame damage %, reported cast, true cast from the levels]
+  const rows = [
+    ["C229 Master x=0.10", 22, 0.01, -12.2, -14.1],
+    ["C229 Master x=0.15", 7, 1.37, 4.3, -8.6],
+    ["C229 Master x=0.20", 4, 9.01, 0.4, -2.0],
+    ["C187 Master x=0.10", 86, 0, -33.7, -35.6],
+    ["C187 Master x=0.15", 31, 0, -32.2, -35.3],
+    ["C187 Master x=0.35", 10, 0.23, -6.7, -11.8],
+    ["C229 Red    x=0.15", 98, 1.44, 1.2, 0.7],
+    ["C229 Red    x=0.20", 84, 9.23, 5.9, 6.2],
+  ];
+  const frame = (readable, share, rb) => ({
+    luma: { min: 0, p1: 5, p50: 50, p99: 75, max: 88 }, red: { mean: 50, p1: 2, p99: 75 },
+    green: { mean: 48, p1: 5, p99: 75 }, blue: { mean: 44, p1: 2, p99: 75 }, saturation: { p50: 12 },
+    cast: { cb: 0, cr: 0 }, clipped: { red: 0, green: 0, blue: 0 }, floor: { red: share, green: 0, blue: 0 }, crushed: 0,
+    bands: { blacks: { share: 3, readable, rb, g: 0, levels: { red: 5, green: 5, blue: 5 } } },
+  });
+  // The asymmetry that matters: accepting a CORRUPT reading is the dangerous error - it is what let the
+  // most destroyed frame rank as best-balanced. Refusing a reading that happens to be fine is only
+  // caution. So the test is one-sided on readable, and two-sided on the share to show why it was dropped.
+  let sharePositives = 0, refusedButFine = 0;
+  for (const [name, readable, share, reported, truth] of rows) {
+    const err = Math.abs(reported - truth);
+    const trusted = castTrust(frame(readable, share, reported), "shadows").trusted;
+    if (trusted) assert.ok(err <= 2, name + ": trusted a reading off by " + err.toFixed(1) + " - readable " + readable + " let a corrupt cast through");
+    else if (err <= 2) refusedButFine++;
+    if (share <= 1 && err > 2) sharePositives++;
+  }
+  assert.equal(sharePositives, 2, "a damage-share test would have ACCEPTED two corrupt readings (C187 at 0.15 and 0.35, off by 3.1 and 5.1 with almost nothing floored)");
+  assert.equal(refusedButFine, 1, "readable refuses one reading that happened to be within 2 (C229 Master x=0.10) - conservative, and the safe direction");
+  // And the two rows the share test would have wrongly refused are the ones that prove flooring a channel
+  // does not by itself corrupt the cast: red 9.23% on the floor, reading within 0.3 of the truth.
+  assert.equal(castTrust(frame(84, 9.23, 5.9), "shadows").trusted, true, "9% floored but the band is intact");
+  assert.equal(CAST_READABLE, 80);
+});

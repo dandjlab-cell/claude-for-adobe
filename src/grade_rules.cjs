@@ -213,13 +213,19 @@ function bottomsFor(m, current = null) {
   if (!moved.length) return null;
   const held = moved.filter((ch) => moves[ch].toe > 0 && moves[ch].toe >= caps[ch] - 1e-9);
   const lean = lv.blue > lv.red ? "blue" : "warm";
+  // What the caps leave behind. MEASURED on C229 @9.57s (channelToeC229): paired R 21.2 against blue's
+  // 8.2 needs x = 13/91.8 = 0.142 to meet, and the cap allows 0.107 - so the move lands red at 11.8 and
+  // the frame stays 3.6 warm. The row said "red held at its own p1" but never said how much was left, and
+  // a residual nobody states is a residual nobody corrects.
+  const after = {}; for (const ch of ["red", "green", "blue"]) after[ch] = moves[ch].toe > 0 ? (lv[ch] - 100 * moves[ch].toe) / (1 - moves[ch].toe) : moves[ch].lift > 0 ? 100 * moves[ch].lift + lv[ch] * (1 - moves[ch].lift) : lv[ch];
+  const left = Math.round((Math.max(after.red, after.green, after.blue) - Math.min(after.red, after.green, after.blue)) * 10) / 10;
   const say = (ch) => ch + (moves[ch].toe > 0.002 ? " down " + moves[ch].toe.toFixed(3) : " up " + moves[ch].lift.toFixed(3));
   return {
     curves: neutralBottoms(current, lv, caps, want), toes: moves, meet: Math.round(meet * 10) / 10, predicted: predictBottoms(m, moves),
     needs: scene ? ["blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + ": at this size much of it is the scene's own color - half of it taken out, the rest is the objects"] : [],
     why: "blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + " (paired R " + round(lv.red) + " G " + round(lv.green) + " B " + round(lv.blue) + ")" +
       " → meet at " + round(meet) + ": " + moved.map(say).join(", ") + (scene ? "; half only, the rest is the scene's color" : "") +
-      (held.length ? "; " + held.join(" and ") + " held at its own p1" : ""),
+      (held.length ? "; " + held.join(" and ") + " held at its own p1" + (left > 0.2 ? ", leaving the bottoms " + left + " apart" : " (the lift closes the rest)") : ""),
   };
 }
 
@@ -453,8 +459,17 @@ function goalsFor(m, region = "frame") {
 // So the cast is trusted only while the end that produced it is intact: `readable` high AND that end's
 // own damage share small. The thresholds are read off the same sweep - at 0.43% floored readable was
 // still 86, at 3.02% it had fallen to 31.
+// `readable` is the whole test, and the damage share is NOT a useful second condition - it was one until
+// the C229 red-toe sweep separated them. Checked against eight rows across three frames, comparing the
+// reported cast with the truth the paired LEVELS still carry:
+//   readable >= 80 accepts exactly the accurate readings (error <= 1.9) and rejects every corrupt one.
+//   a damage-share test rejects two ACCURATE readings (C229 red toe at 1.44% and 9.23% floored, both
+//   within 0.5 of the truth) and accepts two CORRUPT ones (C187 Master at 0.15 and 0.35, off by 3.1 and
+//   5.1 with almost nothing floored).
+// The reason is that flooring a channel only corrupts the cast when it removes pixels from the BAND, and
+// `readable` measures precisely that, while a frame-wide floor share does not. Keep the share for the
+// message - it is informative - but never for the decision.
 const CAST_READABLE = 80;   // percent of the band that still had a readable cast
-const CAST_DAMAGE = 1;      // percent of the frame on the floor (blacks) or at 255 (whites); GUARD.crushed is 1.0
 function castTrust(f, wheel) {
   const b = f.bands && f.bands[wheel === "shadows" ? "blacks" : "whites"];
   // No bands block at all is a DIFFERENT case from a crushed one: castAt then falls back to the channel
@@ -465,7 +480,7 @@ function castTrust(f, wheel) {
   const d = wheel === "shadows" ? f.floor : f.clipped;
   const share = d ? Math.max(d.red, d.green, d.blue) : 0;
   const empty = b.rb === null || b.rb === undefined;
-  return { readable, share, empty, noBands: false, trusted: !empty && readable >= CAST_READABLE && share <= CAST_DAMAGE };
+  return { readable, share, empty, noBands: false, trusted: !empty && readable >= CAST_READABLE };
 }
 
 function verdict(after, region = "frame") {
@@ -481,7 +496,7 @@ function verdict(after, region = "frame") {
     const t = castTrust(f, wheel);
     if (!t.trusted) {
       notes.push(label + " cannot be read: " + (t.empty ? "no pixel at that end has all three channels off the rails"
-        : round(t.share) + "% of the frame is " + (wheel === "shadows" ? "on the floor" : "at 255") + " and only " + t.readable + "% of the band is readable")
+        : "only " + t.readable + "% of the band has a readable cast" + (t.share > 0.01 ? " (" + round(t.share) + "% of the frame is " + (wheel === "shadows" ? "on the floor" : "at 255") + ")" : ""))
         + " — the cast statistic is not trustworthy here, and it reads cleaner the more is destroyed");
       continue;
     }
@@ -601,4 +616,4 @@ function skinFor(m, from = { saturation: 100 }, attenuation = 1) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, castTrust, CAST_READABLE, CAST_DAMAGE, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
+module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, castTrust, CAST_READABLE, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
