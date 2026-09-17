@@ -131,11 +131,24 @@ the frames the work gets judged on. They were not timecoded in the message.
 > person's hand is in the middle of lifting the blue cloth cover out of the dishwasher rack". That is the
 > owner's description verbatim, arrived at by a different method than the frame render, so C231 is out.
 >
-> **What that qRAFT worktree does and does not contain**, since it will be asked again: the 51-file
-> `batch-output/qraft/` cache is **optical flow** (RAFT at 6 fps - `flow`, `moving`, `dir_x/y`,
-> `coherence`, `tx/ty`, `rot_deg`, `resid`) over the full ~142 s camera source files, for motion and cut
-> work. It carries no colour and no content description. The ONLY VLM description artifact is the C193
-> review above - no other clip has one, so it cannot help with frame 1.
+> **Frame 1 CONFIRMED visually too.** `batch-output/vlm-candidates/<clip>/frame_NNNN.jpg` holds **4212
+> extracted frames at 1 fps across all 51 source clips** - a directly readable picture of any clip, no
+> render and no Premiere needed. C187's frames show olive-toned spokes running diagonally across a
+> completely defocused warm interior, a metal collar on the middle spoke, a fingertip entering bottom
+> right. Unambiguous.
+>
+> **And the description is internally inconsistent, which settles the contradiction.** The owner wrote both
+> "the blacks still blue" *and* "the picture reads soft and yellow" about the same frame. The picture is
+> amber throughout - the yellow half is right, and it is what the numbers say (paired R 41.2 / B 11.8,
+> warm by 29.4). The blue half belongs to the graded shots where the pass was manufacturing blue blacks
+> out of warm ones. Treat frame 1 as **flat + warm**, and do not go looking for a blue cast in it.
+>
+> **What that qRAFT worktree does and does not contain**, since it will be asked again:
+> - `batch-output/vlm-candidates/` - **1 fps JPEG frames, 51 clips, 4212 images.** Readable directly.
+> - `coarse-attempts-description-review.json` - VLM frame captions, **C193 only**, 69 frames.
+> - `batch-output/qraft/` - **optical flow** (RAFT at 6 fps: `flow`, `moving`, `dir_x/y`, `coherence`,
+>   `tx/ty`, `rot_deg`, `resid`) over the full ~142 s sources, for motion and cut work. No colour, no
+>   content description.
 
 1. **Left uncorrected — flat, and the blacks still blue.** Green stems across a warm out-of-focus interior.
    The parade never reaches the bottom: all three channels stop well above 0 and blue's floor sits lifted
