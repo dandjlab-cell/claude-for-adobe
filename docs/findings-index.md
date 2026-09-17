@@ -62,6 +62,8 @@ One line per established fact: what is known, when, where the evidence lives, an
 | **A channel's independent p1 is not a cast.** Feeding them to `neutralBottoms` in 0.1.80 made the grade worse | `curves.cjs` note |
 | **`curves.format()` rounds writes to 2 dp** — a solved toe of 0.10632 is written 0.11, a 0.37 IRE error, larger than most accuracy claims here | `docs/reviews/codex_…` |
 | **C220 @0.5s is the outlier**, not the typical frame — and it is the frame nearly every model is fitted on | `blackEndC229._c220IsTheOutlier` |
+| **A uniform-sign residual is noise, not a model error.** A wrong exponent biases gains above and below 1 in opposite directions, so it would flip sign across zero. Whites' six residuals are all negative against gamma 2.4 — keep 2.4 | `whitesRule._doNotRefit24` |
+| **Do not take a gain from a statistic near the rails.** Whites' p99 reaches 99.6 on C220 and clips 13.4% of red at +100 on C202; take k from the median or p1 | `whitesRule._doNotRefit24` |
 | A sweep without its **own baseline row** is not a sweep; two Shadows-luma runs were wasted on a 0.5-neutral slider swept from 0 | `curve_sweep` guard |
 
 ---
