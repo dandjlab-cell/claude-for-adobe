@@ -1,6 +1,6 @@
 ---
 name: colour
-description: Use when the editor asks to grade, colour correct, color correct, fix the exposure, contrast or white balance, match shots, or make footage look better, cinematic or consistent - including "grade this video". The procedure, which tool at each step, what the numbers mean, and what correct is as a number.
+description: Use when the editor asks to grade, colour correct, color correct, fix the exposure, contrast or white balance, match shots, or make footage look better, cinematic or consistent. Covers the short forms an editor actually types - "grade this", "color this", "colour this", "cc this", "fix the colours", "balance this", "this is too blue / too dark / too warm", "make these match" - and "grade this video". The procedure, which tool at each step, what the numbers mean, and what correct is as a number.
 ---
 
 # Colour

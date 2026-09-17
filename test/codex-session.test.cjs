@@ -72,3 +72,17 @@ test("prepareWorkspace writes the shared rulebook as AGENTS.md and links the sam
   assert.equal(buildSystemPrompt("", "Claude").replace("You are Claude", "You are Codex"), buildSystemPrompt("", "Codex"));
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// Every skill the panel ships must be named in the prompt's skill list. colour was the only one missing,
+// and it showed: "grade this" worked by luck (grade_sequence's own description is explicit enough to find),
+// while "color this" at 2:59 loaded no skill at all - the model hand-rolled a grade out of single-knob
+// tools on one clip and set Contrast to 100, which the deterministic pass would never do.
+test("the prompt names every skill in .claude/skills, so none is findable only by luck", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const root = path.join(__dirname, "..");
+  const prompt = buildSystemPrompt("", "Claude");
+  const skills = fs.readdirSync(path.join(root, ".claude", "skills"), { withFileTypes: true })
+    .filter((d) => d.isDirectory()).map((d) => d.name);
+  const missing = skills.filter((s) => !prompt.includes(s + ":"));
+  assert.deepEqual(missing, [], "not named in the system prompt: " + missing.join(", "));
+});
