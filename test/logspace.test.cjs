@@ -97,7 +97,7 @@ test("the grade never changes a source setting on its own: ONE question, with bu
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
-  assert.match(panel, /budget_seconds = 150, log: logArg = "ask" \} = \{\}\)/, "ask is the default");
+  assert.match(panel, /budget_seconds = 150, log: logArg = "ask", seconds \} = \{\}\)/, "ask is the default");
   const ask = seqTool.slice(seqTool.indexOf("if (logMode === \"ask\") {"), seqTool.indexOf("if (/^lut(-source)?$/.test(logMode))"));
   assert.ok(ask, "the ask block is still there");
   assert.equal(ask.match(/await askChoice\(/g).length, 1, "one question, through the panel's one question card - the conversion is not a choice, only where it goes");
