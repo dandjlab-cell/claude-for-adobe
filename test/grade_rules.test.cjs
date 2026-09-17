@@ -124,8 +124,8 @@ test("a shadow cast is cancelled with the channel toes, never with temperature o
   assert.equal(padsFor(f).wheels.highlights, undefined, "the whites were neutral: the Highlights pad is left alone");
   const bot = bottomsFor(f);
   assert.ok(bot, "the toes take it");
-  assert.ok(bot.toes.blue > bot.toes.green && bot.toes.green > bot.toes.red, "blue is highest so it is pulled furthest DOWN, red is the floor and is not touched: " + JSON.stringify(bot.toes));
-  assert.equal(bot.toes.red, 0, "the lowest channel is never lifted - that would raise the black point the curve is about to set");
+  assert.ok(bot.toes.blue.toe > bot.toes.green.toe && bot.toes.green.toe > 0, "blue is highest so it is pulled furthest DOWN: " + JSON.stringify(bot.toes));
+  assert.equal(bot.toes.red.toe + bot.toes.red.lift, 0, "red is already the floor and every channel can reach it, so it is not moved at all");
   assert.deepEqual(bot.curves.Red, [[0, 0], [1, 1]]);
   assert.ok(bot.predicted.bands.blacks.levels.blue - bot.predicted.bands.blacks.levels.red < 0.2, "and the paired bottoms end level");
 });
@@ -229,7 +229,7 @@ test("a parade end more than 20 off neutral is a colored surface: no pad, no cur
   // 23:12: "left alone" read as an orange picture; half of an object's color still comes out - through the
   // channel toes now, not the Shadows pad.
   const bot = bottomsFor(withBlacks(f, 32, 12, 4));
-  assert.ok(bot && bot.toes.red > 0, "half a pull on an object's color: " + JSON.stringify(bot && bot.toes));
+  assert.ok(bot && bot.toes.red.toe > 0, "half a pull on an object's color: " + JSON.stringify(bot && bot.toes));
   // Half, said on the frame itself: red's paired bottom is 32 over a floor of 4, and it must land about
   // halfway (18), not on the floor. A full pull here would drain the object it belongs to.
   const landed = bot.predicted.bands.blacks.levels;
@@ -511,12 +511,36 @@ test("the proof frame's warm bottom is levelled by the toes, and the Shadows whe
   const bot = bottomsFor(m);
   assert.ok(bot, "the warm bottom is taken");
   assert.equal(bot.predicted.bands.blacks.rb, 0, "paired bottoms level: -13.0 in, 0 out (the shipped pass turned it into +5.1)");
-  assert.equal(bot.toes.blue, 0, "blue was already lowest and is never lifted");
-  assert.ok(bot.toes.red > bot.toes.green && bot.toes.green > 0, "red was 13 over the floor and moves furthest: " + JSON.stringify(bot.toes));
+  assert.ok(bot.toes.red.toe > bot.toes.green.toe && bot.toes.green.toe > 0, "red was 13 over the floor and comes DOWN furthest: " + JSON.stringify(bot.toes));
+  // Read from the timeline render, red's own p1 is 18.8 and it has the headroom to come all the way down,
+  // so they meet on the lowest channel and nothing is lifted. Down is the honest direction when it is free:
+  // red's excess IS the cast, and lifting blue would only fake what was never recorded.
+  assert.equal(bot.meet, 8.6, "every channel can reach the lowest, so that is where they meet");
+  assert.equal(bot.toes.blue.lift, 0);
   // Nothing is driven onto the floor: every channel's own p1 clears the measured margin.
   for (const ch of ["red", "green", "blue"]) assert.ok(bot.predicted[ch].p1 >= 2, ch + " stays off the floor at p1 " + bot.predicted[ch].p1);
   // And the black point still gets set afterwards, on a bottom that is already level.
   const lev = levelsFor(bot.predicted, bot.curves, m);
-  assert.ok(lev && lev.blackIn > 0.02 && lev.blackIn < 0.1, "a modest Master bottom point finishes the job: " + (lev && lev.blackIn));
+  assert.ok(lev && lev.blackIn >= 0.02, "and a Master bottom point is actually SET - down-only left floorCap at 0.005 and set none at all: " + (lev && lev.blackIn));
   assert.deepEqual(lev.curves.Red, bot.curves.Red, "and it composes onto the toes rather than replacing them");
+});
+
+// The same frame as the pass itself reads it - from the SOURCE file, by subject region - where red's own
+// p1 is 13.76 rather than 18.8. That is the run of 17:59: red's toe hit its cap, took red's own p1 to 2.0,
+// left floorCap at 0.005 against the 0.02 levelsFor needs, and NO black point was set - the row read
+// "black point 9.8 lifted". With the lift measured the meeting level rises instead and both numbers land.
+test("when a channel cannot come all the way down, the others come UP to meet it and the black point survives", () => {
+  const { levelsFor, FLOOR_MIN } = require("../src/grade_rules.cjs");
+  const m = { luma: { min: 11, p1: 14.1, p50: 52.9, p99: 74.9, max: 86 },
+    red: { mean: 52, p1: 0.120 * 98 + 2, p99: 74.9 }, green: { mean: 50, p1: 12.9, p99: 76.5 }, blue: { mean: 45, p1: 8.2, p99: 78.4 },
+    saturation: { p50: 9, p99: 24 }, cast: { cb: -2.6, cr: 1.5 }, clipped: { red: 0, green: 0, blue: 0 }, floor: { red: 0, green: 0, blue: 0 }, crushed: 0,
+    bands: { blacks: { share: 3, readable: 100, rb: -12.6, g: -1.6, levels: { red: 20.8, green: 12.9, blue: 8.2 } },
+             whites: { share: 3, readable: 100, rb: 7.5, g: 1.6, levels: { red: 71, green: 74, blue: 78 } } } };
+  const bot = bottomsFor(m);
+  assert.ok(bot.meet > 8.2, "the meeting level rises off the lowest channel because red cannot reach it: " + bot.meet);
+  assert.ok(bot.toes.blue.lift > 0, "so blue comes UP - the move the sweep shows costs no floor at all");
+  assert.equal(bot.predicted.bands.blacks.rb, 0, "and the bottoms still end level");
+  const floorCap = (Math.min(bot.predicted.red.p1, bot.predicted.green.p1, bot.predicted.blue.p1) - FLOOR_MIN) / 100;
+  assert.ok(floorCap >= 0.02, "with the Master curve's room preserved: floorCap " + floorCap.toFixed(4) + " (down-only left 0.005)");
+  assert.ok(levelsFor(bot.predicted, bot.curves, m), "so a black point is set at all, which is what the 17:59 run lost");
 });

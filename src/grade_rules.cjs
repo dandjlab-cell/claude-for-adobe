@@ -17,7 +17,7 @@
 const { STATISTICS } = require("./grade.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
 const { castAt, solveCast, predictPads, MAX_SAT } = require("./wheels.cjs");
-const { levels, blackInFor, predictLevels, toesFor, neutralBottoms, predictBottoms, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
+const { levels, blackInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -191,24 +191,35 @@ function bottomsFor(m, current = null) {
   // same answer: half of it comes out, the rest is the object's and is reported. Pulling a channel all the
   // way down on a saturated dark surface drains it (C228's blue cloth, 01:00).
   const scene = spread > COLORED;
+  // The cap on a TOE is the channel's own p1: at x = 0.05 blue's paired bottom was a healthy 3.1 while its
+  // own p1 was 0.4 and 0.91% of the frame had gone to the floor. The margin is not just the crush margin -
+  // the Master curve has to set the black point AFTER this, and levelsFor needs floorCap >= 0.02, i.e. a
+  // channel floor of at least FLOOR_MIN + 2. The 17:59 run is what taught this: red toed to its crush cap,
+  // its own p1 landed on 2.0, floorCap came out 0.005 and NO black point was set at all.
+  const MARGIN = Math.max(TOE_MARGIN, FLOOR_MIN + 2);
+  const caps = {}; for (const ch of ["red", "green", "blue"]) caps[ch] = Math.max(0, (f[ch].p1 - MARGIN) / (100 - MARGIN));
+  // WHERE the three should meet is solved, not assumed. Down-only forced it onto the lowest channel, which
+  // is the most expensive choice for the highest one. A channel can only come down as far as its own cap
+  // allows, so the meeting level is the lowest one EVERY channel can reach; anything sitting below it is
+  // lifted up instead, which the sweep shows costs no floor at all (`channelLift._freeHeadroom`).
+  const lowest = {}; for (const ch of ["red", "green", "blue"]) lowest[ch] = (lv[ch] - 100 * caps[ch]) / (1 - caps[ch]);
+  const meet = Math.max(floor, lowest.red, lowest.green, lowest.blue);
+  // An object's own color, not the light: only half of it comes out, so each channel goes half way to the
+  // meeting level instead of all the way. Same call padsFor makes, same reason (C228's blue cloth, 01:00).
   const share = scene ? SCENE_SHARE : 1;
-  // Where each channel should land: on the lowest of the three for a light cast, only `share` of the way
-  // there when the bottom is an object's own color.
-  const want = {}; for (const ch of ["red", "green", "blue"]) want[ch] = lv[ch] - (lv[ch] - floor) * share;
-  // The cap is the channel's OWN p1, not its paired level: at x = 0.05 blue's paired bottom was a healthy
-  // 3.1 while its own p1 was 0.4 and 0.91% of the frame had already gone to the floor.
-  const caps = {}; for (const ch of ["red", "green", "blue"]) caps[ch] = Math.max(0, (f[ch].p1 - TOE_MARGIN) / (100 - TOE_MARGIN));
-  const toes = toesFor(lv, caps, want);
-  const moved = ["red", "green", "blue"].filter((ch) => toes[ch] > 0.002);
+  const want = {}; for (const ch of ["red", "green", "blue"]) want[ch] = lv[ch] + (meet - lv[ch]) * share;
+  const moves = movesFor(lv, caps, want);
+  const moved = ["red", "green", "blue"].filter((ch) => moves[ch].toe > 0.002 || moves[ch].lift > 0.002);
   if (!moved.length) return null;
-  const held = moved.filter((ch) => toes[ch] >= caps[ch] - 1e-9);
+  const held = moved.filter((ch) => moves[ch].toe > 0 && moves[ch].toe >= caps[ch] - 1e-9);
   const lean = lv.blue > lv.red ? "blue" : "warm";
+  const say = (ch) => ch + (moves[ch].toe > 0.002 ? " down " + moves[ch].toe.toFixed(3) : " up " + moves[ch].lift.toFixed(3));
   return {
-    curves: neutralBottoms(current, lv, caps, want), toes, predicted: predictBottoms(m, toes),
+    curves: neutralBottoms(current, lv, caps, want), toes: moves, meet: Math.round(meet * 10) / 10, predicted: predictBottoms(m, moves),
     needs: scene ? ["blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + ": at this size much of it is the scene's own color - half of it taken out, the rest is the objects"] : [],
     why: "blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + " (paired R " + round(lv.red) + " G " + round(lv.green) + " B " + round(lv.blue) + ")" +
-      " → channel toes " + moved.map((ch) => ch + " " + toes[ch].toFixed(3)).join(", ") + (scene ? "; half only, the rest is the scene's color" : "") +
-      (held.length ? "; " + held.join(" and ") + " held at its own p1 (further would put it on the floor)" : ""),
+      " → meet at " + round(meet) + ": " + moved.map(say).join(", ") + (scene ? "; half only, the rest is the scene's color" : "") +
+      (held.length ? "; " + held.join(" and ") + " held at its own p1" : ""),
   };
 }
 

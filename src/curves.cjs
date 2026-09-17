@@ -199,21 +199,40 @@ const LUMA_W = { red: 0.2126, green: 0.7152, blue: 0.0722 }; // Rec.709, the sum
 // which is the lowest of the three (a full pull, the parade's bottoms made level). A caller that wants
 // only part of the cast out - an object's own color rather than the light - passes its own targets.
 function toesFor(bottoms, caps = 0.12, targets = null) {
+  const moves = movesFor(bottoms, caps, targets);
+  const toes = {}; for (const ch of CHANNELS) toes[ch] = moves[ch].toe;
+  return toes;
+}
+
+// The bottom point has TWO directions and they are different moves with different costs:
+//   toe  [[x, 0]]  out = (v - 100x) / (1 - x)   pulls the channel DOWN, clips everything below x
+//   lift [[0, y]]  out = 100y + v (1 - y)       raises the channel's FLOOR, clips nothing at all
+// Both measured live 2026-09-17 on C220 @0.5s to within 0.15 and 0.3 IRE (`channelToe`, `channelLift`).
+// The asymmetry is the whole reason both exist: a toe spends floor headroom the Master curve needs
+// afterwards (the 17:59 run left `black point 9.8 lifted` because red's toe had eaten all of it), a lift
+// spends none - zero floor at every swept setting. So a channel above its target is toed down, a channel
+// below it is lifted up, and the caller chooses the target rather than being stuck with the lowest channel.
+function movesFor(bottoms, caps = 0.12, targets = null) {
   const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
   const capOf = (ch) => (typeof caps === "number" ? caps : (isFinite(caps[ch]) ? caps[ch] : 0.12));
   const targetOf = (ch) => (targets === null ? floor : (typeof targets === "number" ? targets : targets[ch]));
-  const toes = {};
-  for (const ch of CHANNELS) toes[ch] = Math.max(0, Math.min(capOf(ch), blackInFor(bottoms[ch], targetOf(ch))));
-  return toes;
+  const moves = {};
+  for (const ch of CHANNELS) {
+    const v = bottoms[ch], t = targetOf(ch);
+    moves[ch] = v > t ? { toe: Math.max(0, Math.min(capOf(ch), blackInFor(v, t))), lift: 0 }
+      : { toe: 0, lift: v < t && v < 100 ? Math.max(0, Math.min(0.5, (t - v) / (100 - v))) : 0 };
+  }
+  return moves;
 }
 
 function neutralBottoms(current, bottoms, caps = 0.12, targets = null) {
   const out = Object.assign({}, current || {});
-  const toes = toesFor(bottoms, caps, targets);
+  const moves = movesFor(bottoms, caps, targets);
   for (const ch of ["Red", "Green", "Blue"]) {
-    const x = toes[ch.toLowerCase()];
-    const rest = (out[ch] || IDENTITY[ch]).filter(([px]) => px > x + 0.02 && px > 0);
-    out[ch] = x > 0.002 ? [[x, 0], ...(rest.length ? rest : [[1, 1]])] : [[0, 0], [1, 1]];
+    const { toe, lift } = moves[ch.toLowerCase()];
+    const rest = (out[ch] || IDENTITY[ch]).filter(([px]) => px > toe + 0.02 && px > 0);
+    out[ch] = toe > 0.002 ? [[toe, 0], ...(rest.length ? rest : [[1, 1]])]
+      : lift > 0.002 ? [[0, lift], [1, 1]] : [[0, 0], [1, 1]];
   }
   return out;
 }
@@ -224,7 +243,7 @@ function neutralBottoms(current, bottoms, caps = 0.12, targets = null) {
 // levels: the 0.1.80 version took levels and claimed every channel p1 landed on the shared floor, which is
 // only true of the paired statistic and was never true of the independent percentiles it was given.
 // The confirm render reads the truth regardless; this only has to be good enough to solve the next knob on.
-function predictBottoms(m, toes) {
+function predictBottoms(m, moves) {
   const out = JSON.parse(JSON.stringify(m));
   const f = out.frame || out;
   const r1 = (v) => Math.round(v * 10) / 10;
@@ -232,13 +251,14 @@ function predictBottoms(m, toes) {
   const lv = f.bands && f.bands.blacks && f.bands.blacks.levels;
   let dropped = 0;
   for (const ch of CHANNELS) {
-    const x = toes[ch] || 0;
-    if (f[ch]) f[ch].p1 = r1(map(f[ch].p1, x));
-    if (lv && isFinite(lv[ch])) { const was = lv[ch]; lv[ch] = r1(map(was, x)); dropped += LUMA_W[ch] * (was - lv[ch]); }
+    const mv = moves[ch] || 0;
+    const move = (v) => (typeof mv === "number" ? map(v, mv) : mv.toe > 0 ? map(v, mv.toe) : mv.lift > 0 ? 100 * mv.lift + v * (1 - mv.lift) : v);
+    if (f[ch]) f[ch].p1 = r1(move(f[ch].p1));
+    if (lv && isFinite(lv[ch])) { const was = lv[ch]; lv[ch] = r1(move(was)); dropped += LUMA_W[ch] * (was - lv[ch]); }
   }
   if (lv) f.bands.blacks.rb = r1(lv.blue - lv.red);
   if (f.luma) f.luma.p1 = Math.max(0, r1(f.luma.p1 - dropped));
   return out;
 }
 
-module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, toesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
+module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };

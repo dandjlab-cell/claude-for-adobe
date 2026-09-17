@@ -2632,5 +2632,110 @@
     "floorBlue": 29.02
    }
   ]
+ },
+ "channelLift": {
+  "_source": "Live curve_sweep 2026-09-17 18:06, C220 @0.5s on the [AI] copy - the same frame as curveToe, channelToe and wheelBands. The BLUE curve's bottom point swept UP: its OUTPUT ([[0,y]]), which raises the channel's floor, rather than its input ([[x,0]]), which pulls the channel down. The direction the grade never had.",
+  "_model": "CONFIRMED: out = 100y + v(1 - y), the mirror of the toe's (v - 100x) / (1 - x). Paired blue 7.8 -> 9.8 / 12.5 / 17.3 / 21.6 / 26.3 against 9.64 / 12.41 / 17.02 / 21.63 / 26.24 predicted - within 0.3 IRE on every row, and blue's own p1 tracks the same line (4.7 -> 6.7 / 9.4 / 14.5 / 19.2 / 23.9).",
+  "_freeHeadroom": "THE POINT: a lift costs NO floor. floorRed/Green/Blue is 0/0/0 at every setting including y=0.2, and `readable` stays 100% throughout - a lift moves pixels OFF the floor, so the cast statistic gets more trustworthy as it rises, the exact opposite of the toe sweep (100 -> 80 -> 35 -> 5 -> 0). A toe spends the floor headroom the Master curve needs afterwards; a lift spends none of it.",
+  "_isolated": "Isolated like the toe: pairedRed 10.2 and pairedGreen 8.6 identical on all six rows while blue goes 7.8 -> 26.3. About 0.93 points of B-R cast per 0.01 of lift on this frame.",
+  "_whyItMatters": "Measured after the first live run of the black balance (C229 @9.42s, 17:59) fixed the blue blacks but left `black point 9.8 lifted`: red's toe hit its cap at 0.120, took red's own p1 to 2.0, and left floorCap 0.005 against the 0.02 levelsFor needs - so no black point was set at all. With both directions measured the level the three channels meet at is a free variable, solved jointly with the Master toe instead of assumed to be the lowest channel.",
+  "rows": [
+   {
+    "x": 0,
+    "lumaP1": 8.2,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 4.7,
+    "blacksRB": -1.6,
+    "blacksG": -0.8,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 7.8,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.01
+   },
+   {
+    "x": 0.02,
+    "lumaP1": 8.6,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 6.7,
+    "blacksRB": 0.4,
+    "blacksG": -2,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 9.8,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   },
+   {
+    "x": 0.05,
+    "lumaP1": 8.6,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 9.4,
+    "blacksRB": 3.1,
+    "blacksG": -3.1,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 12.5,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   },
+   {
+    "x": 0.1,
+    "lumaP1": 9,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 14.5,
+    "blacksRB": 7.8,
+    "blacksG": -5.5,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 17.3,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   },
+   {
+    "x": 0.15,
+    "lumaP1": 9.4,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 19.2,
+    "blacksRB": 12.5,
+    "blacksG": -7.8,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 21.6,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   },
+   {
+    "x": 0.2,
+    "lumaP1": 9.8,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 23.9,
+    "blacksRB": 16.9,
+    "blacksG": -10.2,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 26.3,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0
+   }
+  ]
  }
 }
