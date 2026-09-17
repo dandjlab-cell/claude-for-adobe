@@ -362,7 +362,8 @@ test("a colour read costs ONE bin/ocr launch, and the mode does no work it does 
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const region = panel.slice(panel.indexOf("function measureRegion("), panel.indexOf("function visionForGrade("));
   assert.equal((region.match(/execFileSync\(OCR_BIN/g) || []).length, 0, "measureRegion itself launches nothing");
-  assert.match(region, /const vision = region === "frame" \? null : visionForGrade\(src\);/);
+  assert.match(region, /const vision = region === "frame" \? null : \(seen !== undefined \? seen : visionForGrade\(src\)\);/,
+    "one launch when it has to look itself, none when a batched read already looked");
   assert.match(region, /const found = vision && vision\.subjectMask;/, "the mask comes from that one call, not a second segmentation");
   assert.doesNotMatch(panel, /subjectMask\(src\)|= visionAll\(/, "the two-launch path is gone, not left beside the new one");
   const swift = fs.readFileSync(path.join(__dirname, "..", "src", "ocr.swift"), "utf8");
@@ -374,4 +375,22 @@ test("a colour read costs ONE bin/ocr launch, and the mode does no work it does 
     const out = require("node:child_process").spawnSync(ocr, ["--grade", "/nonexistent.png"], { encoding: "utf8" });
     assert.match(out.stdout || "", /"error":"unreadable"/, "bin/ocr is stale: rebuild it (swiftc -O -o bin/ocr src/ocr.swift -framework Vision -framework AppKit; codesign -s - bin/ocr)");
   }
+});
+
+// "Couldn't it export the pngs it needs in one go?" (the owner, 13:42). For the FIRST read of every clip,
+// yes: those frames are already files on disk, and Vision's launch is most of its cost - 18 frames in one
+// bin/ocr call take 1.28s where one at a time take 7.0s. For the confirms, no: each one has to wait for
+// the knobs written after the one before it. So the source reads batch and the renders stay sequential.
+test("every clip's first read is one batched pass, bounded in memory", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const fn = panel.slice(panel.indexOf("const PREREAD_BATCH"), panel.indexOf("const round2 ="));
+  assert.match(fn, /visionForGradeMany\(pngs\)/, "one Vision launch for the batch, not one per clip");
+  assert.match(fn, /const PREREAD_BATCH = 24;/);
+  assert.match(fn, /for \(let from = 0; from < list\.length; from \+= PREREAD_BATCH\)/, "a long sequence is read in bounded batches");
+  assert.match(fn, /got\.f = null;/, "decoded pixels are released once the PNG is written");
+  assert.match(fn, /fs\.rmSync\(s\.png/, "and the PNGs are cleaned up per batch");
+  const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(seq, /const preread = read === "premiere" \? \{\} : await prereadSources\(timelineOrder,/, "every clip, not just the multi-cut ones");
+  assert.doesNotMatch(seq, /preread\[keyOf\(c\)\] = \{ m: await measureSourceAt/, "the per-clip preread loop is gone");
 });

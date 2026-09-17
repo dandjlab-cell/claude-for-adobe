@@ -707,7 +707,7 @@ async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPla
 // without hair and clothes - the right thing for skin tone); "subject" is Vision's foreground mask, whatever
 // the subject is - a face, hands, a product - which is the general answer to "the subject, not the room".
 // Returns the measurement plus what was actually measured, since a region can fall back to the frame.
-function measureRegion(src, region, reuse = null) {
+function measureRegion(src, region, reuse = null, seen = undefined) {
   const frame = measureScopes(decodeRgb(src));
   frame.src = src; // the exported PNG: the skin step decodes it again for Vision's boxes
   // A region fixed by an earlier read (its box, as frame fractions): the same pixels, whatever Vision
@@ -719,7 +719,7 @@ function measureRegion(src, region, reuse = null) {
   // text recognition and person segmentation in it are never read here, and its subject pass segments the
   // frame and throws the mask away - so this then called --subject and segmented AGAIN. --grade returns the
   // three answers a colour read uses, mask included, in 354ms (measured 2026-09-17 13:36, same numbers out).
-  const vision = region === "frame" ? null : visionForGrade(src);
+  const vision = region === "frame" ? null : (seen !== undefined ? seen : visionForGrade(src));
   // "keyed": the frame is Lumetri's HSL Secondary mask view (Show Mask on) - the selected pixels alone.
   if (region === "keyed") {
     const k = keyedPixels(decodeRgb(src));
@@ -752,20 +752,29 @@ function measureRegion(src, region, reuse = null) {
 // What a colour read asks Vision for, in one bin/ocr launch: the faces and hands a row names and the skin
 // step keys inside, and the subject's mask the grade measures through. Same shape as visionAll for faces
 // and hands, plus `subjectMask` ({ mask, coverage, box }) when Vision found a subject.
-function visionForGrade(file) {
-  if (!fs.existsSync(OCR_BIN)) return null;
-  let v = null;
+function visionForGrade(file) { return visionForGradeMany([file])[0] || null; }
+
+// The same, for frames that exist at the same time - all of a run's source reads. bin/ocr prints one line
+// per file, and the launch is most of the cost: 18 frames read together take 1.28s where one at a time
+// take 7.0s (measured 2026-09-17 13:41). Same order out as in, null where Vision could not read one.
+function visionForGradeMany(files) {
+  if (!files.length || !fs.existsSync(OCR_BIN)) return files.map(() => null);
+  let lines = [];
   try {
-    const out = require("node:child_process").execFileSync(OCR_BIN, ["--grade", file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    v = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
-  } catch (_) { return null; }
-  if (!v || v.error) return null;
-  const s = v.subject;
-  if (s && s.mask && s.coverage > 0) {
-    const b = s.box || [0, 0, 1, 1];
-    v.subjectMask = { mask: s.mask, coverage: s.coverage, box: { x0: b[0], y0: b[1], x1: b[2], y1: b[3] } };
-  }
-  return v;
+    const out = require("node:child_process").execFileSync(OCR_BIN, ["--grade", ...files], { encoding: "utf8", maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "ignore"] });
+    lines = out.split("\n").filter(Boolean);
+  } catch (_) { return files.map(() => null); }
+  return files.map((_, i) => {
+    let v = null;
+    try { v = JSON.parse(lines[i] || "null"); } catch (_) { return null; }
+    if (!v || v.error) return null;
+    const s = v.subject;
+    if (s && s.mask && s.coverage > 0) {
+      const b = s.box || [0, 0, 1, 1];
+      v.subjectMask = { mask: s.mask, coverage: s.coverage, box: { x0: b[0], y0: b[1], x1: b[2], y1: b[3] } };
+    }
+    return v;
+  });
 }
 
 // The skin key learned from the hand and face boxes on one exported frame (src/skin.cjs): each box is
@@ -1042,9 +1051,10 @@ function sourcePngAt(seconds, track, snapshot, visible = null) {
   return w.status === 0 ? png : null;
 }
 
-async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = null, visible = null) {
-  const snap = snapshot || await readSnapshot(); // a sequence run passes its one snapshot: no re-read per clip
-  if (snap.error) throw new Error(snap.error);
+// The decode half of a source read: the clip's own frame, its whole-frame numbers, and - when a region
+// will be measured - that frame written out for Vision. Split from the measuring half so a run can do all
+// its decodes first and then hand every frame to ONE bin/ocr launch (see prereadSources).
+function sourceFrameAt(seconds, track, snap, visible) {
   const c = snap.clips.find((k) => k.track === "V" + track && seconds >= k.start && seconds < k.end && k.mediaPath);
   if (!c) throw new Error("no footage with a source file at " + seconds + "s on V" + track);
   const at = toSourceSeconds(seconds, c.start, c.inPoint, c.speed);
@@ -1054,13 +1064,60 @@ async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = 
   const f = Object.assign(cropRgb(raw.rgb, raw.width, raw.height, visible), { frame: raw.frame });
   const whole = measureScopes(f.rgb);
   Object.assign(whole, { region: "frame", source: true, clip: c.name, sourceSeconds: at, cropped: !!visible, decoded: raw.width + "x" + raw.height + (visible ? " → visible " + f.width + "x" + f.height : "") + (raw.frame !== undefined ? " frame " + raw.frame : "") });
+  return { c, at, f, whole };
+}
+function writeFramePng(f) {
+  const png = path.join(os.tmpdir(), "claude-for-adobe-source-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7) + ".png");
+  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
+  return w.status === 0 ? png : null;
+}
+
+async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = null, visible = null) {
+  const snap = snapshot || await readSnapshot(); // a sequence run passes its one snapshot: no re-read per clip
+  if (snap.error) throw new Error(snap.error);
+  const { c, at, f, whole } = sourceFrameAt(seconds, track, snap, visible);
   if (region === "frame") return whole;
   // Regions need Vision, which wants an image file: write the decoded frame out once.
-  const png = path.join(os.tmpdir(), "claude-for-adobe-source-" + Date.now().toString(36) + ".png");
-  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
-  if (w.status !== 0) return Object.assign(whole, { fellBack: "could not write the decoded frame for Vision" });
+  const png = writeFramePng(f);
+  if (!png) return Object.assign(whole, { fellBack: "could not write the decoded frame for Vision" });
   try { const m = measureRegion(png, region); return Object.assign(m, { source: true, clip: c.name, sourceSeconds: at, decoded: whole.decoded }); }
   finally { try { fs.rmSync(png, { force: true }); } catch (_) {} }
+}
+
+// Every clip's source frame, read in one pass. The decodes (26ms) and PNG writes (160ms) are per clip, but
+// the expensive part - Vision - goes in ONE bin/ocr launch for the lot: a launch costs ~330ms and a frame
+// only ~55ms of it, so 18 frames cost 1.28s together against 7.0s one at a time (measured 13:41). Returns
+// key -> { m, ms }, the same shape the clip loop already reads.
+const PREREAD_BATCH = 24; // a 4K frame is 4 MB decoded and its PNG ~1.6 MB: a 200-clip sequence must not hold all of them
+async function prereadSources(list, track, region, snap, visibleFor, keyOf, midOf) {
+  const out = {};
+  for (let from = 0; from < list.length; from += PREREAD_BATCH) {
+    const staged = [];
+    for (const c of list.slice(from, from + PREREAD_BATCH)) {
+      const t0 = Date.now();
+      try {
+        const got = sourceFrameAt(midOf(c), track, snap, visibleFor(c));
+        const png = region === "frame" ? null : writeFramePng(got.f);
+        got.f = null; // the pixels are in the PNG now, or already measured: do not carry a batch of them
+        staged.push({ c, got, png, ms: Date.now() - t0 });
+      } catch (_) { /* a clip whose file cannot be decoded falls back to a Premiere read in the loop */ }
+    }
+    const pngs = staged.filter((s) => s.png).map((s) => s.png);
+    const t1 = Date.now();
+    const seen = pngs.length ? visionForGradeMany(pngs) : [];
+    const share = pngs.length ? Math.round((Date.now() - t1) / pngs.length) : 0;
+    let i = 0;
+    for (const s of staged) {
+      try {
+        if (!s.png) { out[keyOf(s.c)] = { m: s.got.whole, ms: s.ms }; continue; }
+        const vision = seen[i++] || null;
+        const m = measureRegion(s.png, region, null, vision);
+        out[keyOf(s.c)] = { m: Object.assign(m, { source: true, clip: s.got.c.name, sourceSeconds: s.got.at, decoded: s.got.whole.decoded }), ms: s.ms + share };
+      } catch (_) { /* this clip reads from Premiere in the loop instead */ }
+      finally { if (s.png) { try { fs.rmSync(s.png, { force: true }); } catch (_) {} } }
+    }
+  }
+  return out;
 }
 
 const round2 = (n) => (isFinite(n) ? Math.round(Number(n) * 100) / 100 : n);
@@ -1292,11 +1349,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     return cropOff ? null : visibleBy[k];
   };
   let cropOff = null; // set by the parity guard when the Motion crop turns out not to match Premiere
-  const preread = {}, clips = [], bySource = {};
+  // Every clip's first read happens here, together, before Premiere is touched: the frames all exist
+  // already (they are files on disk), and reading them in one pass lets the Vision work - by far the most
+  // expensive part - go in a single bin/ocr launch instead of one per clip (the owner, 13:42: "couldn't it
+  // export the png it needs in one go? why does it have to do it one at a time?"). The confirms later
+  // cannot be batched this way: each one has to wait for the knobs written after the one before it.
+  const preread = read === "premiere" ? {} : await prereadSources(timelineOrder, track, region, snap, visibleFor, keyOf, midOf);
+  const clips = [], bySource = {};
   for (const c of timelineOrder) (bySource[c.name] = bySource[c.name] || []).push(c);
   for (const group of Object.values(bySource)) {
     if (group.length > 1 && read !== "premiere") {
-      for (const c of group) { const s0 = Date.now(); try { preread[keyOf(c)] = { m: await measureSourceAt(midOf(c), track, region, snap, visibleFor(c)), ms: Date.now() - s0 }; } catch (_) {} }
       const readable = group.filter((c) => preread[keyOf(c)]).sort((a, b) => GRADE_STATS.whitesRB(preread[keyOf(a)].m) - GRADE_STATS.whitesRB(preread[keyOf(b)].m));
       if (readable.length) { const r = readable[Math.floor((readable.length - 1) / 2)]; clips.push(r, ...group.filter((c) => c !== r)); continue; }
     }
