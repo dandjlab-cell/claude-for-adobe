@@ -35,19 +35,26 @@ function measure(rgb) {
   // onto the floor they are not - the 2026-09-15 runs read a warm bottom getting warmer after a correct
   // pad. Pixels with any channel at 0 or 255 are left out: a clamped channel has no cast to read.
   const cBR = new Uint32Array(256 * 511), cGM = new Uint32Array(256 * 511), cN = new Uint32Array(256); // per luma code
+  // And the same band's channel LEVELS, over EVERY pixel in it - no exclusion. This is the other half of
+  // the paired statistic: `rb`/`g` are differences from a sample that empties as a channel crushes, while a
+  // level is always readable (a channel on the floor reads 0, which is the truth about it). neutralBottoms
+  // needs levels on a common set of pixels, and this is where they come from.
+  const cR = new Uint32Array(256 * 256), cG = new Uint32Array(256 * 256), cB = new Uint32Array(256 * 256);
   let sr = 0, sg = 0, sb = 0, scb = 0, scr = 0, clipR = 0, clipG = 0, clipB = 0, zero = 0, floorR = 0, floorG = 0, floorB = 0;
   for (let i = 0; i < n * 3; i += 3) {
     const r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
     const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const cb = (b - y) / 1.8556, cr = (r - y) / 1.5748; // Rec.709, -127.5..127.5
-    hy[Math.min(255, Math.round(y))]++; hr[r]++; hg[g]++; hb[b]++;
+    const yc = Math.min(255, Math.round(y));
+    hy[yc]++; hr[r]++; hg[g]++; hb[b]++;
+    cR[yc * 256 + r]++; cG[yc * 256 + g]++; cB[yc * 256 + b]++;
     // A pixel with a channel at 0 or 255 carries no readable difference, so it is left out of the cast
     // histograms. MEASURED CONSEQUENCE (curve_sweep, C220 @0.5s, 2026-09-17 - `_bandBlind` in
     // src/lumetri_sweeps.json): as a black point crushes blue out of the frame the darkest-3% sample
     // shrinks to the pixels blue survived in, and bands.blacks drifts -1.6 -> 0 -> +2 -> null without any
-    // cast having changed. Read bands.blacks only while `floor` is ~0; after a deep black point it is a
-    // biased subset, not a cast. Do not "correct" that drift.
-    if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) { const yc = Math.min(255, Math.round(y)); cBR[yc * 511 + b - r + 255]++; cGM[yc * 511 + Math.round(g - (r + b) / 2) + 255]++; cN[yc]++; }
+    // cast having changed. `readable` below is how much of the band survived, so a caller can tell a cast
+    // from a shrinking sample; `levels` does not have the problem at all. Do not "correct" that drift.
+    if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) { cBR[yc * 511 + b - r + 255]++; cGM[yc * 511 + Math.round(g - (r + b) / 2) + 255]++; cN[yc]++; }
     hs[Math.min(150, Math.round(Math.hypot(cb, cr) / 127.5 * 100))]++; // pure red ~103, pure green ~119: not capped at 100
     sr += r; sg += g; sb += b; scb += cb; scr += cr;
     if (r === 255) clipR++; if (g === 255) clipG++; if (b === 255) clipB++;
@@ -68,10 +75,13 @@ function measure(rgb) {
   // codes: [[code, weight], ...]; a weight under 1 takes that share of the code's pixels (the boundary
   // code of a rank band, so a large surface one code past the mark is not swallowed whole).
   const band = (codes) => {
+    let all = 0; for (const [c, w] of codes) all += w * hy[c];
+    const medLevel = (h) => { const want = all / 2; let acc = 0; for (let v = 0; v < 256; v++) { for (const [c, w] of codes) acc += w * h[c * 256 + v]; if (acc >= want) return to100(v); } return null; };
+    const levels = all >= 1 ? { red: medLevel(cR), green: medLevel(cG), blue: medLevel(cB) } : null;
     let total = 0; for (const [c, w] of codes) total += w * cN[c];
-    if (!(total >= 1)) return { share: 0, rb: null, g: null };
+    if (!(total >= 1)) return { share: 0, rb: null, g: null, levels, readable: 0 };
     const med = (h) => { const want = total / 2; let acc = 0; for (let v = 0; v < 511; v++) { for (const [c, w] of codes) acc += w * h[c * 511 + v]; if (acc >= want) return to100(v - 255); } return null; };
-    return { share: share(total), rb: med(cBR), g: med(cGM) };
+    return { share: share(total), rb: med(cBR), g: med(cGM), levels, readable: Math.round(total / all * 100) };
   };
   const codesBetween = (lo, hi) => { const out = []; for (let c = Math.round(lo * 2.55); c < Math.round(hi * 2.55); c++) out.push([c, 1]); return out; };
   // By rank: the darkest / brightest RANK_SHARE of ALL pixels (luma histogram), the boundary code weighted.
@@ -118,6 +128,10 @@ function report(m, label) {
     "clipped at 255: R " + m.clipped.red + "% G " + m.clipped.green + "% B " + m.clipped.blue + "%; at the luma floor " + m.crushed + "% (pure black " + m.pureBlack + "%); channel at 0: R " + m.floor.red + "% G " + m.floor.green + "% B " + m.floor.blue + "%",
     "vectorscope: saturation median " + m.saturation.p50 + ", p99 " + m.saturation.p99 + " (% of a 127.5 Cb/Cr radius: pure red is about 103, pure green about 119); mean Cb " + m.cast.cb + ", Cr " + m.cast.cr + " (-50..50)",
     "casts by luma band (median B-R / G-mid of paired pixels, 0-100; >0 blue / green, <0 warm / magenta): " + [["blacks1", "darkest 1%"], ["blacks", "darkest 3%"], ["shadows", "5-30"], ["midtones", "30-65"], ["highlights", "65-95"], ["whites", "brightest 3%"], ["whites1", "brightest 1%"]].map(([k, label]) => { const b = m.bands && m.bands[k]; return k + " (" + label + ")" + (b && b.rb !== null ? " " + b.rb + " / " + b.g + " [" + b.share + "%]" : " none"); }).join("; "),
+    // The parade's ends as LEVELS on a common set of pixels - what the cast line above cannot give, and the
+    // number the blue blacks are actually judged on. `readable` is how much of the band still had a cast to
+    // read: well under 100 means the cast figure above is a surviving subset, not the whole band.
+    ...["blacks", "whites"].map((k) => { const b = m.bands && m.bands[k]; return b && b.levels ? k + " as levels (the " + (k === "blacks" ? "darkest" : "brightest") + " 3%, same pixels, 0-100): R " + b.levels.red + " G " + b.levels.green + " B " + b.levels.blue + " — B-R " + Math.round((b.levels.blue - b.levels.red) * 10) / 10 + ", " + b.readable + "% of the band readable for a cast" : null; }).filter(Boolean),
     "reads: " + readings(m).join("; "),
   ].join("\n");
 }

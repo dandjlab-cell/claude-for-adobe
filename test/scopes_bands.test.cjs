@@ -60,3 +60,38 @@ test("the whites reference is the brightest 1% when it has enough pixels, the 3%
   assert.equal(STATISTICS.whitesRB(thin), -14, "too few pixels in the 1% band: the 3% is used");
   assert.deepEqual(castAt(f, "shadows"), [-30, -7], "the blacks stay at 3%");
 });
+
+// The paired bottoms: the darkest 3% as channel LEVELS on one set of pixels. bands.blacks gives the cast
+// (a difference) from a sample that empties as a channel crushes; neutralBottoms needs levels, and a level
+// is readable even at 0. Built from pixels whose answer is known by construction.
+test("a band's levels are the median of each channel over the SAME pixels, clamped ones included", () => {
+  const { measure } = require("../src/scopes.cjs");
+  // 4% of the frame is a dark blue-lifted pixel (R 5, G 8, B 20), the rest mid grey. The darkest 3% can
+  // only be drawn from the dark pixels, so the band's levels must be exactly those three values.
+  const n = 10000, rgb = new Uint8Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const dark = i < 400;
+    rgb[i * 3] = dark ? 5 : 128; rgb[i * 3 + 1] = dark ? 8 : 128; rgb[i * 3 + 2] = dark ? 20 : 128;
+  }
+  const b = measure(rgb).bands.blacks;
+  const to100 = (v) => Math.round(v / 255 * 1000) / 10;
+  assert.deepEqual(b.levels, { red: to100(5), green: to100(8), blue: to100(20) }, "each channel's own median on the band's pixels");
+  assert.ok(b.levels.blue - b.levels.red > 5, "and the blue lift is visible as a level gap, which is what a per-channel toe closes");
+  assert.equal(b.readable, 100, "nothing is clamped here, so the cast statistic sees the whole band");
+  assert.equal(b.rb, to100(20 - 5), "the cast agrees with the levels while nothing is on the floor");
+});
+
+test("levels survive the crush that blinds the cast - the curveToe survivorship trap", () => {
+  const { measure } = require("../src/scopes.cjs");
+  // Same frame, but blue has been crushed to 0 on the dark pixels: the cast histogram drops every one of
+  // them, so `rb` is no longer about this band at all - while the levels still say blue is on the floor.
+  const n = 10000, rgb = new Uint8Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const dark = i < 400;
+    rgb[i * 3] = dark ? 5 : 128; rgb[i * 3 + 1] = dark ? 8 : 128; rgb[i * 3 + 2] = dark ? 0 : 128;
+  }
+  const b = measure(rgb).bands.blacks;
+  assert.equal(b.levels.blue, 0, "the level tells the truth: blue is at 0");
+  assert.equal(b.readable, 0, "and says the cast figure has nothing left to stand on");
+  assert.equal(b.rb, null, "which is exactly the x=0.2 row of curveToe");
+});

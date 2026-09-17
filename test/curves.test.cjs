@@ -117,12 +117,19 @@ test("neutralBottoms pulls the high channel's toe down to meet the lowest, and n
 
 // It is deliberately NOT wired into the grade. 0.1.80 wired it fed with each channel's own p1 - which is
 // not a cast - and balanced fell from 8 clips to 4, with black points crushed under target (C220 4.3 -> 1.6)
-// and casts grown (blacks 0.4 -> 3.9 blue). Wiring it again needs the paired band statistic and a measured
-// toe-to-output model; this test exists so the next attempt cannot skip that quietly.
+// and casts grown (blacks 0.4 -> 3.9 blue). Wiring it again needs two things, and as of 2026-09-17 ONE of
+// them exists: (a) the paired band statistic - DONE, bands.<band>.levels, the darkest 3% as channel levels
+// on one set of pixels, tested in scopes_bands.test.cjs; (b) a measured PER-CHANNEL toe model - NOT DONE.
+// curveToe swept the Master curve and proved it is a rigid translation, which is why the black point can
+// never fix this; the channel curves have not been swept (curve_sweep with curve: "Blue"). Until (b) lands
+// the call stays out of the grade, and this test is what stops it going in quietly.
 test("the grade does not write channel toes until the paired statistic and a swept model exist", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
-  assert.doesNotMatch(panel, /neutralBottoms/, "not wired: see the note above neutralBottoms in src/curves.cjs");
+  assert.doesNotMatch(panel, /neutralBottoms\s*\(/, "not called: see the note above neutralBottoms in src/curves.cjs");
+  assert.doesNotMatch(panel, /neutralBottoms[,:}\s]*=/, "and not imported, so it cannot be called under another name");
+  const sweeps = require("../src/lumetri_sweeps.json");
+  if (sweeps.channelToe) assert.fail("a channelToe block exists now - precondition (b) is met, so re-attempt the wiring and rewrite this test");
   const src = fs.readFileSync(path.join(__dirname, "..", "src", "curves.cjs"), "utf8");
   assert.match(src, /NOT WIRED INTO THE GRADE/, "and the function says why, where the next author will read it");
   assert.match(src, /paired statistic|PAIRED statistic/i);
