@@ -456,3 +456,25 @@ test("the deterministic pass can grade one clip, and the skill sends single-shot
   assert.match(skill, /`grade_sequence` with `seconds`/);
   assert.match(skill, /steered by YOU/, "and the skill says what grade_shot actually is");
 });
+
+// A button cannot mis-route. Twice on 2026-09-17 the model reached around the pass - once because the skill
+// was not named in the prompt, once because no single-clip form existed - and both times it hand-rolled
+// knobs the canon would never write. The button calls the pass directly, and only picks scope.
+test("the Colour correct button runs the deterministic pass, and only chooses scope", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const root = path.join(__dirname, "..");
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  for (const id of ["btn-colour", "colour-options", "btn-colour-all", "btn-colour-clip", "btn-cancel-colour"]) assert.ok(html.includes('id="' + id + '"'), "missing " + id);
+  const panel = fs.readFileSync(path.join(root, "panel.js"), "utf8");
+  const fn = panel.slice(panel.indexOf("async function runColourButton("), panel.indexOf("async function runCaptionsButton("));
+  assert.match(fn, /await gradeSequenceTool\(seconds === undefined \? \{\} : \{ seconds \}\)/, "the pass itself, whole or one clip - no knobs chosen here");
+  assert.doesNotMatch(fn, /gradeTool|gradeShotTool/, "never the steered tools");
+  assert.match(fn, /Select a clip on the timeline first/, "and it says what to do when nothing is selected");
+  assert.match(panel, /ui\.btnColourAll\.onclick = \(\) => runColourButton\("all"\);/);
+  assert.match(panel, /ui\.btnColourClip\.onclick = \(\) => runColourButton\("clip"\);/);
+  // The button must be disabled while any job runs, like the others.
+  assert.match(panel, /ui\.btnMakeCaptions, ui\.btnColour, ui\.btnColourAll, ui\.btnColourClip\]\.forEach\(\(b\) => \{ b\.disabled = true; \}\);/);
+  const skill = fs.readFileSync(path.join(root, ".claude", "skills", "colour", "SKILL.md"), "utf8");
+  assert.match(skill, /Every colour request goes through the pass\. The only question is scope\./);
+  assert.match(skill, /Never assemble a grade out of single knobs/);
+});

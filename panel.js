@@ -56,7 +56,7 @@ const HOST_EVENTS = ["onActiveSequenceStructureChanged", "onActiveSequenceTrackI
 const PEAK_RATES = [48000, 44100, 96000, 32000];
 
 const $ = (id) => document.getElementById(id);
-const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copyChat: $("copy-chat"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad") };
+const ui = { messages: $("messages"), input: $("input"), send: $("send"), stop: $("stop"), status: $("status"), project: $("project-name"), model: $("model"), agent: $("agent"), newChat: $("new-chat"), newClaude: $("new-claude"), newCodex: $("new-codex"), checkpoints: $("checkpoints"), log: $("log"), requireCheckpoint: $("require-checkpoint"), dupSequence: $("dup-sequence"), askScripts: $("ask-scripts"), attachments: $("attachments"), selectionBar: $("selection-bar"), modelState: $("model-state"), whisperModel: $("whisper-model"), btnWhisperModel: $("btn-whisper-model"), modelBar: $("model-bar"), versionRow: $("version-row"), checkUpdates: $("check-updates"), dumpSurface: $("dump-surface"), probeLeads: $("probe-leads"), bugReport: $("bug-report"), openIssues: $("open-issues"), jobBar: $("job-bar"), jobName: $("job-name"), jobLabel: $("job-label"), jobFill: $("job-fill"), copyChat: $("copy-chat"), copies: $("copies"), btnCut: $("btn-cut"), cutOptions: $("cut-options"), btnRunCut: $("btn-run-cut"), btnCancelCut: $("btn-cancel-cut"), btnCaptions: $("btn-captions"), captionOptions: $("caption-options"), btnMakeCaptions: $("btn-make-captions"), btnCancelCaptions: $("btn-cancel-captions"), capWords: $("cap-words"), capLines: $("cap-lines"), capSeconds: $("cap-seconds"), cutMethod: $("cut-method"), minSilence: $("min-silence"), pad: $("pad"), btnColour: $("btn-colour"), colourOptions: $("colour-options"), btnColourAll: $("btn-colour-all"), btnColourClip: $("btn-colour-clip"), btnCancelColour: $("btn-cancel-colour") };
 
 let session = null;
 let sessionGen = 0;        // events from a stopped session are dropped (generation counter)
@@ -3940,14 +3940,14 @@ function beginButtonJob(label) {
   if (session && session.busy) { addMessage("assistant error", "Wait for Claude to finish (or press Stop) first."); return false; }
   if (buttonJob) { addMessage("assistant error", "Wait for the running job (" + buttonJob + ") to finish first."); return false; }
   buttonJob = label; cancelRequested = false;
-  [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = true; });
+  [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions, ui.btnColour, ui.btnColourAll, ui.btnColourClip].forEach((b) => { b.disabled = true; });
   ui.stop.disabled = false; // Stop ends the job at its next range or step
   return true;
 }
 // Stop for long jobs: Cut silences, Captions and rough_cut check this between ranges and between steps.
 let cancelRequested = false;
 function requestCancel() { cancelRequested = true; setStatus("Stopping after the current step…"); }
-function endButtonJob() { buttonJob = ""; quietCard = null; cancelRequested = false; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions].forEach((b) => { b.disabled = false; }); }
+function endButtonJob() { buttonJob = ""; quietCard = null; cancelRequested = false; [ui.btnCut, ui.btnRunCut, ui.btnCaptions, ui.btnMakeCaptions, ui.btnColour, ui.btnColourAll, ui.btnColourClip].forEach((b) => { b.disabled = false; }); }
 // Start at the measured 24-pair batch; verified insertion failures fall back to 16 then 8.
 const SILENCE_REBUILD_BATCH_SIZE = 24;
 async function runCutButton(params, label) {
@@ -3999,9 +3999,37 @@ async function runCutButton(params, label) {
 }
 // Captions button: render the mix, transcribe, build cues, import as a caption track. One card, no model.
 // Captions button toggles the options strip under the toolbar; Make captions runs the job.
-function syncStrips() { const open = [ui.cutOptions, ui.captionOptions].filter((e) => !e.hidden).length; const v = document.getElementById("view-chat"); v.classList.toggle("with-options", open >= 1); v.classList.toggle("with-options-2", open >= 2); }
+function syncStrips() { const open = [ui.cutOptions, ui.captionOptions, ui.colourOptions].filter((e) => !e.hidden).length; const v = document.getElementById("view-chat"); v.classList.toggle("with-options", open >= 1); v.classList.toggle("with-options-2", open >= 2); }
 function toggleCaptionOptions(show) { ui.captionOptions.hidden = show === undefined ? !ui.captionOptions.hidden : !show; syncStrips(); if (!ui.captionOptions.hidden) ui.capWords.focus(); }
 function toggleCutOptions(show) { ui.cutOptions.hidden = show === undefined ? !ui.cutOptions.hidden : !show; syncStrips(); if (!ui.cutOptions.hidden) ui.minSilence.focus(); }
+function toggleColourOptions(show) { ui.colourOptions.hidden = show === undefined ? !ui.colourOptions.hidden : !show; syncStrips(); }
+
+// The colour button. Every colour request goes through the same deterministic pass; the only question is
+// how much of the timeline it covers (the owner, 15:20: "for all coloring the model should always defer to
+// our grading pipeline - it's just a matter of scope"). A button cannot mis-route: twice today the model
+// reached the wrong way round it, once because the skill was not named in the prompt and once because no
+// single-clip form of the pass existed, and both times it hand-rolled knobs the canon would never write.
+async function runColourButton(scope) {
+  let seconds;
+  if (scope === "clip") {
+    let sel = "";
+    try { sel = await host("selectionInfo"); } catch (_) {}
+    // "Timeline: 1 clip(s) selected: \"name\" 8.30s" - the clip's start; half a second in is inside it.
+    const m = /Timeline: \d+ clip\(s\) selected: "[^"]*" ([\d.]+)s/.exec(String(sel || ""));
+    if (!m) { addMessage("assistant error", "Select a clip on the timeline first, or choose Whole sequence."); return; }
+    seconds = Number(m[1]) + 0.5;
+  }
+  if (!beginButtonJob("Colour")) return;
+  toggleColourOptions(false);
+  const card = addTool("Colour correct" + (scope === "clip" ? " (selected clip)" : " (whole sequence)"), ""); card.open(); quietCard = card;
+  try {
+    const out = await gradeSequenceTool(seconds === undefined ? {} : { seconds });
+    quietCard = null;
+    card.done(String(out.text || "").split("\n")[0] || "done", !out.isError);
+    addMessage(out.isError ? "assistant error" : "assistant", String(out.text || ""));
+  } catch (error) { quietCard = null; card.done("Failed: " + error.message, false); }
+  finally { endButtonJob(); setStatus("Ready"); }
+}
 async function runCaptionsButton() {
   if (!beginButtonJob("Captions")) return;
   toggleCaptionOptions(false);
@@ -4036,6 +4064,10 @@ async function runCaptionsButton() {
   finally { endButtonJob(); }
 }
 ui.btnCaptions.onclick = () => toggleCaptionOptions();
+ui.btnColour.onclick = () => toggleColourOptions();
+ui.btnColourAll.onclick = () => runColourButton("all");
+ui.btnColourClip.onclick = () => runColourButton("clip");
+ui.btnCancelColour.onclick = () => toggleColourOptions(false);
 ui.btnMakeCaptions.onclick = runCaptionsButton;
 ui.btnCancelCaptions.onclick = () => toggleCaptionOptions(false);
 // One click: the method and thresholds live in Settings (the options strip is gone; the hidden run/cancel buttons keep old references harmless).
