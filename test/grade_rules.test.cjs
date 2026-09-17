@@ -351,3 +351,27 @@ test("log footage is recognised from the picture and never balanced as if it wer
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.match(seqTool, /gradeLooksLikeLog\(m\)\) \{[\s\S]*?reads as LOG[\s\S]*?logSkipped\+\+;\s*continue;/, "a log clip is named and skipped, not stretched");
 });
+
+// A colour read asks Vision for three things: the faces and hands a row names, and the subject's mask the
+// grade measures through. It used to take two bin/ocr launches to get them - the default mode (522ms on a
+// 1536x864 frame: text recognition and person segmentation nobody here reads, and a subject pass that
+// segments the frame then throws the mask away) followed by --subject, which segments it AGAIN. One
+// --grade launch returns the same three answers in 354ms, measured on the same frame (2026-09-17 13:36).
+test("a colour read costs ONE bin/ocr launch, and the mode does no work it does not use", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const region = panel.slice(panel.indexOf("function measureRegion("), panel.indexOf("function visionForGrade("));
+  assert.equal((region.match(/execFileSync\(OCR_BIN/g) || []).length, 0, "measureRegion itself launches nothing");
+  assert.match(region, /const vision = region === "frame" \? null : visionForGrade\(src\);/);
+  assert.match(region, /const found = vision && vision\.subjectMask;/, "the mask comes from that one call, not a second segmentation");
+  assert.doesNotMatch(panel, /subjectMask\(src\)|= visionAll\(/, "the two-launch path is gone, not left beside the new one");
+  const swift = fs.readFileSync(path.join(__dirname, "..", "src", "ocr.swift"), "utf8");
+  assert.match(swift, /case "grade": parts = \[faces\(cg, file\), hands\(cg, file\), subject\(cg, file, writeMask: true\)\]/);
+  assert.doesNotMatch(swift.slice(swift.indexOf('case "grade"'), swift.indexOf('default: parts')), /text\(|person\(/, "no text or person work in the colour mode");
+  // The shipped binary must actually have the mode, or every subject read silently falls back to the frame.
+  const ocr = path.join(__dirname, "..", "bin", "ocr");
+  if (fs.existsSync(ocr)) {
+    const out = require("node:child_process").spawnSync(ocr, ["--grade", "/nonexistent.png"], { encoding: "utf8" });
+    assert.match(out.stdout || "", /"error":"unreadable"/, "bin/ocr is stale: rebuild it (swiftc -O -o bin/ocr src/ocr.swift -framework Vision -framework AppKit; codesign -s - bin/ocr)");
+  }
+});

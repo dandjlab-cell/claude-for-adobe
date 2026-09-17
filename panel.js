@@ -715,7 +715,11 @@ function measureRegion(src, region, reuse = null) {
   if (reuse && reuse.box && region !== "frame") return Object.assign(measureScopes(decodeRgb(src, reuse.box)), { region, box: reuse.box, reused: true, frame });
   // A region reading always carries the whole-frame numbers too (`frame`): clipping and crushing are
   // judged on the frame, because pushing a small subject up blows the room behind it.
-  const vision = region === "frame" ? null : visionAll(src);
+  // One launch, not two. The default bin/ocr mode costs 522ms a frame and a grade calls it on every render:
+  // text recognition and person segmentation in it are never read here, and its subject pass segments the
+  // frame and throws the mask away - so this then called --subject and segmented AGAIN. --grade returns the
+  // three answers a colour read uses, mask included, in 354ms (measured 2026-09-17 13:36, same numbers out).
+  const vision = region === "frame" ? null : visionForGrade(src);
   // "keyed": the frame is Lumetri's HSL Secondary mask view (Show Mask on) - the selected pixels alone.
   if (region === "keyed") {
     const k = keyedPixels(decodeRgb(src));
@@ -735,27 +739,35 @@ function measureRegion(src, region, reuse = null) {
     return Object.assign(measureScopes(decodeRgb(src, box)), { region: "face", box, frame, vision });
   }
   if (region === "subject") {
-    const found = subjectMask(src);
+    const found = vision && vision.subjectMask;
     if (!found) return Object.assign(frame, { region: "frame", fellBack: "no subject found", vision });
     try { return Object.assign(measureScopes(maskRgb(decodeRgb(src), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box, frame, vision }); }
     finally { try { fs.rmSync(found.mask, { force: true }); } catch (_) {} }
   }
+  // A mask written for a region that did not need it (hands, face, keyed) is still a file on disk.
+  if (vision && vision.subjectMask) { try { fs.rmSync(vision.subjectMask.mask, { force: true }); } catch (_) {} }
   return Object.assign(frame, { region: "frame" });
 }
 
-// Vision's foreground-instance mask for a rendered frame (bin/ocr --subject): the mask file, how much of
-// the frame it covers, and its extent. null when Vision sees no subject.
-// Everything Vision sees in a frame, one call: faces, hands, the subject's and the person's extent, text.
-// Attached to every region read as `vision`, so a row can say what was in the frame and the skin work can
-// key inside the hands (the owner, 2026-09-16 01:50: "why are we limiting Apple Vision at all").
-function visionAll(file) {
+// What a colour read asks Vision for, in one bin/ocr launch: the faces and hands a row names and the skin
+// step keys inside, and the subject's mask the grade measures through. Same shape as visionAll for faces
+// and hands, plus `subjectMask` ({ mask, coverage, box }) when Vision found a subject.
+function visionForGrade(file) {
   if (!fs.existsSync(OCR_BIN)) return null;
+  let v = null;
   try {
-    const out = require("node:child_process").execFileSync(OCR_BIN, [file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const v = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
-    return v && !v.error ? v : null;
+    const out = require("node:child_process").execFileSync(OCR_BIN, ["--grade", file], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    v = JSON.parse(out.split("\n").filter(Boolean)[0] || "null");
   } catch (_) { return null; }
+  if (!v || v.error) return null;
+  const s = v.subject;
+  if (s && s.mask && s.coverage > 0) {
+    const b = s.box || [0, 0, 1, 1];
+    v.subjectMask = { mask: s.mask, coverage: s.coverage, box: { x0: b[0], y0: b[1], x1: b[2], y1: b[3] } };
+  }
+  return v;
 }
+
 // The skin key learned from the hand and face boxes on one exported frame (src/skin.cjs): each box is
 // decoded as its own crop, so no frame geometry is needed - the crop IS the box.
 // Log footage: choose Premiere's own conversion from the picture (src/logspace.cjs). The clip's override
@@ -937,7 +949,6 @@ function skinKeyFor(src, vision, opts = {}) {
   finally { if (person) { try { fs.rmSync(person.mask, { force: true }); } catch (_) {} } }
 }
 function personMask(file) { return visionMask(file, "--person"); }
-function subjectMask(file) { return visionMask(file, "--subject"); }
 function visionMask(file, flag) {
   let entry = null;
   try {

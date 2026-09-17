@@ -14,6 +14,9 @@
 //                                303-class sound classifier (laughter, applause, cheering, sigh, gasp, speech, music, silence...)
 //   bin/ocr --faces <image...>   faces: {"file":"...","faces":[{"box":[..],"yaw":deg,"pitch":deg,"roll":deg,
 //                                        "quality":0..1,"eyes":ratio,"mouth":ratio,"facing":0..,"tilt":0..1}]}
+//   bin/ocr --grade <image...>   what a colour read needs in one pass: {"file":"...","faces":[..],"hands":[..],
+//                                "subject":{"mask":"<image>.mask.png","coverage":..,"box":[..]}} - no text
+//                                recognition, no person segmentation, and the subject segmented once.
 //   bin/ocr --subject <image...> subject: {"file":"...","mask":"<image>.mask.png","coverage":0..1,"box":[x0,y0,x1,y1]}
 //                                Vision's foreground-instance mask: whatever the subject is (a face, hands, a product),
 //                                as an 8-bit mask image the same size as the frame, white where the subject is. This
@@ -253,6 +256,12 @@ for file in args {
   case "person": let f = person(cg, file, writeMask: true); print("{\"file\":\(json(file)),\(flat(f, "person"))}"); continue
   case "hands": parts.append(hands(cg, file))
   case "text": parts.append(text(cg, file))
+  // What a colour read needs and nothing else. The default mode costs 522ms on a 1536x864 frame and a
+  // grade calls it once per rendered frame: of that, text recognition (~90ms) and person segmentation
+  // (~25ms) are never looked at by the colour path, and its subject pass runs the instance segmentation
+  // and throws the mask away - so the panel had to call --subject straight after and segment AGAIN
+  // (~170ms). One call, ~300ms, same three answers the grade reads (measured 2026-09-17 13:33).
+  case "grade": parts = [faces(cg, file), hands(cg, file), subject(cg, file, writeMask: true)]
   default: parts = [text(cg, file), faces(cg, file), hands(cg, file), subject(cg, file, writeMask: false), person(cg, file, writeMask: false)]
   }
   print("{\"file\":\(json(file)),\(parts.joined(separator: ","))}")
