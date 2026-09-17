@@ -84,7 +84,7 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   const tool = panel.slice(panel.indexOf("async function logLutTool"), panel.indexOf("// The skin key is learned"));
   assert.match(tool, /if \(action === "use"\)/);
   assert.match(tool, /const hint = logCameraHint\(\{ tags: mediaTags\(clip\.mediaPath\), path: clip\.mediaPath \}\)/, "the maker comes from the file, not the editor");
-  assert.match(tool, /if \(!l\.here && \(!p \|\| !fs\.existsSync\(p\)\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing, and never for a LUT Premiere already ships");
+  assert.match(tool, /if \(!p \|\| !fs\.existsSync\(p\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing");
   assert.match(tool, /const moved = Math\.abs\(after\.luma\.p1 - before\.luma\.p1\) > 1/, "judged by the render, not the read-back");
   assert.match(tool, /await host\(where === "source" \? "setInputLUT" : "lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot it used when nothing worked");
   assert.match(tool, /where === "source" \? "setInputLUT" : "lumetriLUT"/, "clip = Lumetri's Input LUT, source = Interpret Footage");
@@ -92,33 +92,21 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   assert.match(skill, /`log_lut use` at the clip's time does the lot/, "the skill tells the panel to use the one-call form");
 });
 
-test("the grade never changes a source setting on its own: log asks with BUTTONS, two binary questions, and carries on in the same pass", () => {
+test("the grade never changes a source setting on its own: ONE question, with buttons, naming the site it downloads from", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.match(panel, /budget_seconds = 150, log: logArg = "ask" \} = \{\}\)/, "ask is the default");
-  const ask = seqTool.slice(seqTool.indexOf("if (log === \"ask\") {"), seqTool.indexOf("if (/^(lut|builtin)(-source)?$/.test(log))"));
+  const ask = seqTool.slice(seqTool.indexOf("if (log === \"ask\") {"), seqTool.indexOf("if (/^lut(-source)?$/.test(log))"));
   assert.ok(ask, "the ask block is still there");
-  assert.equal(ask.match(/await askChoice\(/g).length, 2, "two questions, both through the panel's one question card - not a paragraph to read, and not a control built just for this");
-  assert.match(ask, /Which conversion\?/, "question 1 names the choice between the two LUTs");
-  assert.match(ask, /Where does it go\?/, "question 2 is where it goes");
-  assert.match(ask, /This clip[\s\S]*?goes with Discard copy[\s\S]*?Source settings[\s\S]*?stays after Discard copy/, "each destination's cost is on its own button");
-  assert.match(ask, /Premiere ships no built-in conversion for/, "and it says so when there is no built-in to choose");
-  assert.match(ask, /if \(!pick \|\| pick === "Leave it log"\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining, or not answering, leaves the clip as shot");
-  assert.match(ask, /log = \(pick\.indexOf\(own\) === 0 \? "lut" : "builtin"\)/, "the answer sets the route for the rest of the run");
-  assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: toSource \? "source" : "clip", which \}\)/, "the LUT goes where the editor asked, from the source they asked for");
-});
-
-test("the built-in LUT is Premiere's own file, and it exists for Sony, ARRI and RED only", () => {
-  const { builtinFor, BUILTIN } = require("../src/luts.cjs");
-  assert.deepEqual(Object.keys(BUILTIN).sort(), ["arri", "red", "sony"]);
-  for (const m of ["canon", "panasonic", "fuji", "nikon", "dji"]) assert.equal(builtinFor(m), null, m + " has no built-in conversion in Premiere");
-  const sony = builtinFor("sony");
-  if (sony) { // only on a machine with Premiere installed
-    assert.match(sony.path, /Adobe Premiere Pro.*Lumetri\/LUTs\//, "it is the file inside the application, not a download");
-    assert.match(sony.label, /built-in/);
-    assert.match(builtinFor("sony", "Sony S-Log2/S-Gamut").path, /SLOG2/, "a declared S-Log2 file gets the S-Log2 profile");
-  }
+  assert.equal(ask.match(/await askChoice\(/g).length, 1, "one question, through the panel's one question card - the conversion is not a choice, only where it goes");
+  assert.doesNotMatch(panel, /builtinFor|builtin-source/, "Premiere's own LUTs are not offered anywhere: they are not an alternative (the owner, 13:10)");
+  assert.match(ask, /own official LUT" \+ \(from \? ", downloaded from " \+ from : /, "the question names the site the file comes from before anything is fetched");
+  assert.match(ask, /Where does it go\?/);
+  assert.match(ask, /This clip[\s\S]*?goes with Discard copy[\s\S]*?Source settings[\s\S]*?stays after Discard copy[\s\S]*?Leave it log/, "each answer carries its own cost");
+  assert.match(ask, /if \(!where \|\| where === "Leave it log"\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining, or not answering, leaves the clip as shot");
+  assert.match(ask, /log = \/\^Source\/\.test\(where\) \? "lut-source" : "lut"/, "the answer sets the route for the rest of the run");
+  assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: toSource \? "source" : "clip" \}\)/, "the LUT goes where the editor asked");
 });
 
 test("the file's own declaration comes first: a tagged log file needs no rendering to identify", () => {
@@ -132,4 +120,20 @@ test("the file's own declaration comes first: a tagged log file needs no renderi
   const fn = panel.slice(panel.indexOf("async function chooseLogConversion"), panel.indexOf("// The makers' official conversion LUTs"));
   assert.ok(fn.indexOf("const declared = logDeclaredSpace(tags);") < fn.indexOf("const all = logCandidates"), "declaration is read before any candidate is rendered");
   assert.match(fn, /return \{ name: declared\.space, m, rows: \[\], score: 0, tried: 0, declared: true/, "a declared space costs one render, not a sweep");
+});
+
+test("Premiere's own LUTs are never offered, but a file the editor names by hand is applied", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const { resolve } = require("../src/luts.cjs");
+  // Not offered: no code path picks one, and the grade's question has no button for it.
+  assert.doesNotMatch(panel, /builtinFor|builtin-source/, "no built-in route exists to be chosen");
+  // But asked for by name, it resolves - a fragment is enough, and an absolute path is taken as given.
+  assert.equal(resolve("/etc/hosts"), "/etc/hosts");
+  assert.equal(resolve("no such lut anywhere"), null);
+  assert.equal(resolve(""), null);
+  const slog3 = resolve("SLOG3");
+  if (slog3) assert.match(slog3, /Lumetri\/LUTs\/.*SLOG3/, "found inside Premiere, only because it was named");
+  const tool = panel.slice(panel.indexOf("async function logLutTool"), panel.indexOf("// The skin key is learned"));
+  assert.match(tool, /if \(action === "apply" && file\) \{ lutPath = lutResolve\(file\)/, "apply takes a named file ahead of a registry id");
 });

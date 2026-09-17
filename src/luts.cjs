@@ -43,35 +43,34 @@ const REGISTRY = {
 
 const forMaker = (maker) => Object.entries(REGISTRY).filter(([, e]) => e.maker === maker).map(([id, e]) => ({ id, ...e }));
 
-// The OTHER LUT: the one Premiere already ships, the entry in Lumetri's Input LUT menu. The comparison the
-// editor actually makes is this file against the maker's own (the owner, 12:45: "we're comparing Premiere's
-// built in luts or the official lut"), so the panel has to be able to name and apply it. Adobe's bundled set
-// is small and not per-maker: Technical/ is ARRI and Phantom only, Legacy/ adds the SpeedLooks camera
-// profiles - so Sony, ARRI and RED have one, and Canon, Panasonic, Fuji, Nikon, DJI have NONE (checked in
-// the 2026 install, 2026-09-17). Saying "Premiere has no built-in for this camera" is the honest half of
-// the question; inventing a choice that is not there is not.
-const BUILTIN = {
-  sony: [["Legacy/SLOG3 - SL - PROFILE.itx", "Premiere's built-in SLOG3 profile"], ["Legacy/SLOG2 - SL - PROFILE.itx", "Premiere's built-in SLOG2 profile"]],
-  arri: [["Technical/ALEXA_Default_LogC2Rec709.cube", "Premiere's built-in ALEXA LogC → Rec.709"]],
-  red: [["Legacy/REDLOGFILM - SL - PROFILE.itx", "Premiere's built-in REDLOGFILM profile"]],
-};
+// Premiere's own bundled LUTs are NOT an alternative and are not offered: the SpeedLooks camera "profiles"
+// in Lumetri's menu are a look, not a maker's conversion, and the owner's verdict on them is flat (13:10:
+// "we should actually not use any Premiere's LUTs, they are no good - it shouldn't even be an option, we
+// always download"). Every conversion offered here comes from the maker's own page. If the editor ASKS for
+// one of Premiere's by name, that is their call and the panel obliges (13:26: "if the user wants a built in
+// option they can, but it's not something we will offer") - resolve() below finds any file they name, in
+// Premiere's own LUT folders or anywhere on disk. Nothing calls it unless they ask.
 const lumetriDirs = () => {
-  const apps = "/Applications";
-  let names = []; try { names = fs.readdirSync(apps).filter((n) => /^Adobe Premiere Pro/.test(n)); } catch (_) { return []; }
-  return names.sort().reverse().map((n) => path.join(apps, n, n + ".app", "Contents", "Lumetri", "LUTs")).filter((d) => fs.existsSync(d));
+  let names = []; try { names = fs.readdirSync("/Applications").filter((n) => /^Adobe Premiere Pro/.test(n)); } catch (_) { return []; }
+  return names.sort().reverse().flatMap((n) => ["Technical", "Legacy", "Creative"].map((sub) => path.join("/Applications", n, n + ".app", "Contents", "Lumetri", "LUTs", sub))).filter((d) => fs.existsSync(d));
 };
-// The built-in conversion for a maker, or null when Premiere ships none. { label, path }.
-function builtinFor(maker, space = "") {
-  const entries = BUILTIN[maker] || [];
-  const wanted = /log ?2/i.test(space) ? 1 : 0; // a declared S-Log2 file gets the S-Log2 profile
+// A LUT the editor named: an absolute path, or a file name inside Premiere's own folders ("SLOG3 - SL -
+// PROFILE.itx"), or a fragment of one. Returns the path or null.
+function resolve(nameOrPath) {
+  const want = String(nameOrPath || "").trim();
+  if (!want) return null;
+  if (want.indexOf("/") >= 0) return fs.existsSync(want) ? want : null;
   for (const dir of lumetriDirs()) {
-    for (const [rel, label] of [entries[wanted], ...entries].filter(Boolean)) {
-      const p = path.join(dir, rel);
-      if (fs.existsSync(p)) return { label, path: p };
-    }
+    const files = fs.readdirSync(dir);
+    const hit = files.find((f) => f === want) || files.find((f) => f.toLowerCase().indexOf(want.toLowerCase()) >= 0);
+    if (hit) return path.join(dir, hit);
   }
   return null;
 }
+
+// Where a LUT comes from, for the question that asks permission to fetch it: the site, not a URL nobody
+// reads. "the editor can see where it's going to download from" (the owner, 13:10).
+const site = (entry) => { const u = entry && (entry.url || entry.page); const m = u && /^https?:\/\/([^/]+)/.exec(u); return m ? m[1].replace(/^www\./, "") : null; };
 // A file name Premiere is happy with: spaces, + and - in a LUT's name are a documented cause of it not
 // applying, so the stored copy is plain (researched 2026-09-17).
 const safeName = (name) => String(name).replace(/[^A-Za-z0-9._]+/g, "_").replace(/_+/g, "_");
@@ -119,4 +118,4 @@ function normaliseCube(text, title = "converted") {
   return ["TITLE \"" + title + "\"", "LUT_3D_SIZE " + size, "DOMAIN_MIN 0.0 0.0 0.0", "DOMAIN_MAX 1.0 1.0 1.0", ...data].join("\n") + "\n";
 }
 
-module.exports = { REGISTRY, HOME, forMaker, localPath, isLocal, fetchLut, normaliseCube, safeName, builtinFor, BUILTIN };
+module.exports = { REGISTRY, HOME, forMaker, localPath, isLocal, fetchLut, normaliseCube, safeName, site, resolve };
