@@ -854,6 +854,82 @@ var PCX = (function () {
   // A Lumetri scalar by property INDEX (HSL Secondary's own Temperature 101, Tint 102, Contrast 103,
   // Sharpen 104, Saturation 105 and Show Mask 88 share their names with Basic/Creative, which the name
   // walk finds first). `expect` is the displayName the index must carry. Empty value = read.
+  // The clip's colour-space interpretation (Premiere's own log conversion, tone + gamut, applied before
+  // any effect): the override list's names, the current override, the original. Probed live 2026-09-17:
+  // getOverrideColorSpaceList is a property of ColorSpace objects; the empty "no override" value cannot
+  // be written back, so "" restores with getOriginalColorSpace(). The override lives on the PROJECT ITEM.
+  function colorSpaces(seconds, track) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) { var k = tr.clips[c]; if (at >= k.start.seconds && at < k.end.seconds) { cl = k; } }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+    var pi = cl.projectItem;
+    if (!pi) return "ERR:no project item";
+    var names = [], lst = pi.getOverrideColorSpaceList;
+    if (typeof lst === "function") { try { lst = pi.getOverrideColorSpaceList(); } catch (e0) { lst = null; } }
+    if (lst && lst.length) for (var i = 0; i < lst.length; i++) names.push(String(lst[i].name));
+    var cur = "", orig = "", managed = "";
+    try { var o = pi.getOverrideColorSpace(); cur = o && !o.empty ? String(o.name) : ""; } catch (e1) {}
+    try { orig = String(pi.getOriginalColorSpace().name); } catch (e2) {}
+    try { managed = String(pi.isColorManagedMedia()); } catch (e3) {}
+    return "OK" + COL + cur + COL + orig + COL + managed + COL + names.join("|");
+  }
+  // name "" = back to the original interpretation. Returns "OK<COL>nowName".
+  function setColorSpace(seconds, track, name) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) { var k = tr.clips[c]; if (at >= k.start.seconds && at < k.end.seconds) { cl = k; } }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+    var pi = cl.projectItem;
+    if (!pi) return "ERR:no project item";
+    var target = null;
+    if (String(name) === "") { try { target = pi.getOriginalColorSpace(); } catch (e0) { return "ERR:no original colour space"; } }
+    else {
+      var lst = pi.getOverrideColorSpaceList;
+      if (typeof lst === "function") { try { lst = pi.getOverrideColorSpaceList(); } catch (e1) { lst = null; } }
+      if (lst && lst.length) for (var i = 0; i < lst.length; i++) if (String(lst[i].name) === String(name)) target = lst[i];
+      if (!target) return "ERR:no colour space named " + name;
+    }
+    var ok = false;
+    try { ok = pi.setOverrideColorSpace(target); } catch (e2) { return "ERR:setOverrideColorSpace " + e2; }
+    if (!ok) return "ERR:setOverrideColorSpace refused " + name;
+    var now = "";
+    try { var o = pi.getOverrideColorSpace(); now = o && !o.empty ? String(o.name) : ""; } catch (e3) {}
+    return "OK" + COL + now;
+  }
+
+  // A LUT file as the clip's INPUT interpretation (Interpret Footage, on the project item): the door the
+  // API dump names (FootageInterpretation.setInputLUTFromFilePath); Lumetri's own Input LUT slot refuses
+  // a path from script (probe 2026-09-17 09:23). path "" clears it. Returns "OK<COL>inputLUTID".
+  function setInputLUT(seconds, track, lutPath) {
+    var s = seq();
+    if (!s) return "ERR:no active sequence";
+    var t = num(track) - 1;
+    if (!(t >= 0) || t >= s.videoTracks.numTracks) return "ERR:no video track " + track;
+    var at = num(seconds), tr = s.videoTracks[t], cl = null;
+    for (var c = 0; c < tr.clips.numItems; c++) { var k = tr.clips[c]; if (at >= k.start.seconds && at < k.end.seconds) { cl = k; } }
+    if (!cl) return "ERR:no clip at " + seconds + "s on V" + track;
+    var pi = cl.projectItem;
+    if (!pi) return "ERR:no project item";
+    var fi = null;
+    try { fi = pi.getFootageInterpretation(); } catch (e0) { return "ERR:getFootageInterpretation " + e0; }
+    if (!fi) return "ERR:no footage interpretation";
+    if (typeof fi.setInputLUTFromFilePath !== "function") return "ERR:setInputLUTFromFilePath is not a function here";
+    var ok = false;
+    try { ok = fi.setInputLUTFromFilePath(String(lutPath)); } catch (e1) { return "ERR:setInputLUTFromFilePath " + e1; }
+    var applied = false;
+    try { applied = pi.setFootageInterpretation(fi); } catch (e2) { return "ERR:setFootageInterpretation " + e2; }
+    var id = "";
+    try { id = String(pi.getInputLUTID()); } catch (e3) { try { id = String(fi.inputLUTID); } catch (e4) {} }
+    return "OK" + COL + id + COL + String(ok) + COL + String(applied);
+  }
+
   function lumetriIndex(seconds, track, index, expect, value) {
     var s = seq();
     if (!s) return "ERR:no active sequence";
@@ -1702,7 +1778,7 @@ var PCX = (function () {
     getPref: getPref, setPref: setPref, multicamSwitch: multicamSwitch, probeLeads: probeLeads, addTransitions: addTransitions, subjectPath: subjectPath, sceneCuts: sceneCuts, enumerateSurface: enumerateSurface, nudgeClip: nudgeClip, clipTransforms: clipTransforms, reframeActive: reframeActive, autoReframe: autoReframe, autoReframeClips: autoReframeClips, analysisDone: analysisDone, importCaptions: importCaptions, exportSequenceAudio: exportSequenceAudio, mediaFrames: mediaFrames, resizeSequence: resizeSequence, overlayClip: overlayClip, selectedBinPaths: selectedBinPaths, muteAudioFor: muteAudioFor, selectionInfo: selectionInfo, listBins: listBins, moveToBin: moveToBin, binMedia: binMedia, createSequenceFromBin: createSequenceFromBin,
     projectInfo: projectInfo, save: save, openProject: openProject, reloadProject: reloadProject, snapshot: snapshot,
     cloneActive: cloneActive, deleteSequence: deleteSequence, openSequence: openSequence,
-    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE, lumetriIndex: lumetriIndex
+    extractRanges: extractRanges, rebuildSilences: rebuildSilences, closeGaps: closeGapsActive, frames: frames, playhead: playhead, isMediaPath: isMediaPath, bindEvents: bindEvents, lumetriParam: lumetriParam, lumetriQE: lumetriQE, lumetriIndex: lumetriIndex, colorSpaces: colorSpaces, setColorSpace: setColorSpace, setInputLUT: setInputLUT
   };
 }());
 "PCX loaded";

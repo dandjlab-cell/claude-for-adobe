@@ -137,6 +137,16 @@ grade temperature→ the reference's warmth
 Match brightness and warmth before anything else; a 2-point brightness difference across a cut is
 visible, a 2-point saturation difference is not.
 
+## Log footage
+
+The pass recognises log from the picture (a black floor that never reaches the bottom, a top that never reaches the top, colour at a fraction of a display picture's) and never balances it as if it were display-referred. What it does instead, in this order, and what to say:
+
+1. **Say it is log and from which maker.** `log_lut status` reads the file's own tags; XAVC is Sony, BRAW is Blackmagic, and so on. When the tags say nothing, ask the editor which camera shot it - do not guess a maker out loud.
+2. **Premiere's own conversion, chosen from the picture.** `grade_sequence` tries the maker's log colour spaces in Interpret Footage, renders each, scores the result as a display picture and keeps the winner; the row reads `log → Sony S-Log3/S-Gamut3.Cine (4 conversions tried, sony first from the file's tags; chosen by the picture: …)`. Tone and gamut both, no file needed. Tell the editor this went on the project item: every cut of that file sees it, and Discard copy does not undo it.
+3. **The maker's official LUT, on request.** If the editor prefers the maker's own LUT (or the conversions all failed), ask: do they have it, or should the panel fetch it? Say exactly what will be downloaded and from where (`log_lut status` lists the direct link or the manual page). Never search the web for one. Then `log_lut fetch`, then `log_lut apply` at the clip, then confirm from the scopes and grade what comes out.
+
+A tone curve without the gamut is a known failure (greens and reds drift); both routes above carry the gamut.
+
 ## What to distrust
 
 - **A cast reading from a whole frame with a person in it.** Measure the face.

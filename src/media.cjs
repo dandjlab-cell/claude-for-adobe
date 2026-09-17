@@ -29,6 +29,19 @@ function mediaInfo(file) {
 
 // Width and height of a media file's first video stream, or null. ffprobe reads BRAW/R3D containers for this.
 const dimsCache = new Map();
+// The container's own tags (format + first video stream): what the file says about its maker and colour.
+const tagsCache = new Map();
+function mediaTags(file) {
+  if (tagsCache.has(file)) return tagsCache.get(file);
+  const out = {};
+  try {
+    const r = spawnSync(FFPROBE, ["-v", "error", "-select_streams", "v:0", "-show_entries", "format_tags:stream_tags:stream=color_space,color_transfer,color_primaries,color_range", "-of", "default=noprint_wrappers=1", file], { encoding: "utf8" });
+    for (const line of String(r.stdout || "").split("\n")) { const i = line.indexOf("="); if (i > 0) out[line.slice(0, i).replace(/^TAG:/, "")] = line.slice(i + 1); }
+  } catch (_) {}
+  tagsCache.set(file, out);
+  return out;
+}
+
 function mediaDims(file) {
   if (dimsCache.has(file)) return dimsCache.get(file);
   let out = null;
@@ -139,4 +152,4 @@ function frameMatchShare(a, b, tol = 24) {
   return same / 4096;
 }
 
-module.exports = { FFMPEG, MAX_WINDOWS, SILENCE_DB, analyzeLevels, audioLevels, decodePcm, formatLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare };
+module.exports = { mediaTags, FFMPEG, MAX_WINDOWS, SILENCE_DB, analyzeLevels, audioLevels, decodePcm, formatLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare };

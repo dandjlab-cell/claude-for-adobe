@@ -13,7 +13,9 @@ const { checkForUpdate, currentVersion, installUpdate } = require(path.join(exte
 const { classifyMedia, formatClassification } = require(path.join(extensionRoot, "src", "classify.cjs"));
 const { cuesFromWords, toSRT } = require(path.join(extensionRoot, "src", "captions.cjs"));
 const vadModule = require(path.join(extensionRoot, "src", "vad.cjs"));
-const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
+const { MAX_WINDOWS, audioLevels, formatPeakWindows, mediaInfo, mediaDims, mediaTags, resizeImage, frameMatchShare } = require(path.join(extensionRoot, "src", "media.cjs"));
+const { cameraHint: logCameraHint, candidates: logCandidates, pick: logPick, ACCEPT: LOG_ACCEPT } = require(path.join(extensionRoot, "src", "logspace.cjs"));
+const { REGISTRY: LUT_REGISTRY, HOME: LUT_HOME, forMaker: lutsForMaker, isLocal: lutIsLocal, localPath: lutLocalPath, fetchLut } = require(path.join(extensionRoot, "src", "luts.cjs"));
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
@@ -698,6 +700,82 @@ function visionAll(file) {
 }
 // The skin key learned from the hand and face boxes on one exported frame (src/skin.cjs): each box is
 // decoded as its own crop, so no frame geometry is needed - the crop IS the box.
+// Log footage: choose Premiere's own conversion from the picture (src/logspace.cjs). The clip's override
+// list is read from the host, the maker the container names goes first, each candidate is set, rendered
+// once and scored; the first maker's best is kept if it looks like a picture, else every other maker is
+// tried. The override lives on the project item, so the caller says so in the footer. Returns
+// { name, m, rows, tried, hint } with name null when nothing looked like a picture (then restored).
+async function chooseLogConversion(at, track, mediaPath, region, timed, onRender) {
+  const raw = await host("colorSpaces", String(at), String(track));
+  if (raw.indexOf("ERR:") === 0) throw new Error(raw.slice(4));
+  const [, current, original, , namesJoined] = raw.split(COL);
+  const names = namesJoined ? namesJoined.split("|") : [];
+  const hint = logCameraHint({ tags: mediaTags(mediaPath), path: mediaPath });
+  const all = logCandidates(names, hint), own = hint ? all.filter((n) => n.toLowerCase().indexOf(hint) === 0) : [];
+  const tried = [];
+  const tryOne = async (name) => {
+    const r = await host("setColorSpace", String(at), String(track), name);
+    if (r.indexOf("ERR:") === 0) return;
+    const m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); onRender();
+    tried.push({ name, m });
+  };
+  for (const n of own) await tryOne(n);
+  let best = logPick(tried, hint);
+  if (!best.name) { for (const n of all) if (!own.includes(n)) await tryOne(n); best = logPick(tried, hint); }
+  if (best.name) {
+    const r = await host("setColorSpace", String(at), String(track), best.name);
+    if (r.indexOf("ERR:") === 0) throw new Error(r.slice(4));
+    const winner = tried.find((t) => t.name === best.name);
+    return { name: best.name, m: winner.m, rows: best.rows, score: best.score, tried: tried.length, hint, current, original };
+  }
+  await host("setColorSpace", String(at), String(track), current || "");
+  return { name: null, m: null, rows: best.rows, score: best.score, tried: tried.length, hint, current, original };
+}
+
+// The makers' official conversion LUTs, on request and explained (the owner's four steps, 2026-09-17): the
+// panel says the footage is log and from which maker, asks whether the editor has the LUT or wants it
+// fetched, fetches from the maker's own direct link (no searching), and applies it as the clip's input
+// interpretation. `action`: "status" (what is log here, which maker, which LUTs exist, local or fetchable),
+// "fetch" (one id), "apply" (one id at a timeline position, then a scopes confirm), "clear".
+async function logLutTool({ action = "status", id, seconds, track = 1 } = {}) {
+  const card = addTool("log_lut " + action + (id ? " " + id : "") + (seconds !== undefined ? " @" + seconds + "s" : ""), "");
+  try {
+    if (action === "status") {
+      const snap = await readSnapshot();
+      if (snap.error) return err(card, snap.error);
+      const files = [...new Set(snap.clips.filter((c) => c.track === "V" + track && c.mediaPath).map((c) => c.mediaPath))];
+      const lines = [];
+      for (const f of files) {
+        const hint = logCameraHint({ tags: mediaTags(f), path: f });
+        let read = null; try { read = await measureSourceAt(snap.clips.find((c) => c.mediaPath === f).start + 0.5, track, "frame", snap); } catch (_) {}
+        const isLog = read ? gradeLooksLikeLog(read) : null;
+        const luts = hint ? lutsForMaker(hint) : [];
+        lines.push(path.basename(f) + ": " + (isLog === null ? "could not read" : isLog ? "reads as LOG" : "reads as a display picture") + (read ? " (black " + round2(read.luma.p1) + " / white " + round2(read.luma.p99) + " / colour p99 " + round2(read.saturation.p99) + ")" : "") + "; maker from the file's tags: " + (hint || "unknown - ask the editor which camera shot it") + (luts.length ? "; official LUTs: " + luts.map((l) => l.id + (lutIsLocal(l.id) ? " [on this machine]" : l.url ? " [fetchable]" : " [manual download: " + l.page + "]")).join(", ") : ""));
+      }
+      const text = lines.join("\n") + "\nLUTs live in " + LUT_HOME + ". The pass also converts log with Premiere's own colour management (chosen from the picture) without any LUT; the maker's LUT is the alternative the editor may prefer. Ask before fetching, and say what will be downloaded and from where.";
+      card.done(text, true); return { text };
+    }
+    if (action === "fetch") {
+      if (!id || !LUT_REGISTRY[id]) return err(card, "id must be one of: " + Object.keys(LUT_REGISTRY).join(", "));
+      const r = await fetchLut(id);
+      const text = r.path ? (r.cached ? "already on this machine: " : "downloaded from the maker's page to ") + r.path : r.note;
+      card.done(text, true); return { text };
+    }
+    if (action === "apply" || action === "clear") {
+      if (seconds === undefined) return err(card, "seconds is required");
+      let lutPath = "";
+      if (action === "apply") { if (!id || !LUT_REGISTRY[id]) return err(card, "id must be one of: " + Object.keys(LUT_REGISTRY).join(", ")); lutPath = lutLocalPath(id); if (!lutPath || !fs.existsSync(lutPath)) return err(card, "not on this machine yet: fetch " + id + " first"); }
+      const raw = await host("setInputLUT", String(seconds), String(track), lutPath);
+      if (raw.indexOf("ERR:") === 0) return err(card, raw.slice(4) + " - the Interpret Footage door refused; apply the file by hand: Lumetri Color, Basic Correction, Input LUT, Browse, " + (lutPath || "(none)"));
+      const [, lutId, ok, applied] = raw.split(COL);
+      const m = await measureFrameAt(Number(seconds), { region: "frame", keepPlayhead: true });
+      const text = (action === "apply" ? "applied " + id + " as the clip's input LUT" : "input LUT cleared") + " (inputLUTID " + lutId + ", set " + ok + ", interpretation " + applied + "); the render now reads black " + round2(m.luma.p1) + " / white " + round2(m.luma.p99) + " / colour p99 " + round2(m.saturation.p99) + ". This is on the project item (Interpret Footage): every cut of the file sees it, and Discard copy does not undo it.";
+      card.done(text, true); return { text };
+    }
+    return err(card, "action must be status, fetch, apply or clear");
+  } catch (error) { return err(card, error.message); }
+}
+
 // The skin key is learned from the pixels inside Vision's hand/face boxes that are ALSO on Vision's person
 // mask: a hand box on an oak table is mostly table, and oak passes the skin prior (13:15: every learned
 // key lit the whole frame). Without a person mask the boxes alone are used, and the spill check decides.
@@ -1081,6 +1159,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   }
   const lines = [], t0 = Date.now();
   let renders = 0, balanced = 0, touched = 0, stopped = false, logSkipped = 0;
+  const logConverted = {}; // mediaPath -> the conversion chosen (or refused) for that file this run
   // The source decode is only a read of the timeline while it decodes the way Premiere does. On BRAW
   // that is the clip's own settings (Decode Using: Clip, the embedded LUT applied) - and the LUT is a
   // tick box (the owner, 2026-09-16 00:33). One render on the first clip read from source checks it;
@@ -1169,9 +1248,25 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // whatever conversion the clip already has.
     if (readFrom === "source" && !graded && gradeLooksLikeLog(m)) {
       const f0 = m.frame || m;
-      lines.push(label + " [" + (m.region || region) + "] reads as LOG (black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / colour p99 " + round2(f0.saturation.p99) + "): not balanced. A log encode needs a conversion to Rec.709 first - the camera maker's LUT in Lumetri's Input LUT (Sony S-Log2/S-Log3, Canon C-Log, Panasonic V-Log, ARRI LogC ship with Premiere), or Premiere's colour management set to detect log - and this pass grades what comes out of that. Stretching log to display targets is not a grade.");
-      logSkipped++;
-      continue;
+      const logNote = "reads as LOG (black " + round2(f0.luma.p1) + " / white " + round2(f0.luma.p99) + " / colour p99 " + round2(f0.saturation.p99) + ")";
+      // Once per source file: the override is on the project item, so every cut of the file converts with it.
+      let conv = logConverted[c.mediaPath], first = false;
+      if (!conv) {
+        first = true;
+        try { conv = await chooseLogConversion(at, track, c.mediaPath, region, timed, () => renders++); }
+        catch (error) { lines.push(label + ": " + logNote + " and the conversion could not be tried (" + error.message + ")"); logSkipped++; continue; }
+        logConverted[c.mediaPath] = conv;
+      }
+      if (!conv.name) {
+        lines.push(label + " [" + (m.region || region) + "] " + logNote + ": " + conv.tried + " of Premiere's log conversions were tried" + (conv.hint ? " (" + conv.hint + " first, from the file's own tags)" : "") + " and none read as a picture (best score " + conv.score + ", over " + LOG_ACCEPT + "); left as shot. The maker's official LUT is the next thing to try - say the word and the panel fetches it.");
+        logSkipped++;
+        continue;
+      }
+      if (first && conv.m) m = conv.m;
+      else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; }
+      readFrom = "premiere";
+      const cm = conv.m.frame || conv.m;
+      parts.push("log → " + conv.name + " (" + conv.tried + " conversion" + (conv.tried > 1 ? "s" : "") + " tried" + (conv.hint ? ", " + conv.hint + " first from the file's tags" : "") + "; chosen by the picture: black " + round2(cm.luma.p1) + " / white " + round2(cm.luma.p99) + " / colour " + round2(cm.saturation.p99) + ")");
     }
     const seen = m.region || region;
     const sawV = m.vision ? [m.vision.faces && m.vision.faces.length ? m.vision.faces.length + " face" + (m.vision.faces.length > 1 ? "s" : "") : "", m.vision.hands && m.vision.hands.length ? m.vision.hands.length + " hand" + (m.vision.hands.length > 1 ? "s" : "") : ""].filter(Boolean).join(", ") : "";
@@ -1511,6 +1606,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   lines.sort((a, b) => { const ta = /@([\d.]+)s/.exec(a), tb = /@([\d.]+)s/.exec(b); return (ta ? Number(ta[1]) : 0) - (tb ? Number(tb[1]) : 0); }); // ponytail: the reference cut was graded first; the reader wants timeline order
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone (see the row)" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
     + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
+  const convNames = Object.entries(logConverted).filter(([, v]) => v && v.name).map(([k, v]) => path.basename(k) + " → " + v.name);
+  if (convNames.length) lines.push("Log conversions were set as the clips' colour-space interpretation (Interpret Footage, on the project item: every cut of the file and the original sequence see it, and Discard copy does NOT undo it): " + convNames.join("; ") + ". To clear one: Project panel, right-click the clip, Modify, Interpret Footage, Color Management, Color Space Override.");
   if (resumeAt !== null) lines.push("Not finished: the run paused after " + secs + "s so the call would return. Everything above is written and confirmed. To do the rest, call grade_sequence again with start_at=" + resumeAt + " (same track and region); the shot match carries over. If renders are creeping (they do through a long Premiere session), restart Premiere first.");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
   lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
@@ -3287,7 +3384,7 @@ async function mediaInfoTool({ media_path = "" }) {
   catch (error) { return err(card, error.message); }
 }
 
-const TOOLS = { scopes: scopesTool, grade: gradeTool, grade_shot: gradeShotTool, grade_sequence: gradeSequenceTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
+const TOOLS = { log_lut: logLutTool, scopes: scopesTool, grade: gradeTool, grade_shot: gradeShotTool, grade_sequence: gradeSequenceTool, transcript_index: transcriptIndex, audio_cut: audioCut, rough_cut: roughCut, find_takes: findTakesTool, multicam_switch: multicamSwitch, visible_at: visibleAtTool, sound_events: soundEvents, speaker_check: speakerCheck, morph_cut: morphCut, subject_path: subjectPath, scene_cuts: sceneCuts, premiere_shortcut: premiereShortcut, run_extendscript: runExtendScript, sequence_overview: sequenceOverview, preview_frames: previewFrames, analyze_audio: analyzeAudio, remove_silences: removeSilences, remove_pauses: removePauses, read_transcript: readTranscript, transcribe_whisper: transcribeWhisper, media_info: mediaInfoTool, project_bins: projectBins, move_to_bin: moveToBin, classify_clips: classifyClips, create_sequence: createSequence, mute_clip_audio: muteClipAudio, find_in_transcript: findInTranscript, extract_ranges: extractRanges, keep_only: keepOnly, place_broll: placeBroll, list_analysis: listAnalysis, save_notes: saveNotes, set_sequence_size: setSequenceSize, remove_fillers: removeFillers, transcribe_timeline: transcribeTimeline, create_captions: createCaptions, nudge_clip: nudgeClip, clip_transforms: clipTransforms, reframe: reframeTool, fit_region: fitRegionTool, find_on_screen: findOnScreen, snapshot_moments: snapshotMoments, frames_across: framesAcross, layer_frames: layerFrames, seam_frames: seamFrames };
 
 const TOOL_DEFS = [
   { name: "sequence_overview", description: "Live snapshot of the active sequence: name, frame size, duration, and every clip per track with timeline start/end, source in point, and media path. Call this before planning edits instead of probing with scripts.",
@@ -3333,6 +3430,8 @@ const TOOL_DEFS = [
     inputSchema: { type: "object", properties: { texts: { type: "array", items: { type: "string" }, description: "all the words/labels to look for, in one pass" }, text: { type: "string", description: "a single word (or use texts)" }, start_seconds: { type: "number" }, end_seconds: { type: "number" }, step_seconds: { type: "number", description: "default 1; 0.2 minimum; widened automatically beyond 30 frames" } } } },
   // caption_style (captionStyleTool) is built and tested but not registered: it reopens the project, which is
   // wrong for big projects. It returns once captions can be placed on import (TTML) or without a reopen.
+  { name: "log_lut", description: "Log footage and the makers' official conversion LUTs. status: which source files on the track read as log, which maker the file's own tags name (or that it is unknown and the editor should be asked which camera), and which official LUTs exist for that maker - on this machine, fetchable by direct link, or manual. fetch: download one by id from the maker's own page onto this machine (ask the editor first and say what and from where). apply: set a fetched LUT as the clip's input interpretation at a timeline position and confirm from the render. clear: remove it. Note the pass already converts log with Premiere's own colour management chosen from the picture; the maker's LUT is the alternative the editor may prefer.",
+    inputSchema: { type: "object", properties: { action: { type: "string", enum: ["status", "fetch", "apply", "clear"] }, id: { type: "string", description: "A LUT id from status, for fetch and apply." }, seconds: { type: "number", description: "Timeline position of the clip, for apply and clear." }, track: { type: "number", description: "1-based video track, default 1." } } } },
   { name: "clip_transforms", description: "Ground truth for placement: every video clip's Motion Position (frame fractions) and Scale (% of native), with GRAPHIC or footage per clip, for the active sequence or a named one (e.g. the untouched original). Read this instead of estimating from a frame; read it before and after set_sequence_size when graphics matter.",
     inputSchema: { type: "object", properties: { sequence: { type: "string", description: "sequence name; omit for the active one" } } } },
   { name: "reframe", description: "THE call for a shape change on an OPEN timeline: 'make it 9:16', '4:5', '16:9 version'. Never with a bin (refused): raw footage in a bin is rough_cut's job, and the tracking pass on its cut is this call without a bin. For 'check the framing' with no shape change use snapshot_moments, which moves nothing. One deterministic pass: the open timeline is resized on its working copy. Footage fills the frame and is centred, graphics/titles/guides keep their placement, then Premiere's own Auto Reframe effect goes on every footage clip (Premiere analyses each clip's SOURCE and follows the subject inside the frame). Returns the visible moments and the seams as frames with CHECK lines. Afterwards: judge the picture in each frame, nudge_clip (with track) only what is wrong, snapshot_moments once more. motion 'static' = fill-and-centre only, no tracking.",
