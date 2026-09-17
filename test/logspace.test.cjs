@@ -50,7 +50,9 @@ test("the grade wires the chooser: a log clip is converted through Premiere's li
   assert.match(seqTool, /conv = await chooseLogConversion\(at, track, c\.mediaPath, region, timed, \(\) => renders\+\+\);/);
   assert.match(seqTool, /logConverted\[c\.mediaPath\] = conv;/, "once per source file");
   assert.match(seqTool, /readFrom = "premiere";\s*const cm = conv\.m\.frame \|\| conv\.m;/, "the converted read comes from Premiere");
-  assert.match(seqTool, /Discard copy does NOT undo it/);
+  assert.match(seqTool, /until Discard copy puts it back/, "the footer says the override is on the project item and that Discard restores it");
+  assert.match(panel, /for \(const o of c\.overrides \|\| \[\]\) \{ try \{ const r = await host\("setColorSpace", String\(o\.at\), String\(o\.track\), ""\);/, "Discard copy restores the media's own colour space before deleting the copy");
+  assert.match(seqTool, /\(wc\.overrides = wc\.overrides \|\| \[\]\)\.push\(\{ at, track, mediaPath: c\.mediaPath, original: conv\.original \}\)/, "the grade records each override on the working copy");
   const { REGISTRY } = require("../src/luts.cjs");
   assert.ok(REGISTRY["sony-slog3-sgamut3cine-to-709"].url, "the one verified direct link");
 });

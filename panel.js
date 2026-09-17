@@ -333,7 +333,11 @@ function renderCopies() {
 
 async function discardCopy(copyId) {
   const c = workingCopies.get(copyId);
-  if (!c || !await askInline("Delete \"" + c.copyName + "\" and open the original \"" + c.originalName + "\"?", "Discard")) return;
+  if (!c || !await askInline("Delete \"" + c.copyName + "\" and open the original \"" + c.originalName + "\"?" + (c.overrides && c.overrides.length ? " The " + c.overrides.length + " log colour-space interpretation(s) the grade set on the clips' project items are put back too." : ""), "Discard")) return;
+  // A log conversion lives on the PROJECT ITEM, not the copy (the owner, 10:38: "I thought we wanted to
+  // avoid that"): it is put back to the media's own colour space here, while the copy is still the active
+  // sequence and the clip can be found at its time, so Discard keeps its promise.
+  for (const o of c.overrides || []) { try { const r = await host("setColorSpace", String(o.at), String(o.track), ""); log("discard: colour space of " + path.basename(o.mediaPath) + " restored: " + r); } catch (e) { log("discard: could not restore " + o.mediaPath + ": " + e.message); } }
   log("discard copy: " + await host("deleteSequence", copyId, c.originalId));
   workingCopies.delete(copyId);
   renderCopies();
@@ -1264,7 +1268,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         logSkipped++;
         continue;
       }
-      if (first && conv.m) m = conv.m;
+      if (first && conv.m) {
+        m = conv.m;
+        // Remembered on the working copy so Discard copy restores the project item with the sequence.
+        try { const pr = await readProject(); const wc = workingCopies.get(pr.sequenceId); if (wc) (wc.overrides = wc.overrides || []).push({ at, track, mediaPath: c.mediaPath, original: conv.original }); } catch (_) {}
+      }
       else { m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; }
       readFrom = "premiere";
       const cm = conv.m.frame || conv.m;
@@ -1609,7 +1617,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone (see the row)" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
     + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, colour space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   const convNames = Object.entries(logConverted).filter(([, v]) => v && v.name).map(([k, v]) => path.basename(k) + " → " + v.name);
-  if (convNames.length) lines.push("Log conversions were set as the clips' colour-space interpretation (Interpret Footage, on the project item: every cut of the file and the original sequence see it, and Discard copy does NOT undo it): " + convNames.join("; ") + ". To clear one: Project panel, right-click the clip, Modify, Interpret Footage, Color Management, Color Space Override.");
+  if (convNames.length) lines.push("Log conversions were set as the clips' colour-space interpretation (Interpret Footage, on the project item, so every cut of the file sees it, in the original sequence too, until Discard copy puts it back): " + convNames.join("; ") + ". Discard copy restores the media's own colour space along with removing the copy; to clear one by hand: Project panel, right-click the clip, Modify, Color, Use Media Color Space.");
   if (resumeAt !== null) lines.push("Not finished: the run paused after " + secs + "s so the call would return. Everything above is written and confirmed. To do the rest, call grade_sequence again with start_at=" + resumeAt + " (same track and region); the shot match carries over. If renders are creeping (they do through a long Premiere session), restart Premiere first.");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
   lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
