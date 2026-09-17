@@ -2737,5 +2737,10 @@
     "floorBlue": 0
    }
   ]
+ },
+ "satRolloffBlacks": {
+  "_source": "Live curve_sweep 2026-09-17 19:15, C220 @0.5s. The Luma vs Sat shadow roll-off written at depths 0.02 through 0.2 through satRolloff's own shape.",
+  "_result": "NEGATIVE, and worth keeping as one: it does NOTHING to the black end. luma p1 is 8.2 on every row and the paired bottoms are 10.2 / 8.6 / 7.8 on every row, unchanged to the digit; only red's own p1 twitches 9.4 -> 9.0 at the two deepest settings. So the roll-off is NOT the unmodelled 1.99 in the 19:11 black-point chain, and it needs no model for the black point.",
+  "_note": "Swept to 0.2 where the grade writes 0.35 (ROLLOFF_DEPTH). The trend is flat rather than shallow - zero movement, not small movement - so the extrapolation is safe, but 0.35 and 0.5 have not been read."
  }
 }
