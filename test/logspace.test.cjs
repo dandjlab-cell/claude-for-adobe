@@ -84,7 +84,7 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   const tool = panel.slice(panel.indexOf("async function logLutTool"), panel.indexOf("// The skin key is learned"));
   assert.match(tool, /if \(action === "use"\)/);
   assert.match(tool, /const hint = logCameraHint\(\{ tags: mediaTags\(clip\.mediaPath\), path: clip\.mediaPath \}\)/, "the maker comes from the file, not the editor");
-  assert.match(tool, /if \(!p \|\| !fs\.existsSync\(p\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing");
+  assert.match(tool, /if \(!l\.here && \(!p \|\| !fs\.existsSync\(p\)\)\) \{\s*const r = await fetchLut\(l\.id\)/, "fetches only what is missing, and never for a LUT Premiere already ships");
   assert.match(tool, /const moved = Math\.abs\(after\.luma\.p1 - before\.luma\.p1\) > 1/, "judged by the render, not the read-back");
   assert.match(tool, /await host\(where === "source" \? "setInputLUT" : "lumetriLUT", String\(seconds\), String\(track\), ""\);/, "clears the slot it used when nothing worked");
   assert.match(tool, /where === "source" \? "setInputLUT" : "lumetriLUT"/, "clip = Lumetri's Input LUT, source = Interpret Footage");
@@ -92,15 +92,34 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   assert.match(skill, /`log_lut use` at the clip's time does the lot/, "the skill tells the panel to use the one-call form");
 });
 
-test("the grade never changes a source setting on its own: log defaults to ask, and names both routes", () => {
+test("the grade never changes a source setting on its own: log asks with BUTTONS, two binary questions, and carries on in the same pass", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.match(panel, /budget_seconds = 150, log: logArg = "ask" \} = \{\}\)/, "ask is the default");
-  assert.match(seqTool, /if \(log === "ask"\) \{[\s\S]*?Which conversion[\s\S]*?And where[\s\S]*?logSkipped\+\+;\s*continue;/, "it asks which conversion and where, and grades nothing until told");
-  assert.match(seqTool, /Premiere's transform is source-only/, "the one constraint between the two axes is stated");
-  assert.match(seqTool, /goes with Discard copy[\s\S]*?stays; every cut of the file gets it/, "each destination's cost is stated");
-  assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: log === "lut-source" \? "source" : "clip" \}\)/, "the LUT goes where the editor asked");
+  const ask = seqTool.slice(seqTool.indexOf("if (log === \"ask\") {"), seqTool.indexOf("if (/^(lut|builtin)(-source)?$/.test(log))"));
+  assert.ok(ask, "the ask block is still there");
+  assert.match(ask, /await askInline\(/g, "the question is buttons in the message stream, not a paragraph to read");
+  assert.equal(ask.match(/await askInline\(/g).length, 3, "two questions reach the editor - where, and one of the two forms of which conversion (with a built-in to compare, or without)");
+  assert.match(ask, /Which conversion\?/, "question 1 names the choice between the two LUTs");
+  assert.match(ask, /Where does it go\?/, "question 2 is where it goes");
+  assert.match(ask, /Source settings[\s\S]*?stays after Discard copy[\s\S]*?This clip[\s\S]*?goes with Discard copy/, "each destination's cost is on its own button");
+  assert.match(ask, /Premiere ships no built-in conversion for/, "and it says so when there is no built-in to choose");
+  assert.match(ask, /if \(!pick\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining leaves the clip as shot");
+  assert.match(ask, /log = \(pick === "all" \? "builtin" : "lut"\) \+ \(where \? "-source" : ""\)/, "the answer sets the route for the rest of the run");
+  assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: toSource \? "source" : "clip", which \}\)/, "the LUT goes where the editor asked, from the source they asked for");
+});
+
+test("the built-in LUT is Premiere's own file, and it exists for Sony, ARRI and RED only", () => {
+  const { builtinFor, BUILTIN } = require("../src/luts.cjs");
+  assert.deepEqual(Object.keys(BUILTIN).sort(), ["arri", "red", "sony"]);
+  for (const m of ["canon", "panasonic", "fuji", "nikon", "dji"]) assert.equal(builtinFor(m), null, m + " has no built-in conversion in Premiere");
+  const sony = builtinFor("sony");
+  if (sony) { // only on a machine with Premiere installed
+    assert.match(sony.path, /Adobe Premiere Pro.*Lumetri\/LUTs\//, "it is the file inside the application, not a download");
+    assert.match(sony.label, /built-in/);
+    assert.match(builtinFor("sony", "Sony S-Log2/S-Gamut").path, /SLOG2/, "a declared S-Log2 file gets the S-Log2 profile");
+  }
 });
 
 test("the file's own declaration comes first: a tagged log file needs no rendering to identify", () => {

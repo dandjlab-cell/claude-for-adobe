@@ -2,9 +2,9 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
-**Date:** 2026-09-17 (12:20)
+**Date:** 2026-09-17 (12:35)
 **Branch:** `fix/whisper-metal` (not merged to main, not released; the public zip is still **0.1.77**)
-**Last commit:** see `git log -1` — the 01:33 rules (mixed light, scene colour on the white balance) are **not yet run live**; everything up to `dc1baec` ran at 01:27 (7/18, parity matched, 50 s)
+**Last commit:** `13cb188` — log identification reads the file's own declaration first; the conversion question is two choices (which conversion, where it goes). **Nothing since `ca9ae44` has been run live.**
 **Role:** BUILDER
 
 This file is committed at the end of every session (`handoff: …`); docs-only commits need no go from the user, pushes and releases do.
@@ -118,15 +118,16 @@ Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the ev
 
 ## What's Next (in order)
 
-**Who does what:** anything that touches Premiere's GUI (restart, reload the panel, Discard copy, typing in the panel) is the editor's; the agent cannot drive Premiere (computer-use access was declined on 2026-09-08). Agent-doable without the editor: What's Next 2's code side (a read-only QE probe script the editor pastes), item 5's per-channel curve maths and its tests, and any docs. Everything else needs the editor's click and a pasted result.
+**Who does what:** anything that touches Premiere's GUI (restart, reload the panel, Discard copy, typing in the panel) is the editor's; the agent cannot drive Premiere (computer-use access was declined on 2026-09-08). The agent can read the panel's chat exports straight off the external drive: they land in a `_claude-for-adobe_analysis/chat-*.md` folder beside the project being edited (ask the editor for the project folder once, then read the newest export) — do that instead of asking the editor to paste a run.
 
-1. ~~Timing run~~ done; ~~stale Lumetris~~ removed by hand at 00:45. **Now: one `grade this video` on `9d98c54`** (reload only, no host change since `9e3efe3`). Done when: the C227 reference row reads `mixed light … temperature ≈ −2x splits the difference`, its two siblings `matched to … @5.63s` with the same state, the oak at 00:00:04:09 keeps its warmth and the hands their colour by the owner's eye; C193's sibling no longer ends at white 97.6.
-2. ~~Luma vs Sat probe~~ done and in the pass since 00:27 (every touched row carries `sat roll-off:`; it sits in the first batch). Probes pasted into the panel must be documented `app.*`/`qe.*` only — the panel's model refuses `PCX.*` — and the guard must be checked first (`inspectExtendScript`; a `for (…; i++)` with a `[i]` later on the line trips the mutation pattern). If yes, add the colourists' cleanup after the balance: roll saturation off in the deepest shadows and near-whites (Frame.io, the Resolve manual, a Premiere user's default preset). Never on a coloured surface — it drains it. Done when: a read-only QE probe (`getParamValue` on the Hue Saturation curve names) has confirmed or denied a text form, and if confirmed, one live write + scopes read shows the ends desaturating while the median saturation holds.
-3. **Adjustment layers and LUTs** (the user's queued order: after clean footage grades well — it does): detect an adjustment layer above the clip, a Lumetri on it, an Input LUT / Look inside the clip's Lumetri, any other colour effect; when present read from Premiere's render, make the confirm mandatory, list them in the row, and say which layer's grade should be balanced. Pieces exist: components are enumerated per clip; the `visible_at` ledger knows what sits above. Done when: a sandbox run with an adjustment layer above V1 names the layer in every affected row, reads those clips from Premiere, and the tests cover the detection.
-4. **Targeted balance / skin — built on the key's Midtones wheel, writes on since 13:10, awaiting its first run (see the 12:54 bullet above).** Original plan, kept for the record: (a) `skinKey(frame, boxes)` — from the pixels inside Vision's hand/face boxes, the HSL ranges (centre/inner/outer per axis) that cover the skin and not the oak (C227's table sits next to skin in hue: bound the key to the boxes' own statistics, tight); (b) write the key, Show Mask on, one render, measure the selection (share, casts, luma) through the existing scopes, Show Mask off; (c) one sweep of 101 Temperature and 102 Tint inside the key on C198 (the face shot) or C227's hands, seven values each, into `lumetri_sweeps.json`; (d) `skinFor`: solve 101/102 so the keyed pixels' hue lands on the I-line (116–126°, our `skinHue`) and 105 for saturation 20–50%, confirm inside the mask; (e) the row: `skin: key H… → temperature … inside the key → hue 121° ✓`. Canon numbers: hue 116–126°, luma 40–70, saturation 20–50%. Done when: on C227 @4.44 (oak + hands) the hands land on the line and the oak's numbers do not move.
-5. **Pad overshoot on a bottom warm by 12–17** (C220, C229 end blue by 3–5): a smaller nudge cap than 0.5, or per-channel RGB curve end points as the exact parade-end tool (Wild Flour: "bring the blacks of the red curve down"; same levels maths per channel, no new sweep needed). Done when: those two rows end within 1.5 on the blacks axis without a new residual elsewhere.
-6. **Midtones pad for skin** (needs a face shot + a band-statistic midtones sweep; `castMatrix('midtones')` is NaN today), then saturation calibration. Done when: the midtones 2x2 reproduces its sweep rows within ~1 point like the other two wheels, and Saturation has a seven-value sweep in `src/lumetri_sweeps.json`.
-7. Older, unchanged: the 9:16 re-run, release 0.1.78 (gated), the keystroke doorbell decision — all in the archive below.
+1. **Prove the scripted Lumetri LUT write on this Premiere version.** This is the only unverified piece of the log path, and community reports say the write broke in Premiere 23.4–24.0. Editor: restart Premiere (host changed), reload the panel, open the **A7S II** project (the untagged Sony XAVC S interior on the editor's external drive), Discard copy, type `grade this video`. It now **asks** which conversion and where. Answer: Sony's LUT, on the clip. Done when the row reads `log → the maker's LUT, on this clip` followed by a normal grade, **or** the tool says the write did not stick (it judges by the render, not the read-back). Either outcome is the answer.
+2. **The owner's eye on three frames, still outstanding from 2026-09-16 evening.** On the Prototype sandbox: `00:00:21:23` — half the shadow warmth now comes out through the pad (`SCENE_SHARE`), is half right, too much, or not enough? `00:00:15:08` — does it have depth now that Contrast fires? On the A7S II copy after item 1: does the room read as a normally exposed interior? These three answers decide whether `SCENE_SHARE` and the Contrast cap become measured stops or stay fractions.
+3. **Turn the fixed fractions into measured stops.** `SCENE_SHARE` (half a coloured end), the Contrast cap of 40, the Shadows cap of 30 are placeholders chosen after single eye-verdicts — the honest overfitting risk. The flexible version is one mechanism: push until the measured stop (write, confirm, compare the band's saturation or the floor before and after; push further if the objects kept their colour, back off if they lost it). One extra confirm render per rule.
+4. **The S-curve on the Master curve for depth.** The 22:58 sweep proved the Contrast slider is weak and crush-prone on this footage (the body moves ~0.14 a point; the floor crushes 2.8% at +60), so a body of 42 cannot reach 52 with it. We write and model the Master curve exactly, so an S-curve pinned at the black and white points is the right tool. Not started.
+5. **Adjustment layers and LUTs on the clip.** Detect an adjustment layer above the clip, a Lumetri on it, an Input LUT/Look already inside the clip's Lumetri, any other colour effect; when present read from Premiere's render, make the confirm mandatory, and name it in the row. Pieces exist (components are enumerated per clip; the `visible_at` ledger knows what sits above). **Note:** the log work now writes Lumetri's Input LUT itself, so this detection must not mistake our own LUT for the editor's.
+6. **A third camera.** Each new source has found a real gap on its first run (the A7S II found log). Ideally Canon or a phone, and any log footage that *is* tagged, which would exercise the declaration path that has never run live.
+7. **Midtones wheel calibration** (`castMatrix('midtones')` is NaN today) — needed before a midtone cast can be corrected rather than reported. The paste was withdrawn on 2026-09-16 22:14 because the band's median measures the objects, not a cast; a measure that separates the two has to come first.
+8. Older, unchanged: release 0.1.78 (gated on an explicit go), the keystroke doorbell decision — in the archive below.
 
 ## Key Files Changed (this session)
 
@@ -191,18 +192,21 @@ Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the ev
 ```bash
 cd ~/DevApps/claude-for-adobe
 git status --short && git log --oneline -3      # clean after the handoff commit; latest on fix/whisper-metal
-node --test test/*.test.cjs                      # 294: 293 pass, 1 whisper skip
-sh scripts/install.sh                            # (only if the dev panel is missing) symlinks this repo into
-                                                 # ~/Library/Application Support/Adobe/CEP/extensions/ and installs the pre-push privacy hook;
-                                                 # because it is a symlink, src/ and the skills are always current - reload the panel after edits,
-                                                 # restart Premiere only when host/premiere.jsx changed
-# Premiere: restart it (host/premiere.jsx changed today: frames keep, playhead), open the dev panel
-# (Window > Extensions > the dev "Claude for Premiere"); footer must read "dev <sha> (fix/whisper-metal)".
-# Discard the previous working copy: the panel shows a bar above the chat listing "<name> [Claude]" copies
-# with "Open original" / "Discard copy" buttons - click Discard copy (it asks to confirm). Then type in the panel:
-#   grade this video
-# Read the timing column in each row; then start What's Next 2 (Luma vs Sat probe).
+node --test test/*.test.cjs                      # 324: 323 pass, 1 whisper skip (it fetches schemas.adobe.com)
+sh scripts/install.sh                            # only if the dev panel is missing: symlinks this repo into
+                                                 # ~/Library/Application Support/Adobe/CEP/extensions/ and installs the pre-push privacy hook.
+                                                 # It is a symlink, so src/ and the skills are always current: reload the panel after edits,
+                                                 # restart Premiere only when host/premiere.jsx changed (it did on 2026-09-17).
 ```
+
+Then, in Premiere (the editor's clicks, not the agent's):
+
+1. **Restart Premiere** — `host/premiere.jsx` changed (`colorSpaces`, `setColorSpace`, `setInputLUT`, `lumetriLUT`).
+2. Open the dev panel: Window > Extensions > the dev "Claude for Premiere". The footer must read `dev <sha> (fix/whisper-metal)`.
+3. Open the **A7S II** project, Discard copy (the bar above the chat lists `<name> [Claude]` copies with Open original / Discard copy), then type `grade this video`.
+4. It will **ask** which conversion and where. Answer: **Sony's LUT, on the clip.** That is What's Next 1.
+
+The agent reads the result itself from the `_claude-for-adobe_analysis/chat-*.md` exports beside the project on the editor's external drive (newest first) — no pasting needed.
 
 ---
 
