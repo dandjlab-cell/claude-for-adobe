@@ -423,9 +423,24 @@ function goalsFor(m, region = "frame") {
   const wp = f.luma.p99;
   const whiteLow = (state) => frameOf(state).luma.p99 < ACCEPT.whiteMin;
   // Fires within a point of the line too: C200 read 85.1, got no goal, and the curve left it at 84.7.
+  // EXPOSURE, NOT WHITES, to lift the top - changed 2026-09-17 on measurement, and it is a straight
+  // improvement rather than a trade. Whites and Exposure are the SAME control in different units (100
+  // Whites points = 1 stop; both are the gain 2^(stops/2.4)), confirmed on two frames and bit-identical
+  // field for field on one. Downward they are literally the same operation. UPWARD THEY SPLIT, and that is
+  // the whole point: aiming both at the same white point, Whites lands it by CLIPPING - 2.74% of red at
+  // +50, 13.42% at +100 - while Exposure rolls the highlights off and clips nothing at +0.5 or +1 (1.5%
+  // only at +2). Same frame, same render path, same requested gain.
+  //
+  // So the pass had the wrong one of a redundant pair, and the one it had blows the top out. Lifting with
+  // Exposure is strictly less destructive for the same result. Clipping is irreversible, which is why this
+  // did not need a picture judgement to decide - it is damage, not taste.
+  //
+  // Lowering a white point stays on Whites: they are identical in that direction and Whites is the knob a
+  // colorist reaches for. Highlights still finishes, and remains the third genuinely distinct tool - a band
+  // control that clips nothing in either direction (`highlightsForm`).
   if (wp < ACCEPT.whiteMin + 1) {
-    goals.push({ param: "whites", statistic: "whitePoint", target: 92, why: "white point " + round(wp) + " → 92" });
-    goals.push({ param: "highlights", statistic: "whitePoint", target: 92, onlyIf: whiteLow, why: "Highlights finishes what Whites leaves" });
+    goals.push({ param: "exposure", statistic: "whitePoint", target: 92, why: "white point " + round(wp) + " → 92 with Exposure (the same gain as Whites, without the clipping)" });
+    goals.push({ param: "highlights", statistic: "whitePoint", target: 92, onlyIf: whiteLow, why: "Highlights finishes what Exposure leaves" });
   } else if (wp > ACCEPT.whiteMax) goals.push({ param: "whites", statistic: "whitePoint", target: 93, why: "white point " + round(wp) + " → 93" });
 
   // 3. Contrast, on the FRAME's spread, only when flat or harsh, never past +-60.
