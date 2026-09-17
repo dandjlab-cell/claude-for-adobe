@@ -127,3 +127,27 @@ test("the grade does not write channel toes until the paired statistic and a swe
   assert.match(src, /NOT WIRED INTO THE GRADE/, "and the function says why, where the next author will read it");
   assert.match(src, /paired statistic|PAIRED statistic/i);
 });
+
+// The toe sweep (What's Next 1, 2026-09-17): the only knob the grade moves that no tool exposed, and the
+// reason both blue-blacks attempts were reverted for reasoning instead of measuring. Its one piece of
+// arithmetic is that each sweep step writes the bottom point and NOTHING else, so a row's reading is
+// attributable to x alone; and it must carry the clip's own R/G/B curves through untouched.
+test("each curve_sweep step moves the bottom point only, over the clip's own channel curves", () => {
+  const { IDENTITY } = require("../src/curves.cjs");
+  const carried = { Master: [[0.11, 0], [0.4, 0.4], [1, 1]], Red: [[0.03, 0], [1, 1]], Green: IDENTITY.Green, Blue: IDENTITY.Blue };
+  for (const x of [0, 0.02, 0.05, 0.1, 0.15, 0.2]) {
+    const c = levels(x, 1, carried, null);
+    assert.deepEqual(c.Master, x > 0 ? [[x, 0], [1, 1]] : [[0, 0], [1, 1]], "x=" + x + ": the bottom point, no anchor, no second move");
+    assert.deepEqual(c.Red, carried.Red, "x=" + x + ": the clip's own red curve rides along");
+  }
+  // And the sweep restores what it read: levels() never mutates its input.
+  assert.deepEqual(carried.Master, [[0.11, 0], [0.4, 0.4], [1, 1]]);
+});
+
+test("curve_sweep is registered and is calibration-only - it must not be part of the grade", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  assert.match(panel, /TOOLS = \{[^}]*curve_sweep: curveSweepTool/, "in the tool registry");
+  assert.match(panel, /\{ name: "curve_sweep", description: "CALIBRATION, not grading/, "and declared to the model as calibration");
+  assert.equal(panel.match(/curveSweepTool/g).length, 2, "it is defined and registered, and nothing else calls it - the grade never sweeps mid-run");
+});
