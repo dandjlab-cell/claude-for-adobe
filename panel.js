@@ -19,7 +19,7 @@ const { REGISTRY: LUT_REGISTRY, HOME: LUT_HOME, forMaker: lutsForMaker, isLocal:
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, bottomsFor: gradeBottomsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, bottomsFor: gradeBottomsFor, shadowsLiftFor: gradeShadowsLiftFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump, satRolloff: curveSatRolloff } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -1706,7 +1706,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // (src/curves.cjs); the sliders are then solved on the state it predicts.
     const lev = curvesErr ? null : gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m);
     if (curvesErr && (afterBalance.frame || afterBalance).luma.p1 > GRADE_ACCEPT.blackMax) needs.push("curves not read (" + curvesErr + "): the black point is left where it is");
-    const afterLevels = lev ? lev.predicted : afterBalance;
+    // What the Master curve could not reach goes to the Shadows wheel's luma - the Lift half of the pair.
+    // It only ever fires where the curve gave up (its floor cap), and it is capped by the lowest channel's
+    // own room just as the curve is. See shadowsLiftFor for why the curve goes first.
+    const lift = curvesErr ? null : gradeShadowsLiftFor(lev ? lev.predicted : afterBalance, currentWheels);
+    const afterLevels = lift ? lift.predicted : lev ? lev.predicted : afterBalance;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...(bot ? bot.needs : []), ...goals.needs);
     if (temp && temp.sceneColor) parts.push("no white balance (" + temp.why + ")");
@@ -1721,7 +1725,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const bpChain = [["as read", (m.frame || m).luma.p1]];
     if (bot) bpChain.push(["black balance", (bot.predicted.frame || bot.predicted).luma.p1]);
     if (lev) bpChain.push(["curve " + lev.blackIn.toFixed(2), (lev.predicted.frame || lev.predicted).luma.p1]);
+    if (lift) bpChain.push(["shadows lift " + lift.luma.toFixed(3), (lift.predicted.frame || lift.predicted).luma.p1]);
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
+    if (lift) parts.push("shadows lift: " + lift.why);
     // The colorists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
     // Sat, the QE text door, probed 2026-09-16), never on a colored end, judged on the frame as read.
     // Written with the first batch, not after the corrections: the 00:27 run wrote it last and the
@@ -1732,7 +1738,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     else if (sat) parts.push("sat roll-off: " + sat.why);
     else if (currentSat && currentSat.length) parts.push("Luma vs Sat left as found (" + currentSat.length + " points)");
 
-    if (!temp && !padMoves.length && !bot && !lev && !goals.length) {
+    if (!temp && !padMoves.length && !bot && !lev && !lift && !goals.length) {
       const v = gradeVerdict(m, seen);
       balanced += confirm && v.balanced ? 1 : 0;
       lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : ""));
@@ -1743,11 +1749,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    (with `measured` given it renders only after the writes); if that shows damage past the
     //    baseline it restores the sliders and confirms again - the clip's one correction. Otherwise
     //    the correction goes to the pads, if a cast is left and the real reading says how much.
-    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels), corrected = false, hsl = null, shadowsLifted = false;
+    // The Shadows wheel carries no pad any more (padsFor keeps the highlights only), so its luma is free
+    // for the lift and the two cannot collide.
+    let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels, lift ? { shadows: lift.wheels.shadows } : {}), corrected = false, hsl = null, shadowsLifted = false;
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
-      if (padMoves.length) await ww.write(applied);
+      if (padMoves.length || lift) await ww.write(applied);
       // One curve write carries both: levelsFor composed the Master bottom point onto the channel toes.
       if (lev) await cw.write(lev.curves); else if (bot) await cw.write(bot.curves);
       if (sat) await sw.write(sat.points);

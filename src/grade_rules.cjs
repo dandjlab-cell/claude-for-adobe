@@ -228,6 +228,70 @@ function bottomsFor(m, current = null) {
 // end - and it is not where the trouble was: the same run that flipped the blacks left the whites at
 // B-R -0.8. The wheel's luma slider stays where it is - the tonal work is the sliders' job, and a wheel
 // luma pinned at its end is the wrong tool showing. `current` is where the pads are.
+// The black point the Master curve could NOT reach, taken with the Shadows wheel's luma - Lumetri's Lift.
+//
+// The two controls are opposites, which is the point of having both (`shadowsWheelLuma`, swept on C220
+// @0.5s 2026-09-17):
+//   Master curve toe   holds the midtones (pinned at the median and at 0.8) and CLIPS: x=0.05 buys luma
+//                      p1 8.2 -> 3.9 and puts 0.89% of blue on the floor.
+//   Shadows wheel luma spares the shadows and DRAGS the midtones: 0.4 buys 8.2 -> 4.7 for 0.04% on the
+//                      floor - about twenty times cheaper - but takes the median with it, near enough
+//                      point for point (the 2026-09-15 `wheels` block: p50 41.6 -> 38.4 at luma 0.4).
+// So the curve goes first, as far as its floor cap allows, and the wheel takes only what is left. On the
+// ten clips of the 19:24 run that already reached target this changes nothing; on the four that printed
+// "black point read X and left there: the lowest channel has no room under it" it is the difference
+// between reporting a miss and closing it. Clipping cannot be undone, a dragged median can - Contrast and
+// Shadows run after this.
+//
+// Interpolated from the swept rows, not fitted: six points, and the response tapers below 0.35. The
+// slider is an OFFSET, so what transfers to another frame is how much it SUBTRACTS, not where it lands.
+const WHEEL_LUMA_P1 = [[0.5, 8.2], [0.45, 6.3], [0.4, 4.7], [0.35, 3.1], [0.3, 2.4], [0.25, 1.6]];
+const WHEEL_LUMA_FLOOR = 0.3; // under this the sweep starts putting blue on the floor (0.15% at 0.3, 0.35% at 0.25)
+const wheelLumaP1 = (l) => {
+  const t = WHEEL_LUMA_P1;
+  if (l >= t[0][0]) return t[0][1];
+  if (l <= t[t.length - 1][0]) return t[t.length - 1][1];
+  for (let i = 0; i < t.length - 1; i++) { const [x0, y0] = t[i], [x1, y1] = t[i + 1]; if (l <= x0 && l >= x1) return y0 + (y1 - y0) * (x0 - l) / (x0 - x1); }
+  return t[t.length - 1][1];
+};
+const wheelLumaOffset = (l) => WHEEL_LUMA_P1[0][1] - wheelLumaP1(l);
+function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1) {
+  const f = frameOf(m);
+  const bp = f.luma.p1;
+  if (!(bp > ACCEPT.blackMax)) return null;
+  const want = bp - target;
+  // An offset takes every channel down by the same amount, so the lowest channel decides how far it can go
+  // - exactly the guard the curve has. Without it the dry run on C229 (red's own p1 already at 3.5 after
+  // the black balance) asked for an offset of 5.58 and put red at 0.
+  //
+  // This is deliberately conservative, and the reason is worth knowing: the sweep says the wheel barely
+  // floors anything in its whole range (blue 0.01% at neutral, still only 0.35% at 0.25), so its bottom is
+  // SOFT and a straight offset overstates the damage. But that was measured on a frame whose lowest
+  // channel started at 4.7. How it behaves when a channel is already near zero is NOT measured, and
+  // guessing the second half is what got two changes reverted. Cap by the arithmetic until a frame with a
+  // low channel has been swept.
+  const room = Math.max(0, Math.min(f.red.p1, f.green.p1, f.blue.p1) - FLOOR_MIN);
+  const reach = Math.min(want, room);
+  if (reach < 0.5) return null;
+  let luma = 0.5;
+  for (let l = 0.5; l >= WHEEL_LUMA_FLOOR - 1e-9; l -= 0.005) { luma = Math.round(l * 1000) / 1000; if (wheelLumaOffset(luma) >= reach) break; }
+  if (0.5 - luma < 0.01) return null;
+  const got = Math.min(wheelLumaOffset(luma), reach);
+  const predicted = JSON.parse(JSON.stringify(m));
+  for (const g of [predicted, predicted.frame].filter(Boolean)) {
+    if (g.luma) { g.luma.p1 = Math.max(0, round(g.luma.p1 - got)); if (isFinite(g.luma.p50)) g.luma.p50 = round(g.luma.p50 - got * 0.9); }
+    for (const ch of ["red", "green", "blue"]) if (g[ch]) g[ch].p1 = Math.max(0, round(g[ch].p1 - got));
+    const lv = g.bands && g.bands.blacks && g.bands.blacks.levels;
+    if (lv) for (const ch of ["red", "green", "blue"]) if (isFinite(lv[ch])) lv[ch] = Math.max(0, round(lv[ch] - got));
+  }
+  const wheels = Object.assign({}, current || {});
+  wheels.shadows = Object.assign({ hue: 0, sat: 0 }, wheels.shadows || {}, { luma });
+  return { wheels, luma, offset: round(got), predicted,
+    why: "black point " + round(bp) + " → " + round(bp - got) + " with the Shadows wheel's luma at " + luma.toFixed(3) +
+      " (the curve had no room left; a lift clips about 20x less than a toe, at roughly a point of median each)" +
+      (got < want - 0.2 ? (room < want ? "; only " + round(got) + " of " + round(want) + " - the lowest channel has no more room under it" : "; as far as the wheel goes before it crushes too") : "") };
+}
+
 function padsFor(m, current = null) {
   const f = frameOf(m), now = current || {}, wheels = {}, needs = [];
   for (const [wheel, label] of [["highlights", "whites"]]) {
@@ -473,4 +537,4 @@ function skinFor(m, from = { saturation: 100 }) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
+module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
