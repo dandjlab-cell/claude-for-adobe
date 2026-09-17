@@ -77,3 +77,23 @@ same prose file and never sat next to each other. That is the whole argument for
 **The test:** set `autoToneMapEnabled` false on a working copy, sweep Exposure upward, and check whether
 `100·((v/100)^2.4 · 2^stops)^(1/2.4)` now predicts p99. If it does, `src/forward.cjs` can model Exposure
 in both directions and the pass gains a control it currently refuses to use upward.
+
+---
+
+## Doors tried — API probes, expensive to re-test
+
+Each of these cost a live probe. The `forecloses` column is the point: do not spend another one.
+
+| door | result | date | forecloses |
+|---|---|---|---|
+| Premiere's scope values via any API | **No readback.** GPU-resident intermediates drawn straight to the panel; nothing surfaced in any searchable layer | 2026-09-15 | Any further search for a scopes API. Export Frame + our own computation is the native path |
+| Lumetri Input LUT by **name** (`setParamValue("Input LUT", path)`) | Returns true, changes nothing | 2026-09-17 | The "not scriptable" conclusion — it is, just not by name |
+| Lumetri Input LUT by **property index** | **Works.** Property 4 = the .cube path as ASCII, property 6 = 1 for the custom flag. Clear with 6→0, 4→"" | 2026-09-17 | Needing the .prproj patch route, a restart, or a menu entry |
+| Lumetri Input LUT **menu** | Lists only the 8 cubes inside the app bundle; a cube in `~/Library/…/LUTs/Input` appears after restart but **reverts on selection** — wrong slot | 2026-09-17 | The menu route entirely |
+| `setOverrideColorSpace` | **Works**, 34 spaces. Restore with `getOriginalColorSpace()` — the empty "no override" object is not writable back | 2026-09-17 | Needing a native plugin for gamut |
+| Colour Space Transform effect | Adds by name, 9 properties, but **SCS/TCS are driven by two Arb Data blobs that QE returns empty** — render did not change | 2026-09-17 | Driving it without decoding the blob from the .prproj |
+| QE `getParamValue`/`setParamValue` on blob params (wheels, curves, HSL key) | **Works as text.** Dots to write, commas on read | 2026-09-16 | Searching for a numeric API for the blob parameters |
+| `SequenceSettings.setSettings` | Works and is **NOT undoable** — checkpoint before using | 2026-09-17 | Assuming Cmd+Z covers a sequence-setting change |
+| `preview_frames` | Returns the image **inline with no path**; writes nothing durable that the caller can locate | 2026-09-17 | Using it to get pixels on disk — it needs a keep/save option first, which we own |
+| Panel's `run_extendscript` gate | Refuses anything starting with `.export` or `.encode`, deliberately | 2026-09-17 | Script-side frame export; `preview_frames` is the sanctioned path |
+| A native plugin for the program-monitor feed | Still the only route for a **live** feed (Transmit interface) — but not needed for gamut | 2026-09-17 | Reaching for a plugin before trying colour management |
