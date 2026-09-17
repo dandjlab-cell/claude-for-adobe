@@ -707,8 +707,11 @@ async function measureFrameAt(seconds, { region = "frame", reuse = null, keepPla
 // without hair and clothes - the right thing for skin tone); "subject" is Vision's foreground mask, whatever
 // the subject is - a face, hands, a product - which is the general answer to "the subject, not the room".
 // Returns the measurement plus what was actually measured, since a region can fall back to the frame.
-function measureRegion(src, region, reuse = null, seen = undefined) {
-  const frame = measureScopes(decodeRgb(src));
+// `have`: pixels, and their whole-frame numbers, the caller already holds - so a source read does not write
+// a frame out, decode it straight back and measure it twice (88ms a clip of pure round-tripping).
+function measureRegion(src, region, reuse = null, seen = undefined, have = null) {
+  const pixels = () => (have && have.rgb) || decodeRgb(src);
+  const frame = (have && have.frame) || measureScopes(pixels());
   frame.src = src; // the exported PNG: the skin step decodes it again for Vision's boxes
   // A region fixed by an earlier read (its box, as frame fractions): the same pixels, whatever Vision
   // would say about this render. Precision of a box against a mask is a fair trade for consistency.
@@ -722,7 +725,7 @@ function measureRegion(src, region, reuse = null, seen = undefined) {
   const vision = region === "frame" ? null : (seen !== undefined ? seen : visionForGrade(src));
   // "keyed": the frame is Lumetri's HSL Secondary mask view (Show Mask on) - the selected pixels alone.
   if (region === "keyed") {
-    const k = keyedPixels(decodeRgb(src));
+    const k = keyedPixels(pixels());
     if (!k.rgb.length) return Object.assign(frame, { region: "frame", fellBack: "no keyed pixels (is Show Mask on, and does the key select anything?)", vision });
     return Object.assign(measureScopes(k.rgb), { region: "keyed", coverage: k.share / 100, frame, vision });
   }
@@ -741,7 +744,7 @@ function measureRegion(src, region, reuse = null, seen = undefined) {
   if (region === "subject") {
     const found = vision && vision.subjectMask;
     if (!found) return Object.assign(frame, { region: "frame", fellBack: "no subject found", vision });
-    try { return Object.assign(measureScopes(maskRgb(decodeRgb(src), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box, frame, vision }); }
+    try { return Object.assign(measureScopes(maskRgb(pixels(), decodeGray(found.mask))), { region: "subject", coverage: found.coverage, box: found.box, frame, vision }); }
     finally { try { fs.rmSync(found.mask, { force: true }); } catch (_) {} }
   }
   // A mask written for a region that did not need it (hands, face, keyed) is still a file on disk.
@@ -1004,7 +1007,9 @@ async function findSkinTime(start, end, track, snapshot, visible = null) {
     try { const png = sourcePngAt(t, track, snapshot, visible); if (png) { times.push(t); pngs.push(png); } } catch (_) { /* a time the decoder cannot reach */ }
   }
   try {
-    const seen = visionAllMany(pngs);
+    // The colour mode, not the default one: this only ever reads faces and hands off these frames, and the
+    // default mode spends ~90ms a frame on text recognition and ~25ms on a person pass nobody here looks at.
+    const seen = visionForGradeMany(pngs);
     let best = null;
     for (let i = 0; i < seen.length; i++) {
       const v = seen[i];
@@ -1018,15 +1023,6 @@ async function findSkinTime(start, end, track, snapshot, visible = null) {
   } finally { for (const p of pngs) { try { fs.rmSync(p, { force: true }); } catch (_) {} } }
 }
 
-// Every detector on several images in ONE bin/ocr call: one line of JSON per file, in order.
-function visionAllMany(files) {
-  if (!files.length || !fs.existsSync(OCR_BIN)) return [];
-  try {
-    const out = require("node:child_process").execFileSync(OCR_BIN, files, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const lines = out.split("\n").filter(Boolean);
-    return files.map((_, i) => { try { const v = JSON.parse(lines[i] || "null"); return v && !v.error ? v : null; } catch (_) { return null; } });
-  } catch (_) { return []; }
-}
 
 // A packed RGB24 frame cut down to a rectangle given as fractions of it.
 function cropRgb(rgb, width, height, rect) {
@@ -1046,9 +1042,7 @@ function sourcePngAt(seconds, track, snapshot, visible = null) {
   if (!c) return null;
   const raw = sourceFrameRgb(c.mediaPath, toSourceSeconds(seconds, c.start, c.inPoint, c.speed), { maxWidth: 0 });
   const f = cropRgb(raw.rgb, raw.width, raw.height, visible); // only what the timeline shows
-  const png = path.join(os.tmpdir(), "claude-for-adobe-skinhunt-" + Date.now().toString(36) + ".png");
-  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
-  return w.status === 0 ? png : null;
+  return writeFrameImage(f); // four of these a clip on the skin hunt: the cheap write matters most here
 }
 
 // The decode half of a source read: the clip's own frame, its whole-frame numbers, and - when a region
@@ -1066,10 +1060,14 @@ function sourceFrameAt(seconds, track, snap, visible) {
   Object.assign(whole, { region: "frame", source: true, clip: c.name, sourceSeconds: at, cropped: !!visible, decoded: raw.width + "x" + raw.height + (visible ? " → visible " + f.width + "x" + f.height : "") + (raw.frame !== undefined ? " frame " + raw.frame : "") });
   return { c, at, f, whole };
 }
-function writeFramePng(f) {
-  const png = path.join(os.tmpdir(), "claude-for-adobe-source-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7) + ".png");
-  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", png], { input: f.rgb, maxBuffer: 1 << 28 });
-  return w.status === 0 ? png : null;
+// The frame written out for Vision to read. BMP, not PNG: the file exists for one bin/ocr call and is
+// deleted straight after, and PNG's compression costs 352ms a frame against BMP's 18ms - twenty times the
+// write for a temp file nobody keeps, and Vision returns identical faces, hands and subject coverage from
+// either (measured 2026-09-17 13:47). On 18 clips that was 6 of the preread's 11.5 seconds.
+function writeFrameImage(f) {
+  const out = path.join(os.tmpdir(), "claude-for-adobe-source-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7) + ".bmp");
+  const w = require("node:child_process").spawnSync(FFMPEG, ["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f.width + "x" + f.height, "-i", "-", out], { input: f.rgb, maxBuffer: 1 << 28 });
+  return w.status === 0 ? out : null;
 }
 
 async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = null, visible = null) {
@@ -1078,7 +1076,7 @@ async function measureSourceAt(seconds, track = 1, region = "frame", snapshot = 
   const { c, at, f, whole } = sourceFrameAt(seconds, track, snap, visible);
   if (region === "frame") return whole;
   // Regions need Vision, which wants an image file: write the decoded frame out once.
-  const png = writeFramePng(f);
+  const png = writeFrameImage(f);
   if (!png) return Object.assign(whole, { fellBack: "could not write the decoded frame for Vision" });
   try { const m = measureRegion(png, region); return Object.assign(m, { source: true, clip: c.name, sourceSeconds: at, decoded: whole.decoded }); }
   finally { try { fs.rmSync(png, { force: true }); } catch (_) {} }
@@ -1097,9 +1095,10 @@ async function prereadSources(list, track, region, snap, visibleFor, keyOf, midO
       const t0 = Date.now();
       try {
         const got = sourceFrameAt(midOf(c), track, snap, visibleFor(c));
-        const png = region === "frame" ? null : writeFramePng(got.f);
-        got.f = null; // the pixels are in the PNG now, or already measured: do not carry a batch of them
-        staged.push({ c, got, png, ms: Date.now() - t0 });
+        const png = region === "frame" ? null : writeFrameImage(got.f);
+        const rgb = png ? got.f.rgb : null; // measured through directly, not decoded back out of the file
+        got.f = null; // one clip's pixels, not a batch of them
+        staged.push({ c, got, png, rgb, ms: Date.now() - t0 });
       } catch (_) { /* a clip whose file cannot be decoded falls back to a Premiere read in the loop */ }
     }
     const pngs = staged.filter((s) => s.png).map((s) => s.png);
@@ -1111,7 +1110,8 @@ async function prereadSources(list, track, region, snap, visibleFor, keyOf, midO
       try {
         if (!s.png) { out[keyOf(s.c)] = { m: s.got.whole, ms: s.ms }; continue; }
         const vision = seen[i++] || null;
-        const m = measureRegion(s.png, region, null, vision);
+        const m = measureRegion(s.png, region, null, vision, { rgb: s.rgb, frame: s.got.whole });
+        s.rgb = null;
         out[keyOf(s.c)] = { m: Object.assign(m, { source: true, clip: s.got.c.name, sourceSeconds: s.got.at, decoded: s.got.whole.decoded }), ms: s.ms + share };
       } catch (_) { /* this clip reads from Premiere in the loop instead */ }
       finally { if (s.png) { try { fs.rmSync(s.png, { force: true }); } catch (_) {} } }

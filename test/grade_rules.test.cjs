@@ -180,7 +180,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   // A hand can be hidden on the graded frame and open a second later (C228, 16:06), so a clip with no skin
   // on that frame is searched elsewhere - decoded from its own file, all candidates read in one Vision call.
   assert.match(seqTool, /const found = await timed\(\(\) => findSkinTime\(c\.start, c\.end, track, snap, visible\), "read"\);/, "a clip with no skin on the graded frame is searched");
-  assert.match(panel, /function visionAllMany\(files\)/, "several frames go to Vision in one call");
+  assert.match(panel, /function visionForGradeMany\(files\)/, "several frames go to Vision in one call");
   assert.match(seqTool, /await hc\.write\(hueBump\(centre, shift\)\);/, "a bump on the skin's own hue, pinned back to zero either side");
   assert.match(seqTool, /further off than[\s\S]*?await hc\.write\(\[\]\)|await hc\.write\(\[\]\); best = 0;/, "a move that made it worse is removed");
   assert.match(panel, /if \(s\.hsl && s\.hsl\.hueCurve\) await hueCurveWriter\(at, track, "Hue vs Hue"\)/, "a matched cut takes the reference's skin curve");
@@ -393,4 +393,23 @@ test("every clip's first read is one batched pass, bounded in memory", () => {
   const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.match(seq, /const preread = read === "premiere" \? \{\} : await prereadSources\(timelineOrder,/, "every clip, not just the multi-cut ones");
   assert.doesNotMatch(seq, /preread\[keyOf\(c\)\] = \{ m: await measureSourceAt/, "the per-clip preread loop is gone");
+});
+
+// The frame handed to Vision is a temp file read once and deleted. It was a PNG, and PNG's compression cost
+// 352ms a frame against BMP's 18ms - on 18 clips, 6 of the preread's 11.5 seconds, for a file nobody keeps.
+// Vision returns identical faces, hands and subject coverage from either (measured 2026-09-17 13:47).
+test("a frame written for Vision is cheap to write, and its pixels are not decoded back out again", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const w = panel.slice(panel.indexOf("function writeFrameImage("), panel.indexOf("async function measureSourceAt("));
+  assert.match(w, /\.bmp"/, "BMP, not PNG: twenty times the write speed for a file read once");
+  assert.doesNotMatch(panel, /writeFramePng/, "one writer, not two");
+  // The caller already holds the pixels and the frame numbers; measureRegion must be able to take them.
+  const region = panel.slice(panel.indexOf("function measureRegion("), panel.indexOf("function visionForGrade("));
+  assert.match(region, /const pixels = \(\) => \(have && have\.rgb\) \|\| decodeRgb\(src\);/);
+  assert.match(region, /const frame = \(have && have\.frame\) \|\| measureScopes\(pixels\(\)\);/);
+  assert.doesNotMatch(region, /maskRgb\(decodeRgb\(src\)/, "the subject is masked through the pixels in hand");
+  const pre = panel.slice(panel.indexOf("const PREREAD_BATCH"), panel.indexOf("const round2 ="));
+  assert.match(pre, /measureRegion\(s\.png, region, null, vision, \{ rgb: s\.rgb, frame: s\.got\.whole \}\)/);
+  assert.match(pre, /s\.rgb = null;/, "and released right after, so a batch holds one clip's pixels at a time");
 });
