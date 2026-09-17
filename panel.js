@@ -1767,7 +1767,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
               const sk = gradeSkinFor(skinNow, { saturation: 100 }, key.attenuation);
               let after = skinNow;
               const hueNow = Math.round(GRADE_STATS.skinHue(skinNow) * 10) / 10;
-              if (!sk) parts.push("skin: " + skinRegion + " on the line (hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + ")");
+              // "on the line" claimed more than the rule does: 133.8 deg is inside the corridor the pass
+              // leaves alone, but it is 10.8 deg off the line itself, and the row read as if it were on it
+              // (the owner, 14:10). Say the distance, so a shot sitting at the far edge is visible as such.
+              if (!sk) { const off = Math.round((hueNow - GRADE_SKIN_HUE_TARGET) * 10) / 10;
+                parts.push("skin: " + skinRegion + " hue " + hueNow + "° (" + (Math.abs(off) <= 3 ? "on the line" : (off > 0 ? "+" : "") + off + "° off the line, inside the " + GRADE_SKIN_HUE[0] + "-" + GRADE_SKIN_HUE[1] + "° corridor left alone") + "), saturation " + round2(skinNow.saturation.p50) + ")".slice(1)); }
               else if (!SKIN_WRITE) parts.push("skin: " + boxes.length + " " + skinRegion + " hue " + hueNow + "°, saturation " + round2(skinNow.saturation.p50) + " (off the line; skin writes are off - nothing written)");
               else {
                 // Hue vs Hue, not the HSL key: the colourists' own hierarchy puts a hue curve above a
