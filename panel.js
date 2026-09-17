@@ -19,7 +19,7 @@ const { REGISTRY: LUT_REGISTRY, HOME: LUT_HOME, forMaker: lutsForMaker, isLocal:
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -1726,8 +1726,18 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             // the post-curve domain is A (p1 - t) / (A - t); back through the first curve that is
             // x2 = x + xAdd * (a - x) / a.
             const xAdd = (A * (p1 - target) / (A - target)) / 100;
-            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, curveNow + xAdd * (a - curveNow) / a));
-            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
+            // The same guard the FIRST write respects: the bottom point maps every channel, so it cannot
+            // pass the lowest channel's floor. Without it here the correction chased the LUMA black point
+            // straight past the limit the first write had honoured - C229 went 0.06 (held at the lowest
+            // channel bottom) -> 0.14 -> 0.17 and put red under zero while blue floated at +8, which is
+            // exactly what the owner's parade showed at 00:00:09:10 (14:53). Headroom is measured on the
+            // current render and mapped back through the curve already written, like xAdd itself.
+            const floorNow = Math.min(fa.red.p1, fa.green.p1, fa.blue.p1);
+            const xAddCap = Math.max(0, (floorNow - GRADE_FLOOR_MIN) / 100);
+            const wanted = curveNow + xAdd * (a - curveNow) / a;
+            const capped = curveNow + xAddCap * (a - curveNow) / a;
+            const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, capped, wanted));
+            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")" + (wanted > x2 + 0.002 ? " (held at the lowest channel bottom, " + round2(floorNow) + ": further would put it under zero)" : "")); }
           }
         }
         if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {

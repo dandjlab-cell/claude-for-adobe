@@ -410,4 +410,4 @@ function skinFor(m, from = { saturation: 100 }) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL };
+module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
