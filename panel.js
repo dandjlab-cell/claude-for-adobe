@@ -472,22 +472,36 @@ async function refreshFrameNote(snap) {
 // The visibility ledger: what the viewer sees, computed once per timeline state from Premiere's own clip data
 // (one host call) and written next to the project, so decisions are lookups. Keyed by the timeline fingerprint.
 let ledgerCache = { key: "", ledger: null, transforms: null };
+let ledgerGen = 0;
 async function getLedger(snap) {
   snap = snap || timeline || (await readSnapshot().catch(() => null));
   if (!snap || snap.error) return null;
   const key = timelineFingerprint(snap) + "|" + snap.id;
   if (ledgerCache.key === key && ledgerCache.ledger) return ledgerCache;
+  const gen = ++ledgerGen;
   const transforms = await readTransforms();
   const ledger = require(path.join(extensionRoot, "src", "ledger.cjs")).buildLedger(snap, transforms);
-  ledgerCache = { key, ledger, transforms };
+  const built = { key, ledger, transforms };
+  // Overtaken: the caller still gets what it asked for, but a reply for an older timeline must not become
+  // the cache or be written next to the project as the current visibility.
+  if (gen !== ledgerGen) return built;
+  ledgerCache = built;
   try { fs.mkdirSync(analysisDir(), { recursive: true }); fs.writeFileSync(seqFile(".visibility.json"), JSON.stringify({ timeline: key, ...ledger })); } catch (_) {}
   return ledgerCache;
 }
 let ledgerTimer = null;
 function refreshLedgerSoon() { if (refreshSuspended) return; clearTimeout(ledgerTimer); ledgerTimer = setTimeout(() => { getLedger().catch((e) => log("ledger failed: " + e.message)); }, 800); }
 
+// Same overtaking hazard as refreshProject, and worse consequences: `timeline` is the state every tool and
+// every message reads, and pendingChanges is DIFFED against it. clearTimeout only cancels a snapshot that
+// has not started - it does nothing about one already in flight, and readSnapshot has been seen taking
+// 4063ms in the log while the tool wrapper called this again on the other side of it. The stale reply
+// landing last would put an old timeline back and diff the next change against the wrong base.
+let snapshotGen = 0;
 async function snapshotTimeline() {
+  const gen = ++snapshotGen;
   const next = await readSnapshot();
+  if (gen !== snapshotGen) return; // overtaken
   refreshFrameNote(next);
   if (!timeline || timelineFingerprint(timeline) !== timelineFingerprint(next) || (timeline && timeline.id !== next.id)) refreshLedgerSoon();
   if (!(session && session.busy) && timeline) {
@@ -4379,10 +4393,16 @@ try { ui.askScripts.checked = localStorage.getItem("askScripts") !== "no"; } cat
 ui.askScripts.onchange = () => { try { localStorage.setItem("askScripts", ui.askScripts.checked ? "yes" : "no"); } catch (_) {} };
 // Live "what is selected in Premiere" line above the message box. Polled: the Project panel has no selection event.
 let lastSelection = "";
+// A 2s interval and every mouseenter/focus on the window both call this, so two selectionInfo replies can
+// cross - the 18:36 log has one taking 3272ms. Self-healing within a poll, but it puts a stale selection in
+// front of the editor until then, and lastSelection is what the next call compares against.
+let selectionGen = 0;
 async function refreshSelectionLine() {
   if (!document.getElementById("view-chat").classList.contains("active")) return;
+  const gen = ++selectionGen;
   let sel = "";
   try { sel = await host("selectionInfo"); } catch (_) {}
+  if (gen !== selectionGen) return; // overtaken
   if (sel === lastSelection) return;
   lastSelection = sel;
   const bar = ui.selectionBar;

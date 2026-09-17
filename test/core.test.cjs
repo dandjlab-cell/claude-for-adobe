@@ -108,6 +108,29 @@ test("a capability refusal stops the turn; a form refusal can be rewritten", () 
 // reported the original while every read correctly hit the [AI] copy (the 18:36 log: 590ms and 3272ms in
 // one burst, either side of the working copy being made active). Source assertion - panel.js has no module
 // boundary to call across - but the three parts of the guard have to all be present for it to pass.
+// Every function that awaits and then assigns to shared panel state has to take the ticket BEFORE the await
+// and check it after, or a slow reply overwrites a newer one. These are the four that can be called
+// concurrently (host-event bursts, the 2s selection poll, the 400ms snapshot debounce, the tool wrapper);
+// the rest are serialized through toolQueue. Source assertions - panel.js has no module boundary to call
+// across - but each needs all three parts present in the right order to pass.
+test("every concurrently-callable refresh drops a reply it has been overtaken on", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  for (const [gen, fn, awaited, assigns] of [
+    ["snapshotGen", "async function snapshotTimeline()", "await readSnapshot()", "timeline = next;"],
+    ["selectionGen", "async function refreshSelectionLine()", 'await host("selectionInfo")', "lastSelection = sel;"],
+    ["ledgerGen", "async function getLedger(", "await readTransforms()", "ledgerCache = built;"],
+  ]) {
+    const start = panel.indexOf(fn);
+    assert.ok(start > 0, fn + " still exists");
+    const body = panel.slice(start, start + 2200);
+    const iGen = body.indexOf("const gen = ++" + gen + ";"), iAwait = body.indexOf(awaited), iCheck = body.indexOf("if (gen !== " + gen + ")"), iAssign = body.indexOf(assigns);
+    assert.ok(iGen > 0, fn + ": takes a " + gen + " ticket");
+    assert.ok(iGen < iAwait, fn + ": before the await, not after");
+    assert.ok(iCheck > iAwait && iCheck < iAssign, fn + ": and checks it after the await, before assigning");
+  }
+});
+
 test("refreshProject drops a reply a newer refresh has overtaken", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
