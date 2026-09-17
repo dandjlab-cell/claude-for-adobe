@@ -4,7 +4,7 @@
 // frame readings from the 2026-09-15 live runs.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { goalsFor, padsFor, temperatureFor, verdict, WHITE_POINT, SKIN_LUMA, TEMPERATURE_CAP } = require("../src/grade_rules.cjs");
+const { goalsFor, padsFor, bottomsFor, temperatureFor, verdict, WHITE_POINT, SKIN_LUMA, TEMPERATURE_CAP } = require("../src/grade_rules.cjs");
 
 const frame = (p1, p50, p99, rgbP1, rgbP99, extra = {}) => ({
   luma: { min: p1 - 3, p1, p50, p99, max: p99 + 3 },
@@ -12,6 +12,12 @@ const frame = (p1, p50, p99, rgbP1, rgbP99, extra = {}) => ({
   saturation: { p50: 25 }, cast: { cb: -6, cr: 7 }, clipped: { red: 0, green: 0, blue: 0 }, crushed: 0, ...extra,
 });
 const withSubject = (f, subject) => ({ ...subject, frame: f });
+// The darkest 3% as channel LEVELS on one set of pixels - the paired statistic (src/scopes.cjs). The
+// helper above carries only the three independent percentiles, which is precisely the statistic that must
+// never drive a channel toe: 0.1.80 fed it to neutralBottoms and the grade got worse. bottomsFor reads
+// `levels` and nothing else, so a frame without this block gets no black balance at all - by design.
+const withBlacks = (f, red, green, blue) => ({ ...f, bands: { ...(f.bands || {}),
+  blacks: { share: 3, readable: 100, rb: Math.round((blue - red) * 10) / 10, g: Math.round((green - (red + blue) / 2) * 10) / 10, levels: { red, green, blue } } } });
 
 test("a shot with a good white point, neutral parade and normal spread is left alone", () => {
   const f = frame(5, 40, 89, [5, 5, 5], [89, 89, 89.5]);
@@ -106,16 +112,31 @@ test("a subject's own narrow spread is NOT a contrast goal; the frame's is", () 
   assert.equal(c.cap, 60, "an automatic pass never slams contrast to its end");
 });
 
-test("a shadow cast is cancelled with the Shadows wheel's pad, never with temperature", () => {
-  const f = frame(4, 40, 90, [14.5, 23.5, 31.8], [90, 90, 90]); // blacks blue by 17, whites neutral
+// Was "cancelled with the Shadows wheel's pad" until 2026-09-17, when the wheel was measured doing the
+// opposite on the owner's own proof frame (C229 @9.42s: warm by 13 in, blue by 5.1 out, red on the floor).
+// A wheel cancels warm by ADDING BLUE. The instrument changed; the two things this test always guarded -
+// never reach for temperature, never touch the neutral end - did not.
+test("a shadow cast is cancelled with the channel toes, never with temperature or the Shadows wheel", () => {
+  const f = withBlacks(frame(4, 40, 90, [14.5, 23.5, 31.8], [90, 90, 90]), 14.5, 23.5, 31.8); // blacks blue by 17, whites neutral
   assert.equal([...goalsFor(f, "frame")].some((x) => x.param === "temperature"), false);
   assert.equal(temperatureFor(f), null);
-  const pads = padsFor(f).wheels;
-  const sh = pads.shadows;
-  assert.ok(sh && sh.sat > 0.1, "a pad move, sat " + (sh && sh.sat));
-  assert.ok(sh.hue > 0 && sh.hue < 60, "toward orange against blue blacks, got " + sh.hue.toFixed(1));
-  assert.equal(sh.luma, 0.5, "the wheel's luma slider stays centred: the sliders do the tonal work");
-  assert.equal(pads.highlights, undefined, "the whites were neutral: the Highlights pad is left alone");
+  assert.equal(padsFor(f).wheels.shadows, undefined, "the Shadows wheel is out of the blacks entirely");
+  assert.equal(padsFor(f).wheels.highlights, undefined, "the whites were neutral: the Highlights pad is left alone");
+  const bot = bottomsFor(f);
+  assert.ok(bot, "the toes take it");
+  assert.ok(bot.toes.blue > bot.toes.green && bot.toes.green > bot.toes.red, "blue is highest so it is pulled furthest DOWN, red is the floor and is not touched: " + JSON.stringify(bot.toes));
+  assert.equal(bot.toes.red, 0, "the lowest channel is never lifted - that would raise the black point the curve is about to set");
+  assert.deepEqual(bot.curves.Red, [[0, 0], [1, 1]]);
+  assert.ok(bot.predicted.bands.blacks.levels.blue - bot.predicted.bands.blacks.levels.red < 0.2, "and the paired bottoms end level");
+});
+
+test("a channel toe is NEVER driven by the independent percentiles - the 0.1.80 defect, structurally", () => {
+  // The same frame without the paired block: the channel p1s alone say "blue by 17" just as loudly, and
+  // that is the reading that made the grade worse. No levels, no black balance.
+  assert.equal(bottomsFor(frame(4, 40, 90, [14.5, 23.5, 31.8], [90, 90, 90])), null);
+  // And a frame whose percentiles differ while the PAIRED bottoms are level is left alone, which is the
+  // whole point: percentile spread is distribution, not cast.
+  assert.equal(bottomsFor(withBlacks(frame(4, 40, 90, [2, 9, 16], [90, 90, 90]), 8, 8.4, 8.2)), null);
 });
 
 test("a whites cast is cancelled with the Highlights wheel's pad", () => {
@@ -154,8 +175,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
-  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, currentCurves, m)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
-  assert.ok(iPads > 0 && iPads < iLev && iLev < iGoals, "balance on the frame as read, the curve's black point on the balanced state, the sliders on the state after both");
+  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iBot = seqTool.indexOf("gradeBottomsFor(afterPads, currentCurves)"),
+    iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
+  assert.ok(iPads > 0 && iPads < iBot && iBot < iLev && iLev < iGoals, "balance on the frame as read, then the black balance, then the curve's black point on a bottom that is already level, then the sliders on the state after all of it");
+  assert.match(seqTool, /if \(lev\) await cw\.write\(lev\.curves\); else if \(bot\) await cw\.write\(bot\.curves\);/, "the channel toes reach Premiere even when there is no black point to set");
   assert.match(seqTool, /if \(lev && h\.crushed > allow\.crushed\) \{ await cw\.write\(currentCurves \|\| \{\}\);/, "a crush rolls back the curve first, not the whole balance");
   assert.match(seqTool, /undone\.push\("half the white balance"\)/, "a clip rolls the white balance back to half its move, both axes, like the sliders");
   assert.match(seqTool, /if \(tint2 === null && !tintWrote && Math\.abs\(c1\[1\]\) > 1\.5\) \{/, "the correction can introduce Tint for a green residual that only appeared after the temperature move");
@@ -203,12 +226,16 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
 test("a parade end more than 20 off neutral is a colored surface: no pad, no curve, said out loud", () => {
   const { levelsFor } = require("../src/grade_rules.cjs");
   const f = frame(22, 45, 90, [32, 12, 4], [90, 90, 90]); // B-R -28 at the bottom: a red-orange object in shadow
-  const pads = padsFor(f);
-  // 23:12: "left alone" read as an orange picture; half of an object's color now comes out through the pad.
-  assert.ok(pads.wheels.shadows && pads.wheels.shadows.sat > 0, "half a Shadows pad on an object's color: " + JSON.stringify(pads.wheels.shadows));
-  const full = padsFor(frame(22, 45, 90, [22 + 6, 22 - 3, 22 - 8], [90, 90, 90])).wheels.shadows; // the same direction, inside COLORED
-  assert.ok(pads.wheels.shadows.sat < (full ? full.sat * 1.2 : 1), "and not the full pad a light cast would get");
-  assert.ok(pads.needs.some((n) => /the scene's own color - half of it/.test(n)), pads.needs.join(" | "));
+  // 23:12: "left alone" read as an orange picture; half of an object's color still comes out - through the
+  // channel toes now, not the Shadows pad.
+  const bot = bottomsFor(withBlacks(f, 32, 12, 4));
+  assert.ok(bot && bot.toes.red > 0, "half a pull on an object's color: " + JSON.stringify(bot && bot.toes));
+  // Half, said on the frame itself: red's paired bottom is 32 over a floor of 4, and it must land about
+  // halfway (18), not on the floor. A full pull here would drain the object it belongs to.
+  const landed = bot.predicted.bands.blacks.levels;
+  assert.ok(landed.red > 15 && landed.red < 21, "red lands halfway, not on the floor: " + landed.red);
+  assert.ok(landed.red - landed.blue > 10, "so most of the object's own color is still there: " + JSON.stringify(landed));
+  assert.ok(bot.needs.some((n) => /the scene's own color - half of it/.test(n)), bot.needs.join(" | "));
   const lev = levelsFor(f, null, f);
   assert.ok(!lev || lev.blackIn <= 0.03, "and at most a token black-point curve when its lowest channel is already at 4");
 });
@@ -465,4 +492,31 @@ test("the Color correct button runs the deterministic pass, and only chooses sco
   const skill = fs.readFileSync(path.join(root, ".claude", "skills", "color", "SKILL.md"), "utf8");
   assert.match(skill, /Every color request goes through the pass\. The only question is scope\./);
   assert.match(skill, /Never assemble a grade out of single knobs/);
+});
+
+// The owner's own proof frame, as scopes actually read it at 17:21 on 2026-09-17. The pass that shipped
+// that day answered its 13-point warm bottom with a Shadows pad at 204 degrees, ran the pad to its cap
+// across both corrections, and finished at R 5.5 / G 8.2 / B 10.6 - blue by 5.1, the sign flipped, with
+// 0.48% of red driven onto the floor. This is the regression test for that: same input, and the bottoms
+// must come out level without the wheel being pointed at them.
+test("the proof frame's warm bottom is levelled by the toes, and the Shadows wheel never touches it", () => {
+  const { levelsFor } = require("../src/grade_rules.cjs");
+  const m = { luma: { min: 11.4, p1: 14.1, p50: 52.9, p99: 75.7, max: 86.7 },
+    red: { mean: 52.2, p1: 18.8, p99: 74.9 }, green: { mean: 49.7, p1: 12.9, p99: 76.5 }, blue: { mean: 45.1, p1: 8.2, p99: 78.4 },
+    saturation: { p50: 9, p99: 24 }, cast: { cb: -2.6, cr: 1.5 }, clipped: { red: 0, green: 0, blue: 0 }, floor: { red: 0, green: 0, blue: 0 }, crushed: 0,
+    bands: { blacks: { share: 3, readable: 100, rb: -12.9, g: -1.6, levels: { red: 21.6, green: 13.3, blue: 8.6 } },
+             whites: { share: 3, readable: 100, rb: 7.8, g: 1.6, levels: { red: 71.8, green: 74.9, blue: 77.3 } },
+             whites1: { share: 1, readable: 100, rb: 7.1, g: 1.2, levels: { red: 72, green: 75, blue: 77 } } } };
+  assert.equal(padsFor(m).wheels.shadows, undefined, "the instrument that wrote the defect is not reached for");
+  const bot = bottomsFor(m);
+  assert.ok(bot, "the warm bottom is taken");
+  assert.equal(bot.predicted.bands.blacks.rb, 0, "paired bottoms level: -13.0 in, 0 out (the shipped pass turned it into +5.1)");
+  assert.equal(bot.toes.blue, 0, "blue was already lowest and is never lifted");
+  assert.ok(bot.toes.red > bot.toes.green && bot.toes.green > 0, "red was 13 over the floor and moves furthest: " + JSON.stringify(bot.toes));
+  // Nothing is driven onto the floor: every channel's own p1 clears the measured margin.
+  for (const ch of ["red", "green", "blue"]) assert.ok(bot.predicted[ch].p1 >= 2, ch + " stays off the floor at p1 " + bot.predicted[ch].p1);
+  // And the black point still gets set afterwards, on a bottom that is already level.
+  const lev = levelsFor(bot.predicted, bot.curves, m);
+  assert.ok(lev && lev.blackIn > 0.02 && lev.blackIn < 0.1, "a modest Master bottom point finishes the job: " + (lev && lev.blackIn));
+  assert.deepEqual(lev.curves.Red, bot.curves.Red, "and it composes onto the toes rather than replacing them");
 });

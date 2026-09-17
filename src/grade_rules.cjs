@@ -17,7 +17,7 @@
 const { STATISTICS } = require("./grade.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
 const { castAt, solveCast, predictPads, MAX_SAT } = require("./wheels.cjs");
-const { levels, blackInFor, predictLevels, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
+const { levels, blackInFor, predictLevels, toesFor, neutralBottoms, predictBottoms, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -161,13 +161,65 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   return { value: temp ? temp.value : from, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : afterTemp, why: why.join("; ") };
 }
 
-// The casts left after white balance: each end of the parade neutralised with that end's wheel PAD
-// (Shadows for the blacks, Highlights for the whites), solved by inverting the wheel's calibrated
-// response. The wheels' luma sliders stay where they are - the tonal work is the sliders' job, and a
-// wheel luma pinned at its end is the wrong tool showing. `current` is where the pads are.
+// The cast at the parade's BOTTOM, lined up per channel on the RGB curves instead of with the Shadows
+// wheel. This is the colorist's black balance - watch the parade, bring the channel bottoms level - and
+// per-channel curves sit near the top of the accepted hierarchy ("Primaries, Custom curves, Hue vs Hue
+// curves, HSL qualifier" - Cullen Kelly). It differs from the manual version in one way, deliberately: a
+// colorist has lift/offset and can move a channel either way, while this only ever moves the high channels
+// DOWN onto the lowest. Lifting one would raise the black point the curve is about to set, and on the
+// frame below red's bottom sitting 13 above blue's IS the cast - taking it out is not crushing red.
+//
+// Measured 2026-09-17 on C229 @9.42s, the owner's own 00:00:09:10 proof frame. Uncorrected, its paired
+// black levels are R 21.6 / G 13.3 / B 8.6 - warm by 13. The pass answered with a Shadows pad at 204°, ran
+// it to its 0.3 cap, spent both corrections on it (0.27 -> 0.4 -> 0.34), and finished at R 5.5 / G 8.2 /
+// B 10.6: blue by 5.1, sign flipped, with 0.48% of red driven onto the floor. Its own verdict line read
+// "blacks blue by 6.3 (Shadows wheel)". THE PASS WAS THE AUTHOR OF THE BLUE BLACKS.
+//
+// A wheel is a hue-and-saturation rotation of a whole tonal range: it cancels warm by ADDING BLUE, which
+// lifts blue's floor, and cannot lower red without dragging the range with it. A channel toe lowers one
+// channel and touches nothing else - measured isolated to the digit (`channelToe`: pairedRed and
+// pairedGreen identical across six rows while blue moved 7.8 -> 0) and accurate to 0.15 IRE.
+const TOE_MARGIN = 2; // measured (`channelToe._crushCap`): blue's own p1 at 2.7 left 0.02% on the floor, at 0.4 left 0.91%
+function bottomsFor(m, current = null) {
+  const f = frameOf(m);
+  const lv = f.bands && f.bands.blacks && f.bands.blacks.levels;
+  if (!lv || !isFinite(lv.red) || !isFinite(lv.green) || !isFinite(lv.blue)) return null;
+  const floor = Math.min(lv.red, lv.green, lv.blue);
+  const spread = Math.max(lv.red, lv.green, lv.blue) - floor;
+  if (spread <= NEUTRAL) return null;
+  // Over COLORED the bottom is an object's own color, not the light - the same call padsFor makes, and the
+  // same answer: half of it comes out, the rest is the object's and is reported. Pulling a channel all the
+  // way down on a saturated dark surface drains it (C228's blue cloth, 01:00).
+  const scene = spread > COLORED;
+  const share = scene ? SCENE_SHARE : 1;
+  // Where each channel should land: on the lowest of the three for a light cast, only `share` of the way
+  // there when the bottom is an object's own color.
+  const want = {}; for (const ch of ["red", "green", "blue"]) want[ch] = lv[ch] - (lv[ch] - floor) * share;
+  // The cap is the channel's OWN p1, not its paired level: at x = 0.05 blue's paired bottom was a healthy
+  // 3.1 while its own p1 was 0.4 and 0.91% of the frame had already gone to the floor.
+  const caps = {}; for (const ch of ["red", "green", "blue"]) caps[ch] = Math.max(0, (f[ch].p1 - TOE_MARGIN) / (100 - TOE_MARGIN));
+  const toes = toesFor(lv, caps, want);
+  const moved = ["red", "green", "blue"].filter((ch) => toes[ch] > 0.002);
+  if (!moved.length) return null;
+  const held = moved.filter((ch) => toes[ch] >= caps[ch] - 1e-9);
+  const lean = lv.blue > lv.red ? "blue" : "warm";
+  return {
+    curves: neutralBottoms(current, lv, caps, want), toes, predicted: predictBottoms(m, toes),
+    needs: scene ? ["blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + ": at this size much of it is the scene's own color - half of it taken out, the rest is the objects"] : [],
+    why: "blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + " (paired R " + round(lv.red) + " G " + round(lv.green) + " B " + round(lv.blue) + ")" +
+      " → channel toes " + moved.map((ch) => ch + " " + toes[ch].toFixed(3)).join(", ") + (scene ? "; half only, the rest is the scene's color" : "") +
+      (held.length ? "; " + held.join(" and ") + " held at its own p1 (further would put it on the floor)" : ""),
+  };
+}
+
+// The cast left at the parade's TOP after white balance, neutralised with the Highlights wheel PAD, solved
+// by inverting the wheel's calibrated response. No channel toe reaches the top, so the wheel keeps this
+// end - and it is not where the trouble was: the same run that flipped the blacks left the whites at
+// B-R -0.8. The wheel's luma slider stays where it is - the tonal work is the sliders' job, and a wheel
+// luma pinned at its end is the wrong tool showing. `current` is where the pads are.
 function padsFor(m, current = null) {
   const f = frameOf(m), now = current || {}, wheels = {}, needs = [];
-  for (const [wheel, label] of [["shadows", "blacks"], ["highlights", "whites"]]) {
+  for (const [wheel, label] of [["highlights", "whites"]]) {
     const cast = castAt(f, wheel);
     if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
     // A parade end this far off neutral after the white balance is an object's color, not the light:
@@ -410,4 +462,4 @@ function skinFor(m, from = { saturation: 100 }) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
+module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, padsFor, levelsFor, goalsFor, satCurveFor, verdict, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };

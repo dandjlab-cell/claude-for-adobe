@@ -19,7 +19,7 @@ const { REGISTRY: LUT_REGISTRY, HOME: LUT_HOME, forMaker: lutsForMaker, isLocal:
 const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, maskRgb, renderScopes } = require(path.join(extensionRoot, "src", "scopes.cjs"));
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
-const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
+const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, bottomsFor: gradeBottomsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
@@ -1633,17 +1633,24 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const afterTemp = temp ? temp.predicted : m;
     const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
     const padMoves = Object.keys(pads.wheels);
-    const afterBalance = padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
+    const afterPads = padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
+    // The blacks: the channel bottoms lined up on the RGB curves - the colorist's black balance, and NOT
+    // the Shadows wheel, which is what wrote the blue blacks in the first place (see bottomsFor). Solved
+    // before the Master bottom point so the black point is set on a bottom that is already level, and
+    // written in the same curve object: levels() composes onto the channel curves.
+    const bot = curvesErr ? null : gradeBottomsFor(afterPads, currentCurves);
+    const afterBalance = bot ? bot.predicted : afterPads;
     // The black point: the Master curve's bottom point, a levels move that lands where it is asked
     // (src/curves.cjs); the sliders are then solved on the state it predicts.
-    const lev = curvesErr ? null : gradeLevelsFor(afterBalance, currentCurves, m);
+    const lev = curvesErr ? null : gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m);
     if (curvesErr && (afterBalance.frame || afterBalance).luma.p1 > GRADE_ACCEPT.blackMax) needs.push("curves not read (" + curvesErr + "): the black point is left where it is");
     const afterLevels = lev ? lev.predicted : afterBalance;
     const goals = gradeGoalsFor(afterLevels, seen);
-    needs.push(...pads.needs, ...goals.needs);
+    needs.push(...pads.needs, ...(bot ? bot.needs : []), ...goals.needs);
     if (temp && temp.sceneColor) parts.push("no white balance (" + temp.why + ")");
     else if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
+    if (bot) parts.push("black balance: " + bot.why);
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
     // The colorists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
     // Sat, the QE text door, probed 2026-09-16), never on a colored end, judged on the frame as read.
@@ -1655,7 +1662,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     else if (sat) parts.push("sat roll-off: " + sat.why);
     else if (currentSat && currentSat.length) parts.push("Luma vs Sat left as found (" + currentSat.length + " points)");
 
-    if (!temp && !padMoves.length && !lev && !goals.length) {
+    if (!temp && !padMoves.length && !bot && !lev && !goals.length) {
       const v = gradeVerdict(m, seen);
       balanced += confirm && v.balanced ? 1 : 0;
       lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → left alone" + (v.notes.length ? " (" + v.notes.join("; ") + ")" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : ""));
@@ -1671,7 +1678,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
       if (padMoves.length) await ww.write(applied);
-      if (lev) await cw.write(lev.curves);
+      // One curve write carries both: levelsFor composed the Master bottom point onto the channel toes.
+      if (lev) await cw.write(lev.curves); else if (bot) await cw.write(bot.curves);
       if (sat) await sw.write(sat.points);
       if (goals.length) {
         const writers = {};

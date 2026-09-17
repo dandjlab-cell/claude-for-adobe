@@ -182,36 +182,63 @@ function hueBump(centre, shift, width = HUE_BUMP_WIDTH) {
 // cast in the blacks the balance did not take out. Only ever DOWNWARD: lifting a channel's floor would
 // raise the black point that was just set.
 //
-// NOT WIRED INTO THE GRADE, and the reason is the whole lesson. It shipped in 0.1.80 fed with each
+// WIRED 2026-09-17, after the two things 0.1.80 lacked were measured. It shipped in 0.1.80 fed with each
 // channel's own p1 and made the grade worse - balanced fell from 8 clips to 4, black points were crushed
 // under target (C220: 4.3 -> 1.6) and casts grew (blacks 0.4 -> 3.9 blue). A channel's independent p1 is
 // NOT a cast: green's p1 sitting above red's says their distributions differ, not that the blacks are
-// green. The cast at the bottom is a PAIRED statistic - bands.blacks, the darkest 3% of pixels with all
-// three channels read at those same pixels - and it carries differences (rb, g), not absolute levels.
-// Before this is wired again it needs those paired numbers AND a measured toe-to-output model, the way the
-// pad model was swept. Guessing the second half is what broke it.
+// green. The cast at the bottom is a PAIRED statistic - bands.blacks.levels, the darkest 3% of pixels with
+// all three channels read at those same pixels - and THAT is what it is fed now (grade_rules bottomsFor).
+// The model is `channelToe` in src/lumetri_sweeps.json: the line good to 0.15 IRE, one channel moving
+// alone, and a crush cap taken from the channel's own p1 rather than the invented flat 0.12 that was here.
 //
-// `bottoms` are three channel levels (0-100) on a COMMON set of pixels. Returns curves with the toes set.
-function neutralBottoms(current, bottoms, cap = 0.12) {
-  const out = Object.assign({}, current || {});
+// `bottoms` are three channel levels (0-100) on a COMMON set of pixels. `caps` is the largest x each
+// channel may take (a number applies to all three).
+const CHANNELS = ["red", "green", "blue"];
+const LUMA_W = { red: 0.2126, green: 0.7152, blue: 0.0722 }; // Rec.709, the sum the luma p1 is made of
+// `targets` is where each channel should LAND - a number, a per-channel object, or null for the default,
+// which is the lowest of the three (a full pull, the parade's bottoms made level). A caller that wants
+// only part of the cast out - an object's own color rather than the light - passes its own targets.
+function toesFor(bottoms, caps = 0.12, targets = null) {
   const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
+  const capOf = (ch) => (typeof caps === "number" ? caps : (isFinite(caps[ch]) ? caps[ch] : 0.12));
+  const targetOf = (ch) => (targets === null ? floor : (typeof targets === "number" ? targets : targets[ch]));
+  const toes = {};
+  for (const ch of CHANNELS) toes[ch] = Math.max(0, Math.min(capOf(ch), blackInFor(bottoms[ch], targetOf(ch))));
+  return toes;
+}
+
+function neutralBottoms(current, bottoms, caps = 0.12, targets = null) {
+  const out = Object.assign({}, current || {});
+  const toes = toesFor(bottoms, caps, targets);
   for (const ch of ["Red", "Green", "Blue"]) {
-    const p1 = bottoms[ch.toLowerCase()];
-    const x = Math.min(cap, blackInFor(p1, floor));
+    const x = toes[ch.toLowerCase()];
     const rest = (out[ch] || IDENTITY[ch]).filter(([px]) => px > x + 0.02 && px > 0);
     out[ch] = x > 0.002 ? [[x, 0], ...(rest.length ? rest : [[1, 1]])] : [[0, 0], [1, 1]];
   }
   return out;
 }
 
-// What those toes do to the readings: each channel's bottom rises to the shared floor, so the parade ends
-// meet and blacksRB goes to zero. The luma follows the channels it is made of; the confirm reads the truth.
-function predictBottoms(m, bottoms) {
-  const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
+// What those toes do to the readings. Every number follows the SAME levels map the toe is - (v - 100x) /
+// (1 - x), measured to 0.15 IRE on the paired statistic - applied to that channel's own p1 and to its
+// paired band level; the luma p1 follows the Rec.709 sum of the three drops. `toes` are x positions, not
+// levels: the 0.1.80 version took levels and claimed every channel p1 landed on the shared floor, which is
+// only true of the paired statistic and was never true of the independent percentiles it was given.
+// The confirm render reads the truth regardless; this only has to be good enough to solve the next knob on.
+function predictBottoms(m, toes) {
   const out = JSON.parse(JSON.stringify(m));
   const f = out.frame || out;
-  for (const ch of ["red", "green", "blue"]) if (f[ch]) f[ch].p1 = floor;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const map = (v, x) => (x > 0 ? Math.max(0, (v - 100 * x) / (1 - x)) : v);
+  const lv = f.bands && f.bands.blacks && f.bands.blacks.levels;
+  let dropped = 0;
+  for (const ch of CHANNELS) {
+    const x = toes[ch] || 0;
+    if (f[ch]) f[ch].p1 = r1(map(f[ch].p1, x));
+    if (lv && isFinite(lv[ch])) { const was = lv[ch]; lv[ch] = r1(map(was, x)); dropped += LUMA_W[ch] * (was - lv[ch]); }
+  }
+  if (lv) f.bands.blacks.rb = r1(lv.blue - lv.red);
+  if (f.luma) f.luma.p1 = Math.max(0, r1(f.luma.p1 - dropped));
   return out;
 }
 
-module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
+module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, toesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };

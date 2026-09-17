@@ -110,9 +110,20 @@ test("neutralBottoms pulls the high channel's toe down to meet the lowest, and n
   // A Master curve set by the black point survives the channel write.
   const withMaster = neutralBottoms({ Master: [[0.11, 0], [0.4, 0.4], [1, 1]] }, { red: 2.4, green: 3, blue: 5.5 });
   assert.deepEqual(withMaster.Master, [[0.11, 0], [0.4, 0.4], [1, 1]], "the black point is not disturbed");
-  // And the prediction says the ends meet.
-  const after = predictBottoms({ red: { p1: 2.4 }, green: { p1: 3 }, blue: { p1: 5.5 }, luma: { p1: 3 } }, { red: 2.4, green: 3, blue: 5.5 });
-  assert.equal(after.blue.p1 - after.red.p1, 0, "blacksRB goes to zero");
+  // And the prediction says the paired ends meet. It takes the TOE POSITIONS, not levels: the 0.1.80
+  // version took levels and declared every channel's own p1 to be on the shared floor, which is only ever
+  // true of the paired statistic. Here the real C220 @0.5s reading, with the toes bottomsFor would write.
+  const { toesFor } = require("../src/curves.cjs");
+  const m = { red: { p1: 9.4 }, green: { p1: 7.8 }, blue: { p1: 4.7 }, luma: { p1: 8.2 },
+    bands: { blacks: { levels: { red: 10.2, green: 8.6, blue: 7.8 } } } };
+  const toes = toesFor({ red: 10.2, green: 8.6, blue: 7.8 }, 0.3);
+  const after = predictBottoms(m, toes);
+  const lv = after.bands.blacks.levels;
+  assert.deepEqual(lv, { red: 7.8, green: 7.8, blue: 7.8 }, "the paired bottoms land level, which is what the cast IS");
+  assert.equal(after.bands.blacks.rb, 0, "so the paired cast goes to zero");
+  assert.ok(after.red.p1 > 6.5 && after.red.p1 < 7.5, "red's OWN p1 follows the same toe but lands where it lands (" + after.red.p1 + ") - it is not claimed to be on the floor");
+  assert.ok(after.luma.p1 < m.luma.p1 && after.luma.p1 > 6.5, "and the luma follows the Rec.709 sum of the three drops: " + after.luma.p1);
+  assert.deepEqual(m.bands.blacks.levels, { red: 10.2, green: 8.6, blue: 7.8 }, "the reading it was given is not mutated");
 });
 
 // It is deliberately NOT wired into the grade. 0.1.80 wired it fed with each channel's own p1 - which is
