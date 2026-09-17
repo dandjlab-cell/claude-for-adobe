@@ -13,6 +13,7 @@
 "use strict";
 const { solveFor } = require("./grade_solve.cjs");
 const { predict, solveKnob, SWEEPS } = require("./grade_model.cjs");
+const FORWARD = require("./forward.cjs");
 
 // Statistics a grade is read from and steered by. The parade ones are what white balance IS on a
 // scope: the three channels' whites line up when the picture is neutral, whatever color the subject
@@ -193,8 +194,18 @@ const WHITE_CEILING = 95; // the sweep clipped nothing until p99 reached 99.6; 9
 const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites", "shadows", "blacks"]);
 // `baseline` is the damage the shot ARRIVED with (clipped/crushed of the untouched read); without it
 // the reading passed in is taken as the baseline, which is wrong once color writes precede the plan.
-async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null }) {
+// `pixels` is an optional retained RGB SAMPLE of the frame as it stands after everything already written
+// (src/forward.cjs `sample`). When present, every candidate value is run through the forward model on
+// those pixels before it is accepted, and backed off if it would clip or floor past the allowance.
+//
+// This is a GUARD, not a predictor: it never chooses a value, only refuses one. That distinction is the
+// whole reason it is safe to add - the worst it can do is under-move. It exists because on 2026-09-17 the
+// white-point lift was routed through Exposure, whose swept table is railed upward on its calibration
+// frame, so the solver predicted +2 stops would reach p99 90.2 and the real gain of 1.78 took 76.5 to 136.
+// A table of another frame's percentiles cannot see that; the frame's own pixels see it in 6ms.
+async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null, pixels = null }) {
   const before = measured || await measure(); // a caller that has just read the scopes passes the reading
+  let buf = pixels; // walks forward with the accepted moves, so each candidate is judged on the right state
   let renders = measured ? 1 : 2;
   let state = before;
   const plan = [];
@@ -238,6 +249,25 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
       while (!g.ceiling(predict(state, g.param, from, v)) && Math.abs(v - from) > 1 && tries++ < 12) v = from + (v - from) * 0.8;
       if (Math.abs(v - from) <= 1) { plan.push({ ...entry, skipped: "held: any move would pass its own ceiling" }); continue; }
       value = Math.round(v * 100) / 100; predicted = predict(state, g.param, from, value); note = (note ? note + "; " : "") + "held back at its ceiling";
+    }
+    // The forward guard. Judged on the frame's own pixels, composed with everything accepted so far.
+    if (buf && FORWARD.OPS[g.param]) {
+      const allow = allowance(baseline || damage(before), guard);
+      let v = value, tries = 0, caught = null;
+      for (;;) {
+        const d = FORWARD.damageOf(buf, g.param, v);
+        if (!d) break;
+        if (d.clipped <= allow.clipped && d.floored <= allow.crushed) break;
+        caught = d;
+        if (Math.abs(v - from) <= 1 || tries++ >= 12) { v = from; break; }
+        v = from + (v - from) * 0.8;
+      }
+      if (caught && Math.abs(v - value) > 1e-6) {
+        note = (note ? note + "; " : "") + "held by the pixels: " + round(value) + " would clip " + round(caught.clipped) + "% / floor " + round(caught.floored) + "%";
+        value = Math.round(v * 100) / 100;
+        predicted = predict(state, g.param, from, value);
+      }
+      if (Math.abs(value - from) > 1e-6) { const next = FORWARD.apply(buf, g.param, value); if (next) buf = next; }
     }
     plan.push({ ...entry, value, predicted: round(readStat(predicted)), note });
     state = predicted;

@@ -124,4 +124,34 @@ function pipeline(rgb, stages) {
 // The whole point: pixels in, statistics out, with no statistic ever predicted from another statistic.
 function forward(rgb, stages) { return measure(pipeline(rgb, stages)); }
 
-module.exports = { apply, pipeline, forward, OPS, SECTION_ORDER, CONTRAST_PIVOT, BLACKS_LAMBDA, EXPOSURE_GAMMA };
+// A retained sample: every Nth pixel of a decoded frame, sized so a candidate can be evaluated in
+// milliseconds instead of a render. Clip and floor SHARES are what this is used for and they are ratios,
+// so a uniform subsample estimates them without bias; percentiles survive too. 120k pixels is about 6% of
+// a 1080p frame and puts the sampling error on a 1% share near 0.03%.
+const SAMPLE_PIXELS = 120000;
+function sample(rgb, want = SAMPLE_PIXELS) {
+  const n = Math.floor(rgb.length / 3);
+  if (n <= want) return rgb;
+  // The stride is FRACTIONAL on purpose. An integer step covers only want*floor(n/want) pixels, which for
+  // 300k into 120k is the first 80% of the buffer - and pixels are in scanline order, so that is the top
+  // 80% of the picture. A specular in the bottom fifth would never be sampled, and the guard built on it
+  // would report no clipping for a move that clips. Caught by a test frame with its bright tail at the end.
+  const step = n / want;
+  const out = Buffer.allocUnsafe(want * 3);
+  for (let i = 0, j = 0; i < want; i++, j += 3) { const k = Math.floor(i * step) * 3; out[j] = rgb[k]; out[j + 1] = rgb[k + 1]; out[j + 2] = rgb[k + 2]; }
+  return out;
+}
+
+// What a candidate would DO to the frame, from the pixels rather than from a table of another frame's
+// percentiles. Returns the damage shares only - this is a guard, not a predictor, and it is deliberately
+// not used to choose a value. Null when the control has no measured form, so a caller can tell "safe"
+// from "unknown" and treat them differently.
+function damageOf(rgbSample, op, amount, extra) {
+  if (!rgbSample || !OPS[op]) return null;
+  try {
+    const m = measure(apply(rgbSample, op, amount, extra));
+    return { clipped: Math.max(m.clipped.red, m.clipped.green, m.clipped.blue), floored: Math.max(m.floor.red, m.floor.green, m.floor.blue) };
+  } catch (_) { return null; }
+}
+
+module.exports = { apply, pipeline, forward, sample, damageOf, SAMPLE_PIXELS, OPS, SECTION_ORDER, CONTRAST_PIVOT, BLACKS_LAMBDA, EXPOSURE_GAMMA };

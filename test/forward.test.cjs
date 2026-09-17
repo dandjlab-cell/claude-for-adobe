@@ -95,3 +95,49 @@ test("a stage applies in Premiere's section order; a second stage is a second Lu
   const second = pipeline(rgb, [{ contrast: 30 }, { masterToe: 0.05 }]);
   assert.notDeepEqual(measure(first).luma, measure(second).luma, "two instances: the order between them is real");
 });
+
+// The retained sample must cover the WHOLE frame. An integer stride covers only want*floor(n/want)
+// pixels - for 300k into 120k that is the first 80% of the buffer, and pixels are in scanline order, so
+// it is the top 80% of the picture. A specular in the bottom fifth would never be sampled and a guard
+// built on it would report no clipping for a move that clips. This is the frame that caught it.
+test("the sample spans the whole frame, not the first 80% of it", () => {
+  const { sample } = require("../src/forward.cjs");
+  const n = 300000, rgb = Buffer.allocUnsafe(n * 3);
+  for (let i = 0; i < n; i++) { const v = i > n * 0.992 ? 250 : Math.round(120 * i / (n * 0.992)); rgb[i * 3] = v; rgb[i * 3 + 1] = v; rgb[i * 3 + 2] = v; }
+  const s = sample(rgb);
+  assert.equal(s.length / 3, 120000, "the requested size");
+  assert.equal(measure(s).luma.max, measure(rgb).luma.max, "and it sees the brightest pixel, which lives in the last 0.8%");
+  // A frame smaller than the target is returned whole rather than padded or truncated.
+  const small = Buffer.alloc(300);
+  assert.equal(sample(small), small);
+});
+
+// The guard the pass needed on 2026-09-17: the white-point lift was solved from a table that was railed on
+// its calibration frame, so the model said +2 stops reached p99 90.2 while the real gain took 76.5 to 136.
+// A table of another frame's percentiles cannot see that. The frame's own pixels see it in milliseconds.
+test("the forward guard refuses a move that would clip, and stays out of the way when it would not", async () => {
+  const { planShot } = require("../src/grade.cjs");
+  const { sample, apply } = require("../src/forward.cjs");
+  const frame = (topCode, tailShare) => {
+    const n = 300000, rgb = Buffer.allocUnsafe(n * 3);
+    for (let i = 0; i < n; i++) { const v = i > n * (1 - tailShare) ? 250 : Math.round(topCode * i / (n * (1 - tailShare))); rgb[i * 3] = v; rgb[i * 3 + 1] = v; rgb[i * 3 + 2] = v; }
+    return rgb;
+  };
+  const run = async (rgb, withGuard) => {
+    const m = measure(rgb);
+    const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0,
+      goals: [{ param: "whites", statistic: "whitePoint", target: 92, why: "lift" }], pixels: withGuard ? sample(rgb) : null });
+    return r.plan[0];
+  };
+  // A frame whose max is already 98 IRE: any gain at all pushes its specular through the ceiling.
+  const risky = frame(120, 0.008);
+  const off = await run(risky, false), on = await run(risky, true);
+  assert.ok(measure(apply(sample(risky), "whites", off.value)).clipped.red > 0.5, "unguarded, the move clips");
+  assert.ok(Math.abs(on.value) < Math.abs(off.value), "guarded, it is backed off: " + on.value + " against " + off.value);
+  assert.match(on.note, /held by the pixels/, "and the row says the pixels held it");
+  // A frame with headroom: the guard must not interfere at all.
+  const safe = frame(190, 0);
+  const a = await run(safe, false), b = await run(safe, true);
+  assert.equal(b.value, a.value, "same value with and without the guard when nothing would clip");
+  assert.ok(!/held by the pixels/.test(b.note || ""), "and it says nothing");
+});
