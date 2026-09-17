@@ -435,3 +435,71 @@ a form was unknown.
 
 So the remaining work is not more calibration. It is: finish the forms (contrast done, whites and shadows
 in flight), then solve constraint 3 properly.
+
+---
+
+# What we actually know, in picture terms — audit 2026-09-17, 22:00
+
+The question "do we know the table exactly" has a short answer: **no — seven of roughly twenty-nine
+controls have a FORM, and only those transfer.** Everything else is a table of levels measured on one
+frame, or nothing. This is that audit, stated in what each control does to the *picture* rather than to a
+statistic.
+
+A **form** means we know the shape of the operation (a gain, a pivot, an offset, a toe) and can compute it
+on footage nobody has swept. A **table** means we know what happened on one frame and are extrapolating.
+
+## Known as a form — computable on any footage
+
+| control | what it does to the picture | form | frames |
+|---|---|---|---|
+| **Whites** | Scales the whole picture about black. Brightens everything proportionally — a pixel at 80 moves four times as far as one at 20. Blows the top before it lifts the bottom. | `out = in × k`, no pivot. k: −100 0.750, −50 0.865, −20 0.945, +20 1.060, +50 1.152, +100 1.33 | C220, C202 |
+| **Contrast** | Pushes the picture away from mid-grey. Darks get darker, lights lighter, and **the midtones move in whichever direction they already sit** relative to ~48. | `out = P + (in − P)k`, P≈48. k: −100 0.80 … +100 1.18 | C220, C202 |
+| **Shadows** | Lifts or crushes the dark end while barely touching the top. Approximately a gain about the white point, but the midtones run ahead of it at the extremes. | `out = P + (in − P)k`, P≈95–100, **residual up to 1.7 IRE on the median** | C202 (+C220 table) |
+| **Master curve bottom point** | Sets the black point exactly, holding the midtones if anchored. Clips everything below the point — the cost lands entirely on whichever channel is lowest. | `out = (v − 100x)/(1 − x)`, ≤0.6 IRE | C220, C187, C229 |
+| **Channel curve toe** | Lowers **one** channel's bottom and nothing else. The only tool that changes the *spacing* between the parade's floors. Clips that channel. | same line, ≤0.21 IRE, isolation exact to the digit | C220, C229 |
+| **Channel curve lift** | Raises one channel's floor. Clips nothing at all. The other half of a black balance. | `out = 100y + v(1 − y)`, ≤0.3 IRE | C220 |
+| **Shadows wheel luma** | Lowers the shadow end as an offset. Costs essentially no clipping — but drags the midtones down with it, roughly a point for a point. | offset, frame-dependent magnitude (**does not transfer**: 6.6 vs 9.4 for the same move) | C220, C187, C229 |
+
+## Known only as a one-frame table — do not trust off that frame
+
+**Exposure, Temperature, Tint, Highlights, Blacks** — seven-point tables on C220 @0.5s. None has been
+swept anywhere else, so none has a form. Two are worth naming:
+
+- **Blacks** is the most surgical control in the set by collateral (0.33) and the pass barely uses it, on
+  the strength of one unstable run (12 → 1 on one clip, 12 → 10 on the next). If it has a clean form it is
+  the best black-point slider we have. Unmeasured.
+- **Highlights** and **Whites** both steer the white point and must interact; nothing measures how.
+
+**The three colour wheels' hue/sat pads** — a 2×2 response matrix fitted on C220 (`wheelBands`). The
+**Midtones** matrix is *broken*, not merely unmeasured: `castMatrix("midtones")` reads `redP50/greenP50/
+blueP50` keys that the block does not contain and evaluates to `[[null,null],[null,null]]`. Latent only
+because `padsFor` is highlights-only since the black balance landed — but `SKILL.md` calls that wheel
+"calibrated".
+
+**HSL Secondary's temperature / tint / saturation** — swept on C227's hands inside a hand key only.
+`HSL_SAT_GAIN = 0.8` disagrees with its own sweep by about 1.5× (the sweep implies ~0.53 per 100 points);
+measured on different keys, never reconciled.
+
+## Not measured at all
+
+Global **Saturation** and **Vibrance** (`tested: false` in `PARAMS`). The **Master curve's top point**
+(analytic only — `whiteInFor` is defined, exported and unused). **Hue vs Sat**, **Hue vs Luma**,
+**Sat vs Sat**. The **HSL key** itself, **Show Mask**, **Denoise**, **Blur**.
+
+## The interactions we have measured
+
+- **Tonal sliders move the colour balance** (`castCoupling`): `blacksRB` shifts 4.7 across Shadows' range
+  — 3.1× the 1.5 tolerance the balance was solved to — 2.3 across Whites, 1.6 across Contrast.
+- **The black-point tools compete for one finite resource**, the distance from the lowest channel to zero,
+  and what each costs is frame-dependent (`blackEndC229`, `curveToeC187`).
+- **Skin hue rotation is not luma-neutral** — it cost C228 ~3 points of body contrast.
+- **The cast statistic is destroyed by the black point**, and inverts rather than merely fading
+  (`castTrust`).
+
+## What is missing to "calculate it all"
+
+1. A form for **Exposure, Temperature, Tint, Highlights, Blacks** — five sweeps on a second frame.
+2. A form for the **wheel pads**, and a repair of the Midtones matrix.
+3. The **headroom allocation** solved rather than ordered — the one genuinely unsolved problem.
+4. **Interaction terms**: the cast coupling above is measured but not modelled, so it is still discovered
+   by a confirm render instead of pre-compensated.
