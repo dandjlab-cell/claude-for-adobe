@@ -98,7 +98,7 @@ test("the grade never changes a source setting on its own: ONE question, with bu
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.match(panel, /budget_seconds = 150, log: logArg = "ask" \} = \{\}\)/, "ask is the default");
-  const ask = seqTool.slice(seqTool.indexOf("if (log === \"ask\") {"), seqTool.indexOf("if (/^lut(-source)?$/.test(log))"));
+  const ask = seqTool.slice(seqTool.indexOf("if (logMode === \"ask\") {"), seqTool.indexOf("if (/^lut(-source)?$/.test(logMode))"));
   assert.ok(ask, "the ask block is still there");
   assert.equal(ask.match(/await askChoice\(/g).length, 1, "one question, through the panel's one question card - the conversion is not a choice, only where it goes");
   assert.doesNotMatch(panel, /builtinFor|builtin-source/, "Premiere's own LUTs are not offered anywhere: they are not an alternative (the owner, 13:10)");
@@ -108,7 +108,9 @@ test("the grade never changes a source setting on its own: ONE question, with bu
   assert.match(ask, /Lumetri's Input LUT on this clip[\s\S]*?comes off with the copy[\s\S]*?The file's source settings[\s\S]*?and it stays[\s\S]*?Leave it log/, "each answer carries its own cost");
   assert.doesNotMatch(ask, /Discard copy/, "the button says \"the copy\", not the name of a button elsewhere in the panel (13:40)");
   assert.match(ask, /if \(!where \|\| where === "Leave it log"\) \{[\s\S]*?logSkipped\+\+;\s*continue;/, "declining, or not answering, leaves the clip as shot");
-  assert.match(ask, /log = \/source settings\/\.test\(where\) \? "lut-source" : "lut"/, "the answer sets the route for the rest of the run");
+  assert.match(ask, /logMode = \/source settings\/\.test\(where\) \? "lut-source" : "lut"/, "the answer sets the route for the rest of the run");
+  // Not "log": that name belongs to the panel's own logger, and shadowing it broke every grade (13:17).
+  assert.doesNotMatch(seqTool, /(?:^|[;{}\s(])(?:const|let|var)\s+log\b/, "the mode variable must not be called log");
   assert.match(seqTool, /logLutTool\(\{ action: "use", seconds: at, track, where: toSource \? "source" : "clip" \}\)/, "the LUT goes where the editor asked");
 });
 

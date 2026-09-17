@@ -1228,7 +1228,7 @@ const NUDGE_MAX_SAT = 0.5;
 // file from scratch - the very thing the match exists to prevent.
 const gradeMatched = new Map();
 async function gradeSequenceTool({ track = 1, region = "subject", tolerance, read = "auto", confirm = true, start_at = 0, budget_seconds = 150, log: logArg = "ask" } = {}) {
-  let log = logArg === "interpret" ? "premiere" : logArg; // the old name, kept working; "ask" becomes the editor's answer at the first log clip
+  let logMode = logArg === "interpret" ? "premiere" : logArg; // the old name, kept working; "ask" becomes the editor's answer at the first log clip
   const card = addTool("grade sequence V" + track + " (" + region + ")", "");
   setStatus("Grading sequence…");
   // The copy first, then the clips are read from it: the run of 2026-09-15 18:03 skipped this and
@@ -1374,7 +1374,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       // official LUT and it always lands in the same folder (the owner, 13:40: "we don't ask where it goes
       // ... we save it where we always would"). It is fetched first, said out loud with the site it came
       // from, and only then is there something to decide: which slot it goes in.
-      if (log === "ask") {
+      if (logMode === "ask") {
         const hint = logCameraHint({ tags: mediaTags(c.mediaPath), path: c.mediaPath });
         const maker = hint ? hint[0].toUpperCase() + hint.slice(1) : null;
         const got = await lutForMaker(hint);
@@ -1384,10 +1384,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             (got.cached ? "I have " + got.label + " here." : "Downloaded " + got.label + " from " + got.from + ".") + (got.terms && !got.cached ? " " + got.terms : "") + " Where should it go?",
           ["Lumetri's Input LUT on this clip - comes off with the copy", "The file's source settings - every cut of the file, and it stays", "Leave it log"]);
         if (!where || where === "Leave it log") { lines.push(label + ": log, left as shot."); logSkipped++; continue; }
-        log = /source settings/.test(where) ? "lut-source" : "lut"; // and the rest of the run follows it
+        logMode = /source settings/.test(where) ? "lut-source" : "lut"; // and the rest of the run follows it
       }
-      if (/^lut(-source)?$/.test(log)) {
-        const toSource = log === "lut-source";
+      if (/^lut(-source)?$/.test(logMode)) {
+        const toSource = logMode === "lut-source";
         const r = await logLutTool({ action: "use", seconds: at, track, where: toSource ? "source" : "clip" });
         if (r.isError) { lines.push(label + ": " + logNote + ". " + r.text); logSkipped++; continue; }
         logPart = "log → the maker's official LUT, " + (toSource ? "in the file's source settings (stays after Discard)" : "on this clip (goes with Discard)");

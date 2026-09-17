@@ -331,3 +331,26 @@ test("editing verbs from the scripting skill (QE extract, razor, lift, rippleDel
     "app.enableQE(); qe.project.getActiveSequence().rippleDelete(); 1",
   ]) { const r = inspectExtendScript(s); assert.equal(r.rejection, null, s); assert.equal(r.mutating, true, "not mutating: " + s); }
 });
+
+// A tool that declares a local named after one of the panel's own globals shadows it for its whole body,
+// and the call fails at runtime with "<name> is not a function" - only on the path that reaches the call.
+// This is not hypothetical: `let log = ...` inside grade_sequence (2026-09-17) hid the panel's log() and
+// broke every grade of non-log footage, on a line that had worked for weeks. The panel is one big script,
+// so the shadow is silent at parse time and only shows up in a run.
+test("no tool shadows a panel global that it also calls", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const globals = [...panel.matchAll(/^(?:async )?function ([a-zA-Z_$][\w$]*)\s*\(/gm)].map((m) => m[1]);
+  const starts = [...panel.matchAll(/^(?:async )?function ([a-zA-Z_$][\w$]*)\s*\(/gm)];
+  const clashes = [];
+  starts.forEach((m, i) => {
+    const body = panel.slice(m.index, i + 1 < starts.length ? starts[i + 1].index : panel.length);
+    for (const g of globals) {
+      if (g === m[1]) continue;
+      const declared = new RegExp("(?:^|[;{}\\s(])(?:const|let|var)\\s+" + g + "\\b").test(body);
+      const called = new RegExp("[^\\w.$]" + g + "\\s*\\(").test(body);
+      if (declared && called) clashes.push(m[1] + " declares a local \"" + g + "\" and also calls " + g + "()");
+    }
+  });
+  assert.deepEqual(clashes, []);
+});
