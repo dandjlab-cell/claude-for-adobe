@@ -90,3 +90,13 @@ test("log_lut use is one call: maker from the file, fetch if missing, apply, jud
   const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "colour", "SKILL.md"), "utf8");
   assert.match(skill, /`log_lut use` at the clip's time does the lot/, "the skill tells the panel to use the one-call form");
 });
+
+test("the grade never changes a source setting on its own: log defaults to ask, and names both routes", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(panel, /budget_seconds = 150, log = "ask" \} = \{\}\)/, "ask is the default");
+  assert.match(seqTool, /if \(log === "ask"\) \{[\s\S]*?both need your word[\s\S]*?logSkipped\+\+;\s*continue;/, "it reports and grades nothing until the editor picks");
+  assert.match(seqTool, /it is a source setting and stays after Discard copy/, "the cost of the interpretation route is stated");
+  assert.match(seqTool, /if \(log === "lut"\) \{\s*const r = await logLutTool\(\{ action: "use", seconds: at, track \}\);/, "the LUT route goes on the clip");
+});
