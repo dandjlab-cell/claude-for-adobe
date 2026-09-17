@@ -90,3 +90,37 @@ test("the roll-off shape holds the middle within 0.04 and desaturates only the e
   assert.ok(shadowsOnly(0) < -0.3 && Math.abs(shadowsOnly(1)) < 0.01 && Math.abs(shadowsOnly(0.95)) < 0.04);
   assert.equal(satRolloff({ shadows: false, whites: false }), null);
 });
+
+// A cast in the blacks that outlived the balance goes to the RGB curves, per channel - the tool a colourist
+// reaches for. The wheel is a hue-and-saturation rotation of a whole tonal range and it overshoots: on the
+// 2026-09-17 14:09 run C202's Shadows pad went 0.13 -> 0.31 -> 0.18 across two corrections and still left
+// the blacks blue by 3.1. A channel's own toe is a levels move and lands where the arithmetic says.
+test("neutralBottoms pulls the high channel's toe down to meet the lowest, and never lifts one", () => {
+  const { neutralBottoms, predictBottoms, IDENTITY } = require("../src/curves.cjs");
+  const c = neutralBottoms(null, { red: 2.4, green: 3.0, blue: 5.5 }); // blue +3.1 over red
+  assert.deepEqual(c.Red, [[0, 0], [1, 1]], "the lowest channel is not touched");
+  assert.ok(c.Blue[0][0] > c.Green[0][0], "the highest channel moves most");
+  assert.equal(c.Blue[0][1], 0, "a toe sets an input black, it does not lift an output");
+  for (const ch of ["Red", "Green", "Blue"]) assert.ok(c[ch][0][0] >= 0, ch + " never goes negative (no channel is lifted)");
+  // The arithmetic: crushing blue by (5.5 - 2.4) on the line to (1,1).
+  assert.ok(Math.abs(c.Blue[0][0] - (5.5 - 2.4) / (100 - 2.4)) < 1e-9);
+  // Already neutral: nothing is written.
+  const flat = neutralBottoms(null, { red: 4, green: 4, blue: 4 });
+  for (const ch of ["Red", "Green", "Blue"]) assert.deepEqual(flat[ch], IDENTITY[ch], ch + " is left as the identity");
+  // A Master curve set by the black point survives the channel write.
+  const withMaster = neutralBottoms({ Master: [[0.11, 0], [0.4, 0.4], [1, 1]] }, { red: 2.4, green: 3, blue: 5.5 });
+  assert.deepEqual(withMaster.Master, [[0.11, 0], [0.4, 0.4], [1, 1]], "the black point is not disturbed");
+  // And the prediction says the ends meet.
+  const after = predictBottoms({ red: { p1: 2.4 }, green: { p1: 3 }, blue: { p1: 5.5 }, luma: { p1: 3 } }, { red: 2.4, green: 3, blue: 5.5 });
+  assert.equal(after.blue.p1 - after.red.p1, 0, "blacksRB goes to zero");
+});
+
+test("the grade reaches for the curves only once the wheel is done with the blacks", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(seq, /const BOTTOM_TOL = 2\.5;/);
+  assert.match(seq, /if \(!next\.shadows && bottomsOff > BOTTOM_TOL\)/, "never while the Shadows wheel is still moving, or the two fight");
+  assert.match(seq, /await cw\.write\(toes \? neutralBottoms\(cur, toes\) : cur\)/, "one curve write carries the black point and the cast");
+  assert.match(seq, /parade bottoms " \+ round2\(bottomsOff\) \+ " apart/, "and the row says what it did and why");
+});

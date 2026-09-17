@@ -32,7 +32,12 @@ const SKIN_LUMA = [40, 70];      // a face: light skin 60-70, dark skin 40-60; a
 // her toward red because the target sat at the red end of the corridor. So: the band runs from the line
 // up into the oranges, and skin is only ever brought TO the line from the red/magenta side. From the
 // yellow side (past 140, a green cast) it comes down to the corridor's yellow end, never to the line.
-const SKIN_HUE = [116, 140];
+// The corridor the pass leaves alone. The ceiling was 140 after a fair face went 135 -> 124 degrees and
+// read "way too pink" (2026-09-16 22:23) - but the fault there was the TARGET, not the tool: everything
+// aimed at 123, so that face was rotated 11 degrees toward red on purpose. The aim is asymmetric now
+// (a correction from above lands on 132), so the same face moves 3.3 degrees rather than 11, and the
+// ceiling comes back down to where skin that reads orange is actually worked on (the owner, 14:30).
+const SKIN_HUE = [116, 132];
 const SKIN_HUE_TARGET_LO = 123, SKIN_HUE_TARGET_HI = 132; // where a correction aims from below / from above
 // Percent of the vectorscope radius; ~30 reads natural on Rec.709. The band is a rule of thumb for skin in
 // general (hands are arguably the better reference: no makeup), and it is ASYMMETRIC in what it means. All

@@ -20,7 +20,7 @@ const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, mask
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
-const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump } = require(path.join(extensionRoot, "src", "curves.cjs"));
+const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump, neutralBottoms } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
@@ -1373,6 +1373,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   // a mismatch switches the run to Premiere reads and says so.
   let parity = null;
   const PARITY_MAX = 1.5; // verified 2026-09-15: parade identical, median within 0.4
+  // How far apart the parade's three bottoms may sit before the RGB curves take the rest. 2.5 is inside
+  // what the wheel model already calls neutral (a cast under 1.5 is not chased), so the curves only see
+  // what actually outlived the balance - the 3-to-6 point blue blacks the 14:09 run kept reporting.
+  const BOTTOM_TOL = 2.5;
   // Shot match: one grade per SOURCE file. The first cut of a file is graded; every later cut of the
   // same file gets the same Lumetri state and one confirm (the owner, 2026-09-16 00:52: C227's three
   // cuts had three grades, temperature -64 / -83 / -47, and "look very different").
@@ -1648,6 +1652,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       for (let pass = corrected ? 1 : 0; confirm && pass < 2; pass++) {
         if (gradeVerdict(state, state.region || seen).balanced) break;
         const fb = stateBefore.frame || stateBefore, fa = state.frame || state, next = {}, notes = [];
+        let toes = null; // per-channel RGB curve bottoms, when a cast in the blacks outlives the wheel
         for (const w of Object.keys(padSolved)) {
           const after = wheelCastAt(fa, w);
           if (Math.hypot(after[0], after[1]) <= 1.5) continue;
@@ -1665,6 +1670,19 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             else { next[w] = cand; notes.push(w + " pad → " + round2(cand.hue) + "°/" + round2(cand.sat) + (n.capped ? " (cap)" : "") + (held ? " (held back: a channel bottom would reach the floor)" : "")); }
           }
           else notes.push(w + " pad is not the tool for what is left");
+        }
+        // What the wheel could not take out of the BLACKS goes to the RGB curves, per channel - the move a
+        // colourist makes for exactly this (the owner, 14:30: "the issue with blacks looking blue is
+        // something that should be fixed by the tools colourists actually use"). A wheel is a hue-and-
+        // saturation rotation of a whole range and it overshoots: C202's Shadows pad went 0.13 -> 0.31 ->
+        // 0.18 across two corrections on the 14:09 run and still left the blacks blue by 3.1. A channel's
+        // own toe is a levels move that lands where the arithmetic says. Only when the wheel is done with
+        // it - either it declined the job or it is being held at the floor - so the two never fight.
+        const bottomsOff = Math.max(fa.red.p1, fa.green.p1, fa.blue.p1) - Math.min(fa.red.p1, fa.green.p1, fa.blue.p1);
+        if (!next.shadows && bottomsOff > BOTTOM_TOL) {
+          toes = { red: fa.red.p1, green: fa.green.p1, blue: fa.blue.p1 };
+          const high = ["red", "green", "blue"].sort((x, y) => fa[y].p1 - fa[x].p1)[0];
+          notes.push("parade bottoms " + round2(bottomsOff) + " apart → RGB curves: " + high + " toe pulled down to meet the others");
         }
         // The white balance, from the real reading: the temperature model transfers a little strong on
         // the -24..-37 moves (whites still blue by 3-5 on the 21:50 run). Same least-squares scale as
@@ -1730,13 +1748,19 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + ")"); }
           }
         }
-        if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null) {
+        if (Object.keys(next).length || curve2 !== null || temp2 !== null || tint2 !== null || toes) {
           stateBefore = state; wbBefore = state;
           tempWrote = temp2 !== null; tintWrote = tint2 !== null;
           if (temp2 !== null) { await tw.set(temp2); tempBase = tempNow; tempNow = temp2; }
           if (tint2 !== null) { await tiw.set(tint2); tintBase = tintNow; tintNow = tint2; }
           if (Object.keys(next).length) { padBase = Object.assign({}, applied); applied = Object.assign({}, applied, next); await ww.write(applied); }
-          if (curve2 !== null) { await cw.write(curveLevels(curve2, 1, currentCurves, lev.anchor)); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
+          // One curve write carries both: the Master toe is the black point, the channel toes are the cast.
+          if (curve2 !== null || toes) {
+            let cur = currentCurves;
+            if (curve2 !== null) { cur = curveLevels(curve2, 1, currentCurves, lev.anchor); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
+            else cur = curveLevels(curveNow, 1, currentCurves, lev && lev.anchor);
+            await cw.write(toes ? neutralBottoms(cur, toes) : cur);
+          }
           state = await confirmMeasure(); renders++;
           parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
         } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }

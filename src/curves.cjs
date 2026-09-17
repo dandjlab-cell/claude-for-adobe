@@ -178,4 +178,35 @@ function hueBump(centre, shift, width = HUE_BUMP_WIDTH) {
   return pts.sort((a, b) => a[0] - b[0]);
 }
 
-module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
+// Line the parade's three bottoms up, per channel, on the RGB curves - the move a colourist makes for a
+// cast in the blacks that the balance did not take out. A colour wheel is a hue-and-saturation rotation of
+// a whole tonal range and it overshoots: on the 14:09 run C202's Shadows pad went 0.13 -> 0.31 -> 0.18 over
+// two corrections and still left the blacks blue by 3.1. A channel's own toe is a levels move, and it lands
+// where the arithmetic says: the channel sitting above the lowest one is crushed down to meet it.
+//
+// Only ever DOWNWARD. Lifting a channel's floor would raise the black point that was just set, and a
+// colourist takes a cast out of the blacks by pulling the high channel down, not by pushing the others up.
+// `bottoms` are the three channel p1 readings (0-100). Returns curves with Red/Green/Blue toes set.
+function neutralBottoms(current, bottoms, cap = 0.12) {
+  const out = Object.assign({}, current || {});
+  const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
+  for (const ch of ["Red", "Green", "Blue"]) {
+    const p1 = bottoms[ch.toLowerCase()];
+    const x = Math.min(cap, blackInFor(p1, floor));
+    const rest = (out[ch] || IDENTITY[ch]).filter(([px]) => px > x + 0.02 && px > 0);
+    out[ch] = x > 0.002 ? [[x, 0], ...(rest.length ? rest : [[1, 1]])] : [[0, 0], [1, 1]];
+  }
+  return out;
+}
+
+// What those toes do to the readings: each channel's bottom rises to the shared floor, so the parade ends
+// meet and blacksRB goes to zero. The luma follows the channels it is made of; the confirm reads the truth.
+function predictBottoms(m, bottoms) {
+  const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
+  const out = JSON.parse(JSON.stringify(m));
+  const f = out.frame || out;
+  for (const ch of ["red", "green", "blue"]) if (f[ch]) f[ch].p1 = floor;
+  return out;
+}
+
+module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
