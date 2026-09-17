@@ -3660,5 +3660,166 @@
     "floorBlue": 0.07
    }
   ]
+ },
+ "whitesRule": {
+  "_source": "Second-frame sweep 2026-09-17, C202 @23.94s, ungraded, via slider_sweep. Fitted against the C220 `whites` block.",
+  "_theRule": "WHITES IS A PURE MULTIPLICATIVE GAIN ABOUT ZERO: out = in * k. No pivot term - P solves to within +-1.6 of zero at every setting, inside the fit's own error bar (quantization is 1/255 ~ 0.39 and P's uncertainty is delta/(1-k), about +-7 at k=0.94). k by slider: -100 0.750 | -50 0.865 | -20 0.945 | 0 1 | +20 1.060 | +50 1.152 | +100 1.33.",
+  "_outOfSample": "k was fitted on p99 alone. p1 and the median were NOT used and both follow it: p1 10.87/10.6, 12.55/12.5, 13.70/13.7, 15.37/15.3, 16.71/16.5; median 41.16/41.2, 47.51/47.5, 51.85/51.8, 58.21/58.4, 63.26/63.5. Max residual 0.2 IRE. This is the cleanest form in the file.",
+  "_clippingNote": "At +100 p99 is pinned at 100 with 13.42% of red clipped, so k cannot be read from p99 there; the two unclipped statistics recover it independently and agree - p1 gives 1.324, the median 1.335. +50 already clips 2.74% of red, which is why the pass backs this knob off.",
+  "rows": [
+   {
+    "value": -100,
+    "lumaP1": 10.6,
+    "lumaP50": 41.2,
+    "lumaP99": 63.5,
+    "lumaMax": 72.9,
+    "blacksRB": -5.5,
+    "satP50": 13,
+    "clipRed": 0
+   },
+   {
+    "value": -50,
+    "lumaP1": 12.5,
+    "lumaP50": 47.5,
+    "lumaP99": 73.3,
+    "lumaMax": 84.3,
+    "blacksRB": -6.3,
+    "satP50": 15,
+    "clipRed": 0
+   },
+   {
+    "value": -20,
+    "lumaP1": 13.7,
+    "lumaP50": 51.8,
+    "lumaP99": 80,
+    "lumaMax": 91.8,
+    "blacksRB": -6.7,
+    "satP50": 16,
+    "clipRed": 0
+   },
+   {
+    "value": 0,
+    "lumaP1": 14.5,
+    "lumaP50": 54.9,
+    "lumaP99": 84.7,
+    "lumaMax": 97.3,
+    "blacksRB": -7.1,
+    "satP50": 17,
+    "clipRed": 0
+   },
+   {
+    "value": 20,
+    "lumaP1": 15.3,
+    "lumaP50": 58.4,
+    "lumaP99": 89.8,
+    "lumaMax": 100,
+    "blacksRB": -7.5,
+    "satP50": 18,
+    "clipRed": 0.01
+   },
+   {
+    "value": 50,
+    "lumaP1": 16.5,
+    "lumaP50": 63.5,
+    "lumaP99": 97.6,
+    "lumaMax": 100,
+    "blacksRB": -8.2,
+    "satP50": 19,
+    "clipRed": 2.74
+   },
+   {
+    "value": 100,
+    "lumaP1": 19.2,
+    "lumaP50": 73.3,
+    "lumaP99": 100,
+    "lumaMax": 100,
+    "blacksRB": -9.4,
+    "satP50": 22,
+    "clipRed": 13.42
+   }
+  ]
+ },
+ "shadowsForm": {
+  "_source": "Second-frame sweep 2026-09-17, C202 @23.94s, ungraded, via slider_sweep.",
+  "_theForm": "APPROXIMATELY a gain about a HIGH pivot, and NOT exactly one. Solving out = P + (in - P)k from p1 and p99 puts P at 95-100 across the range (110.7 / 99.0 / 99.4 / 98.7 / 94.9 / 91.4) and p99 is nearly spared, moving 3.2 in total against p1's 21.1. So 'a gain about the white point' is the right first-order description - it is a dark-areas control, as Adobe calls it.",
+  "_whereItDeparts": "The median is the out-of-sample check and it fails systematically, in a signed and monotone way: predicted against measured, -4.7 / -1.8 / -0.4 / +0.8 / +1.2 / +1.7. Nothing clips or floors on the positive side, so the +0.8 to +1.7 is real - the midtone moves further than a constant gain allows. Shadows is a band-weighted curve that a single gain approximates near neutral and departs from at the ends.",
+  "_aFalsificationDOWNGRADED": "The panel's session offered a stronger argument - at -100 the median moves -9.0 while p1 moves only -7.4, and a mid value moving further than an extreme one on the same side is impossible for ANY gain about ANY pivot. The logic is right but it rests on the one row that is floor-contaminated (0.04/0.02/0.06% on the floor), and on every other row p1 does move further than the median. So the hard impossibility argument is not available; what stands is the softer, cleaner evidence above. Recorded because the difference matters: an approximate form you know the error of is usable, an impossible one is not.",
+  "rows": [
+   {
+    "value": -100,
+    "lumaP1": 7.1,
+    "lumaP50": 45.9,
+    "lumaP99": 82.7,
+    "blacksRB": -2.7,
+    "satP50": 19,
+    "floorRed": 0.04,
+    "floorBlue": 0.06
+   },
+   {
+    "value": -50,
+    "lumaP1": 9.8,
+    "lumaP50": 50.6,
+    "lumaP99": 83.9,
+    "blacksRB": -4.7,
+    "satP50": 19,
+    "floorRed": 0.01,
+    "floorBlue": 0.03
+   },
+   {
+    "value": -20,
+    "lumaP1": 12.2,
+    "lumaP50": 53.3,
+    "lumaP99": 84.3,
+    "blacksRB": -6.3,
+    "satP50": 18,
+    "floorRed": 0,
+    "floorBlue": 0.02
+   },
+   {
+    "value": 0,
+    "lumaP1": 14.5,
+    "lumaP50": 54.9,
+    "lumaP99": 84.7,
+    "blacksRB": -7.1,
+    "satP50": 17,
+    "floorRed": 0,
+    "floorBlue": 0.01
+   },
+   {
+    "value": 20,
+    "lumaP1": 16.9,
+    "lumaP50": 56.9,
+    "lumaP99": 85.1,
+    "blacksRB": -8.2,
+    "satP50": 16,
+    "floorRed": 0,
+    "floorBlue": 0
+   },
+   {
+    "value": 50,
+    "lumaP1": 20.8,
+    "lumaP50": 59.2,
+    "lumaP99": 85.5,
+    "blacksRB": -9.8,
+    "satP50": 15,
+    "floorRed": 0,
+    "floorBlue": 0
+   },
+   {
+    "value": 100,
+    "lumaP1": 28.2,
+    "lumaP50": 63.1,
+    "lumaP99": 85.9,
+    "blacksRB": -11.8,
+    "satP50": 12,
+    "floorRed": 0,
+    "floorBlue": 0
+   }
+  ]
+ },
+ "castCoupling": {
+  "_source": "Read off the C202 slider sweeps, 2026-09-17. NEUTRAL - what the pass calls a balanced parade end - is 1.5.",
+  "_finding": "THE TONAL SLIDERS MOVE THE COLOUR BALANCE THE WHITE BALANCE JUST SET, by more than the acceptance tolerance. blacksRB shift from neutral across each slider's range: shadows 4.7 (3.1x tolerance), whites 2.3 (1.5x), contrast 1.6 (1.1x). Saturation moves with them too - sat p50 runs 17 -> 12 under shadows and 17 -> 22 under whites.",
+  "_orderConsequence": "The pass solves the white balance and the pads FIRST, then writes the tonal sliders, and nothing re-checks the cast afterwards except the confirm render. On a clip where Shadows runs to +50 for a dark subject - which the 19:24 run did on four clips - that is about 2.7 of blacksRB moved after the balance was set, nearly twice the tolerance it was solved to. This is a real reason the corrections exist, and it is arithmetic rather than noise: it can be predicted and pre-compensated instead of discovered by a render."
  }
 }
