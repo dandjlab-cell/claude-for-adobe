@@ -122,8 +122,20 @@ the frames the work gets judged on. They were not timecoded in the message.
 > already carries a flat-topped white plateau from a large white wall and a spread of only 9.8-61.6, i.e.
 > the "midtones with no separation" sitting in the *source* rather than in the correction.
 >
-> **Two questions that split it immediately, for the owner:** was the cloth going *in* or coming *out*?
-> (out = C193, in = C233 or C231). Was the white wall in frame? (prominent = C231, a sliver = C193).
+> **Frame 2 CONFIRMED as C193 from independent evidence** - no owner input needed. A VLM frame-description
+> review of this exact source exists at
+> `~/DevApps/ASI-Evolve/.worktrees/experiment-20260912/prototype-local/coarse-attempts-description-review.json`
+> (clip `A056_05072049_C193`, 69 described frames). It records three takes of one action chain -
+> *open dishwasher → extend rack → remove the cloth-covered object* - with frame-level captions including
+> "The hand is lifting the blue cloth-covered object out of the dish rack, which is now mid-air" and "The
+> person's hand is in the middle of lifting the blue cloth cover out of the dishwasher rack". That is the
+> owner's description verbatim, arrived at by a different method than the frame render, so C231 is out.
+>
+> **What that qRAFT worktree does and does not contain**, since it will be asked again: the 51-file
+> `batch-output/qraft/` cache is **optical flow** (RAFT at 6 fps - `flow`, `moving`, `dir_x/y`,
+> `coherence`, `tx/ty`, `rot_deg`, `resid`) over the full ~142 s camera source files, for motion and cut
+> work. It carries no colour and no content description. The ONLY VLM description artifact is the C193
+> review above - no other clip has one, so it cannot help with frame 1.
 
 1. **Left uncorrected — flat, and the blacks still blue.** Green stems across a warm out-of-focus interior.
    The parade never reaches the bottom: all three channels stop well above 0 and blue's floor sits lifted
