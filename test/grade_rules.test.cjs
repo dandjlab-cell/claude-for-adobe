@@ -438,3 +438,21 @@ test("the black-point correction cannot push a channel under zero", () => {
   assert.ok(allowed(0.14, 1.8, 8.2) < 0.145, "a channel already at 1.8 earns almost nothing more (0.17 was the bug)");
   assert.ok(allowed(0.06, 40, 12.2) > 0.13, "a frame with room still gets the full correction");
 });
+
+// "Colour this" with one clip selected had nothing correct to call: grade_shot is STEERED - the caller
+// supplies the goals - so the model invented targets and asked for contrast 85 on a clip the canon caps at
+// 40 (2026-09-17 15:04). The deterministic pass now takes a position and grades that clip alone.
+test("the deterministic pass can grade one clip, and the skill sends single-shot work there", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  assert.match(panel, /log: logArg = "ask", seconds \} = \{\}\)/, "grade_sequence takes a position");
+  const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
+  assert.match(seq, /const one = timelineOrder\.filter\(\(c\) => at >= c\.start && at < c\.end\);/, "one clip, by timeline position");
+  assert.match(seq, /no footage at " \+ at \+ "s on V"/, "and it says so when the position is off the track");
+  assert.ok(seq.indexOf("timelineOrder = one;") < seq.indexOf("const preread ="), "the filter happens before the preread, so only that clip is read");
+  const def = panel.slice(panel.indexOf('{ name: "grade_sequence"'), panel.indexOf('{ name: "audio_cut"'));
+  assert.match(def, /never grade_shot, which takes goals YOU choose/, "the tool says why grade_shot is not the tool for a balance");
+  const skill = fs.readFileSync(path.join(__dirname, "..", ".claude", "skills", "colour", "SKILL.md"), "utf8");
+  assert.match(skill, /`grade_sequence` with `seconds`/);
+  assert.match(skill, /steered by YOU/, "and the skill says what grade_shot actually is");
+});

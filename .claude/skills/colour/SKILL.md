@@ -26,9 +26,14 @@ only the confirms render; `confirm: false` makes it render-free at the price of 
 word, and it then withholds the balanced count. You decide nothing per shot; say the one-line plan, call it, then relay its
 table and the undo line (Discard copy removes all of it). Stop ends it after the current clip.
 
-Then taste, if the editor asks for it, on top of the balanced base: `grade_shot` for a shot,
-`grade` for one knob - "warmer", "more contrast on the interview", "match these two" (measure the one
-they like, drive the other to its numbers; same-kind shots only).
+**One shot, or a clip selected in the timeline: `grade_sequence` with `seconds`.** Same canon, same caps,
+same confirms, on that clip alone. "Colour this" with a clip selected is this call - not `grade_shot`.
+
+`grade_shot` and `grade` are for TASTE on top of a balanced base, and they are steered by YOU: you supply
+the goals, so they cannot apply the canon and will not hold its caps. Reaching for `grade_shot` to balance
+a shot means inventing targets, and on 2026-09-17 15:04 that produced `contrast → 85` on a clip the canon
+caps at 40, because a balance is not a look. Use them for "warmer", "more contrast on the interview",
+"match these two" (measure the one they like, drive the other to its numbers; same-kind shots only).
 
 ## Measure the subject, not the frame
 
