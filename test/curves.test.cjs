@@ -117,22 +117,27 @@ test("neutralBottoms pulls the high channel's toe down to meet the lowest, and n
 
 // It is deliberately NOT wired into the grade. 0.1.80 wired it fed with each channel's own p1 - which is
 // not a cast - and balanced fell from 8 clips to 4, with black points crushed under target (C220 4.3 -> 1.6)
-// and casts grown (blacks 0.4 -> 3.9 blue). Wiring it again needs two things, and as of 2026-09-17 ONE of
-// them exists: (a) the paired band statistic - DONE, bands.<band>.levels, the darkest 3% as channel levels
-// on one set of pixels, tested in scopes_bands.test.cjs; (b) a measured PER-CHANNEL toe model - NOT DONE.
-// curveToe swept the Master curve and proved it is a rigid translation, which is why the black point can
-// never fix this; the channel curves have not been swept (curve_sweep with curve: "Blue"). Until (b) lands
-// the call stays out of the grade, and this test is what stops it going in quietly.
-test("the grade does not write channel toes until the paired statistic and a swept model exist", () => {
+// and casts grown (blacks 0.4 -> 3.9 blue). Wiring it again needed two things and BOTH now exist
+// (2026-09-17): (a) the paired band statistic - bands.<band>.levels, the darkest 3% as channel levels on
+// one set of pixels, tested in scopes_bands.test.cjs; (b) a measured per-channel toe model - channelToe,
+// swept on C220's Blue curve, the line good to 0.15 IRE and one channel moving alone.
+//
+// So the guard changes shape. It no longer forbids the wiring; it pins the two things 0.1.80 got wrong, in
+// whichever state the code is in: the input must be the PAIRED levels and never the channel p1s, and the
+// cap must be the measured one (a channel's own p1 held at or above ~2) and not the invented flat 0.12.
+test("channel toes, whenever they are wired, take the paired levels and the measured crush cap", () => {
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
-  assert.doesNotMatch(panel, /neutralBottoms\s*\(/, "not called: see the note above neutralBottoms in src/curves.cjs");
-  assert.doesNotMatch(panel, /neutralBottoms[,:}\s]*=/, "and not imported, so it cannot be called under another name");
   const sweeps = require("../src/lumetri_sweeps.json");
-  if (sweeps.channelToe) assert.fail("a channelToe block exists now - precondition (b) is met, so re-attempt the wiring and rewrite this test");
+  assert.ok(sweeps.channelToe && sweeps.channelToe.rows.length, "(b): the per-channel toe is swept");
+  assert.match(sweeps.channelToe._crushCap, /ownP1 - 2\) \/ 98/, "and the cap it measured is written down");
+  const scopes = fs.readFileSync(path.join(__dirname, "..", "src", "scopes.cjs"), "utf8");
+  assert.match(scopes, /const levels = all >= 1/, "(a): the paired levels statistic exists");
+  if (!/neutralBottoms\s*\(/.test(panel)) return; // not wired yet - both inputs are ready, the wiring is next
+  assert.match(panel, /neutralBottoms\([^)]*\.levels/, "fed the PAIRED band levels - feeding it channel p1s is exactly what broke 0.1.80");
+  assert.doesNotMatch(panel, /neutralBottoms\([^)]*\b(red|green|blue)\.p1/, "and not the independent percentiles");
   const src = fs.readFileSync(path.join(__dirname, "..", "src", "curves.cjs"), "utf8");
-  assert.match(src, /NOT WIRED INTO THE GRADE/, "and the function says why, where the next author will read it");
-  assert.match(src, /paired statistic|PAIRED statistic/i);
+  assert.doesNotMatch(src, /NOT WIRED INTO THE GRADE/, "if it is wired, that note must no longer say otherwise");
 });
 
 // The toe sweep (What's Next 1, 2026-09-17): the only knob the grade moves that no tool exposed, and the

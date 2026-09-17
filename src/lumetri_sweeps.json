@@ -2526,5 +2526,111 @@
     "floorBlue": 28.99
    }
   ]
+ },
+ "channelToe": {
+  "_source": "Live curve_sweep 2026-09-17 17:15, C220 @0.5s on the [AI] copy - the same frame as curveToe and wheelBands. The BLUE curve's bottom point at each x, Master and the other channels left at identity. This is the move neutralBottoms makes, and it is precondition (b) for wiring it: curveToe measured the Master curve, which is a rigid translation and cannot do this job.",
+  "_model": "CONFIRMED on the PAIRED statistic, and tighter than Master's: blue's paired bottom (7.8 at x=0) lands where (in - 100x)/(1 - x) says to within 0.15 IRE across every row - 5.9 vs 5.92, 3.1 vs 2.95, 0 vs 0. A band median is a steadier statistic than a percentile, which is why this beats curveToe's 0.6. blackInFor needs no per-channel correction.",
+  "_isolation": "A channel toe moves EXACTLY ONE CHANNEL. pairedRed 10.2 and pairedGreen 8.6 are identical on all six rows while blue goes 7.8 -> 0, and the independent redP1 9.4 / greenP1 7.8 never move either. So the band's pixel selection does not shift under the move and neutralBottoms' three toes compose exactly: fed this frame's 10.2/8.6/7.8 it writes red x=0.026, green x=0.0087, blue 0, and all three land at 7.80.",
+  "_crushCap": "The crush is governed by the channel's OWN p1, not its paired median. At x=0.05 blue's paired bottom is still 3.1 - healthy - while blue's own p1 is 0.4 and 0.91% of the frame is on the floor. floorBlue by blueP1: 2.7 -> 0.02%, 0.4 -> 0.91%, 0 -> 5.9%. So the cap on a channel toe is x <= (ownP1 - 2) / 98, keeping that channel's own p1 at or above ~2. neutralBottoms' flat 0.12 cap is unrelated to any of this and far too loose.",
+  "_readable": "The survivorship trap of curveToe `_bandBlind`, now visible as a number: readable falls 100 -> 100 -> 80 -> 35 -> 5 -> 0 as blue crushes, and blacksRB slides -1.6 -> -10.6 with it, while the LEVELS stay exact throughout. Drive the fix from levels; treat blacksRB as unusable below ~80% readable.",
+  "_caution": "C220 @0.5s has WARM blacks (paired B-R = -2.4), so this sweep exercised the mechanism in the wrong direction for the product bug. It proves the arithmetic, not the cure. The cure is judged on the 00:00:09:10 frame, where blue's floor reportedly sits ~+8 above red - and that reading is from a PARADE, i.e. independent percentiles, the exact statistic that misled 0.1.80. Check the paired levels there before wiring anything.",
+  "rows": [
+   {
+    "x": 0,
+    "lumaP1": 8.2,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 4.7,
+    "blacksRB": -1.6,
+    "blacksG": -0.8,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 7.8,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.01
+   },
+   {
+    "x": 0.02,
+    "lumaP1": 8.2,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 2.7,
+    "blacksRB": -3.1,
+    "blacksG": 0,
+    "readable": 100,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 5.9,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.02
+   },
+   {
+    "x": 0.05,
+    "lumaP1": 8.2,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 0.4,
+    "blacksRB": -4.7,
+    "blacksG": 1.6,
+    "readable": 80,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 3.1,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 0.91
+   },
+   {
+    "x": 0.1,
+    "lumaP1": 7.8,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 0,
+    "blacksRB": -7.8,
+    "blacksG": 3.9,
+    "readable": 35,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 0,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 5.9
+   },
+   {
+    "x": 0.15,
+    "lumaP1": 7.8,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 0,
+    "blacksRB": -10.2,
+    "blacksG": 5.5,
+    "readable": 5,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 0,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 16.7
+   },
+   {
+    "x": 0.2,
+    "lumaP1": 7.8,
+    "redP1": 9.4,
+    "greenP1": 7.8,
+    "blueP1": 0,
+    "blacksRB": -10.6,
+    "blacksG": 6.3,
+    "readable": 0,
+    "pairedRed": 10.2,
+    "pairedGreen": 8.6,
+    "pairedBlue": 0,
+    "floorRed": 0,
+    "floorGreen": 0,
+    "floorBlue": 29.02
+   }
+  ]
  }
 }
