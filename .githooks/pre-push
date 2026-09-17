@@ -4,4 +4,17 @@
 PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.volta/bin:$PATH"; export PATH
 cd "$(git rev-parse --show-toplevel)" || exit 1
 NODE="$(command -v node)"; [ -n "$NODE" ] || { echo "pre-push: node not found; cannot run the privacy scan" >&2; exit 1; }
+# 1. The working tree.
 "$NODE" --test test/privacy.test.cjs >/dev/null 2>&1 || { echo "pre-push: private data found in tracked files. Run: node --test test/privacy.test.cjs" >&2; exit 1; }
+
+# 2. The COMMITS this push would publish. The tree test cannot see those: a commit that adds a client's path
+# and a later one that removes it leaves a clean tree and passes, while the push publishes the first commit
+# anyway - and a public push cannot be taken back (2026-09-17: 166 commits went out after a by-hand check,
+# which is not a guard). Git hands us "<local ref> <local sha> <remote ref> <remote sha>" per ref on stdin;
+# an all-zero remote sha means the branch is new there, so the range is everything no remote already has.
+ZERO=0000000000000000000000000000000000000000
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue                      # a deletion publishes nothing
+  if [ "$remote_sha" = "$ZERO" ]; then set -- "$local_sha" --not --remotes; else set -- "$remote_sha..$local_sha"; fi
+  "$NODE" scripts/scan-history.cjs "$@" || exit 1
+done
