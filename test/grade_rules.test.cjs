@@ -582,3 +582,23 @@ test("the black-point chain is never referenced above its own declaration", () =
   }
   assert.ok(uses >= 3, "declaration plus at least one real use");
 });
+
+// The one-clip calibration is the biggest declared limit in src/lumetri_sweeps.json, and until 2026-09-17
+// nothing could even test it: no tool could set a raw slider value, because grade/grade_shot steer a
+// statistic to a target. slider_sweep is that door, and it carries the two rules curve_sweep learned the
+// hard way - the neutral value is always the baseline row, and the knob goes back afterwards.
+test("slider_sweep sets raw values, always includes neutral, and restores the slider", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
+  const i = panel.indexOf("async function sliderSweepTool");
+  assert.ok(i > 0, "the tool exists");
+  const body = panel.slice(i, panel.indexOf("// A whole shot in one go", i));
+  assert.match(body, /if \(!xs\.some\(\(v\) => Math\.abs\(v - neutral\) < 1e-9\)\) xs = \[neutral, \.\.\.xs\];/, "neutral is always the baseline row");
+  assert.match(body, /await w\.set\(before\)/, "the slider goes back");
+  assert.ok(body.indexOf("before = await w.read()") < body.indexOf("await w.set(v)"), "and it is read before anything is written");
+  assert.match(body, /ensureWorkingCopy/, "it writes on the working copy like every other tool");
+  assert.match(panel, /saturation: \[0, 50, 100, 150, 200\]/, "saturation's neutral is 100, not 0, so it gets its own steps");
+  assert.match(panel, /const neutral = isFinite\(spec\.neutral\) \? spec\.neutral : 0;/, "and neutral comes from the param spec, not assumed to be zero");
+  assert.match(panel, /slider_sweep: sliderSweepTool/, "registered");
+  assert.equal(panel.match(/sliderSweepTool/g).length, 2, "defined and registered, nothing in the grade calls it");
+});
