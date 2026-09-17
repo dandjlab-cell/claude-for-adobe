@@ -1300,7 +1300,11 @@ const CURVE_TOE_STEPS = [0, 0.02, 0.05, 0.1, 0.15, 0.2];
 const CURVE_NAMES = ["Master", "Red", "Green", "Blue", "Luma vs Sat", "Shadows luma"];
 const ROLLOFF_STEPS = [0, 0.1, 0.2, 0.35, 0.5];
 const WHEEL_LUMA_STEPS = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25]; // 0.5 is neutral; down lowers the black end
-async function curveSweepTool({ seconds, track = 1, points = CURVE_TOE_STEPS, curve = "Master", lift = false, anchor = null } = {}) {
+// `points` defaults to null, NOT to CURVE_TOE_STEPS: a default in the signature is already truthy, so the
+// per-curve default below could never be reached and omitting `points` silently swept the Master steps.
+// That is why the Luma vs Sat sweep ran depths 0.02-0.2 instead of the roll-off set, and why a Shadows
+// luma sweep with `points` omitted tripped the tool's own all-below-neutral guard (20:5x, C187).
+async function curveSweepTool({ seconds, track = 1, points = null, curve = "Master", lift = false, anchor = null } = {}) {
   const at = Number(seconds);
   if (!(at >= 0)) return { text: "CLAUDE_FOR_ADOBE_ERROR:seconds required (the timeline position to sweep on)", isError: true };
   const which = CURVE_NAMES.find((c) => c.toLowerCase() === String(curve).toLowerCase());

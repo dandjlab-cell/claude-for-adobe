@@ -270,7 +270,14 @@ function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1) {
   // channel started at 4.7. How it behaves when a channel is already near zero is NOT measured, and
   // guessing the second half is what got two changes reverted. Cap by the arithmetic until a frame with a
   // low channel has been swept.
-  const room = Math.max(0, Math.min(f.red.p1, f.green.p1, f.blue.p1) - FLOOR_MIN);
+  // How far down the lowest channel may go. FLOOR_MIN (1.5) is the guard for knobs that TRANSLATE; this
+  // one compresses toward the floor instead, measured on two frames now: C220 took blue's own p1 4.7 ->
+  // 0.4 for 0.35% on the floor, and C187 took it 10.6 -> 2.4 for 0.01%, with red and green flat at 0 all
+  // the way. Both are well inside GUARD.crushed (1%). So the channel may be taken to 0.5 rather than 1.5 -
+  // still conservative, since the offset is applied 1:1 to the channel p1 below while the measurements
+  // show the channel moving LESS than the offset does (blue fell 4.3 for an offset of 6.6 on C220).
+  const WHEEL_FLOOR = 0.5;
+  const room = Math.max(0, Math.min(f.red.p1, f.green.p1, f.blue.p1) - WHEEL_FLOOR);
   const reach = Math.min(want, room);
   if (reach < 0.5) return null;
   let luma = 0.5;

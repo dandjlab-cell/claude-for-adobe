@@ -2,12 +2,42 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
-**Date:** 2026-09-17 (16:45)
+**Date:** 2026-09-17 (evening session, 17:00–21:00)
 **Branch:** `main` — `fix/whisper-metal` was merged and deleted today; main is the working branch and what pushes. `feat/scopes` still exists as a local worktree; ignore or prune it, it is not in play.
-**Last commit:** `e1c432a` — 0.1.87: color, not colour, everywhere
-**Released:** **v0.1.87** is public and is what "Check for updates" offers. Ten releases went out today (0.1.78 → 0.1.87).
-**Tests:** 352 pass, 1 skip (`node --test test/*.test.cjs`; the skip fetches schemas.adobe.com)
+**Last commit:** `868aea0` — docs: the colour measurement programme
+**Unpushed:** everything from `069f04c` onward is local only. **Nothing since 0.1.87 has been released**, so the installed panel has none of it; the dev panel has it after a reload.
+**Released:** **v0.1.87** is public and is what "Check for updates" offers. Ten releases went out earlier today (0.1.78 → 0.1.87).
+**Tests:** 367 total, 366 pass, 1 skip (`node --test test/*.test.cjs`; the skip fetches schemas.adobe.com)
 **Role:** BUILDER
+
+> ### Evening session — the blue blacks are fixed, and the pass itself was the cause
+>
+> **The defect was iatrogenic.** C229 @9.42s uncorrected reads paired blacks R 21.6 / G 13.3 / B 8.6 —
+> *warm* by 13. The 0.1.87 pass answered with a Shadows wheel pad at 204°, ran it to its cap, spent both
+> corrections on it, and finished **blue by 5.1** with red on the floor. Its own verdict line said
+> `blacks blue by 6.3 (Shadows wheel)`. The footage never had blue blacks; the wheel made them.
+>
+> **Why the wheel is the wrong instrument:** it rotates hue and saturation across a whole tonal range, so
+> it cancels warm by *adding blue* — lifting blue's floor — and cannot lower red without dragging the
+> range with it. A channel curve toe lowers one channel and touches nothing else, measured isolated to
+> the digit.
+>
+> **What replaced it:** `bottomsFor` — the colorist's black balance — lines the parade's bottoms up on the
+> RGB curves, fed `bands.blacks.levels`, a NEW paired statistic (the darkest 3 % as channel levels on one
+> set of pixels). Never the independent percentiles, which is precisely what broke 0.1.80. The Shadows
+> wheel keeps the whites only. What the Master curve cannot reach then goes to the Shadows wheel's *luma*
+> — Lumetri's Lift — capped by the lowest channel's room.
+>
+> **Five live sweeps back it**, all in `src/lumetri_sweeps.json` with their findings written in:
+> `curveToe`, `channelToe`, `channelLift`, `shadowsWheelLuma`, and `satRolloffBlacks` (a negative result,
+> deliberately kept).
+>
+> **Result on the proof frame:** B−R `+5.1` (what shipped) → `−5.5`; no sign flip, nothing on the floor,
+> 3 renders instead of 4. Whole sequence 5/18 balanced in 86.6 s — inside the 0.1.87 baseline range.
+>
+> **Read `docs/color-measurement-plan.md` and `docs/color-control-map.md` before any further colour
+> work.** The first lists what is still unmeasured in priority order, with a table of twelve questions
+> already settled so they are not re-measured. The second maps every control and its measured model.
 
 This file is committed at the end of every session (`docs: session handoff …`); docs-only commits need no go from the user, pushes and releases do.
 
