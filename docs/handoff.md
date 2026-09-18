@@ -108,13 +108,15 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Verify the pooled wheel-luma form live (eighth run).** Built 22:05 (`shadowsWheelLumaForm._pooled`):
-   C202's bump points fill the 11.8–19.2 gap, and the amount by excursion is the mean of three frames' shares
-   (BUMP.shadowsWheelLuma.amount). Every held-out row of all three sweeps is within 1 IRE (medians 0.46 /
-   0.40 / 0.37). Seventh-run baseline: 4/18 balanced, every chain pixels, worst MODEL OFF BY +1.2 (C227)
-   and −1.1 (C228), both on wheel lifts. **Unverified live.** Owner: delete `Prototype_TEST [AI]`, reload,
-   paste the standard grade_sequence prompt (below). *Done when* no MODEL OFF BY exceeds 1.0 on a wheel-lift
-   chain; C228's is expected to fall from −1.1 toward −0.7 (a C220-like frame keeps a residual of its own).
+1. **Refit Contrast (queue item 9).** Eighth run (22:20, 133a9bf): 4/18 balanced, every chain pixels, worst
+   MODEL OFF BY ±1.2. The wheel amount is settled as a footage property (C228 closed, C187 paid, ±0.4 between
+   frames). The one residual with a named form is C227 @5.63: no lift, the sliders step predicted the black
+   point down 0.8 under Contrast 22 and the render put it up 0.4, on a frame Whites rails 4.7%. `contrastRule`
+   is the only form still marked approximate (gain about pivot 49.6, residual 2.09, signed and monotone).
+   Sweep it on C202 @23.94s (unrailed) with `slider_sweep` at ±25 / ±50 / ±100, overlay against the C220 rows
+   by input level, fit the pivot and the curvature, ship only if both frames trace one curve; then a live
+   run. *Done when* C227's chain reads ≤1.0 or its residual is named as the rail interaction (13% clip under
+   Whites), which is queue Group 3 item 13, the clamp model.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -273,5 +275,5 @@ never a summary; tell it to flag anything contradicting what you said you expect
 and stale-cache runs both times. Do not reach the MCP port or drive the UI. The owner clicks Reload and deletes
 the `[AI]` copy; give him one code fence containing only the paste, nothing else in fences.
 
-**Baseline to beat:** 4/18 balanced on a fresh copy, every chain pixels, worst MODEL OFF BY 1.2 (0e6f6b5, 22:00).
+**Baseline to beat:** 4/18 balanced on a fresh copy, every chain pixels, worst MODEL OFF BY ±1.2 (133a9bf, 22:20).
 The number that matters is `MODEL OFF BY` per pixel-chain row: ≤ 1.2 everywhere, or say which step is table.

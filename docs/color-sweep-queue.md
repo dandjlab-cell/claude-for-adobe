@@ -228,6 +228,15 @@ work, not a guess. Master identity not read back live (no curve-read tool); asse
 at −10.2, not −9.1); the amount by excursion is the three-frame mean. All held-out rows of all three frames
 within 1 IRE (medians 0.46 / 0.40 / 0.37 from 0.81 / 0.10 / 0.58). Eighth live run verifies.
 
+## Group 1i — eighth live run: the pooled wheel amount (2026-09-18 22:20)
+
+Build 133a9bf, fresh copy, 37 renders in 150 s, 4/18 balanced, every chain pixels, no `[table]`. C228
+−1.1 → none; C187 none → +1.2 (the linear frame pays the pool's cost, as predicted); C227 @5.63 +1.2
+unchanged — and it has **no lift**: its sliders step predicted the black point down 0.8 under Contrast 22
+and the render put it up 0.4, on a frame Whites newly rails 4.7%. **Contrast (item 9, the one form marked
+approximate) is the next form work.** The wheel amount is now a footage property (±0.4 between frames),
+recorded not chased.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
