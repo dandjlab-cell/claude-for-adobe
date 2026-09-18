@@ -102,6 +102,21 @@ Two costs of the run, recorded honestly:
   and each candidate rebuilds from source. Acceptable for a first live version; a coarse-then-refine pass
   on the curves would recover most of it.
 
+## Group 1e — fourth live run: the wheel luma on pixels (2026-09-18 17:17)
+
+Build adfdd5a, fresh copy, 37 renders in 135 s, 3/18 balanced. **C228's 7.28 — unchanged across three runs —
+is gone**: its chain now reads `6.3 curve 0.14 pixels → 3.1 shadows lift 0.350 pixels → 3.1 sliders pixels →
+3.1 plan confirm`, black point 21.2 → 3.1 with no MODEL OFF BY at all. C187's 2.9 came down to 1.5 (lift
+predicted 6.3, read 7.8 — the wheel moved less than the form says after a 0.09 anchored curve; one clip,
+recorded not theorised). C229's 1.56 is identical: its lift still reads `[table]`.
+
+**The remaining hole has one name: the wheel PADS.** C227 @5.63 and C229 are the only clips left with any
+`[table]` tag, and both wrote a Highlights pad (hue/sat). A pad has no pixel form, so the lift and every
+slider after it fall to the table. Everything else the pass writes is on pixels.
+
+Still open from 1d: dark subjects not lifted (Shadows steers on subject brightness, no region pixels) — four
+clips print `shadows [pixels] skipped (held: frame sample has no region pixels for brightness)`.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
