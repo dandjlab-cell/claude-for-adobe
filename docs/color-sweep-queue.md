@@ -117,6 +117,23 @@ slider after it fall to the table. Everything else the pass writes is on pixels.
 Still open from 1d: dark subjects not lifted (Shadows steers on subject brightness, no region pixels) — four
 clips print `shadows [pixels] skipped (held: frame sample has no region pixels for brightness)`.
 
+## Group 1f — the Highlights pad (2026-09-18 18:10): a GAIN, and every control the pass writes is now on pixels
+
+Five hues at five sats on C202 (`highlightsPad`), hue 270 already on file from C220. The prediction — an
+additive bump over the highlights — was wrong. Per row, `out/in` is one number per channel from the blacks to
+the whites (within a code): **a per-channel gain about zero**, luma-preserving (Rec.709 sum = 1 ± 0.008),
+linear in sat, one vector rotating in one plane with the wheel's angle warped ~4° (hue 45 sits at plane
+angle 49, 135 at 130.5). A "Highlights" pad therefore tints the **blacks in the same proportion as the
+whites** — the entire mechanism of the blue blacks of 2026-09-17, now measured. The shipped form interpolates
+the measured hue table; a cos/sin model would miss by 0.78 IRE at sat 0.3. Constants transfer across frames
+(C220 c(0) 0.387/−0.105/−0.105 vs C202 0.372/−0.108/−0.104).
+
+`padsFor` chooses the pad's **sat** on pixels along the linear model's hue and carries it forward. With this,
+**every control the pass writes has a pixel form** — white balance, channel curves, anchored Master, Shadows,
+Highlights, Whites, Contrast, Blacks, wheel luma, wheel pad — and nothing stands down. Still table: the
+correction pass's temperature re-scale (which uses two real renders, not a table), and Luma-vs-Sat / HSL /
+skin hue-curve, which are chroma-only and do not enter the black-point chain. Unverified live.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
