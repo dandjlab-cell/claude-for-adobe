@@ -206,6 +206,11 @@ const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites"
 async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null, pixels = null }) {
   const before = measured || await measure(); // a caller that has just read the scopes passes the reading
   let buf = pixels; // walks forward with the accepted moves, so each candidate is judged on the right state
+  // The sample as it ARRIVED, never advanced. Destruction is counted against this rather than against the
+  // previous stage, so it accumulates: a pixel an earlier accepted move put on a rail still counts against
+  // the next candidate. An aggregate share cannot express that - it can be masked by lifting other pixels
+  // off the rail, and a final-only check misses a floor-then-lift entirely (Astra, 2026-09-18).
+  const origin = pixels;
   let renders = measured ? 1 : 2;
   let state = before;
   const plan = [];
@@ -255,15 +260,28 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
       const allow = allowance(baseline || damage(before), guard);
       let v = value, tries = 0, caught = null;
       for (;;) {
-        const d = FORWARD.damageOf(buf, g.param, v);
+        // `origin` is the sample as it arrived, so newHigh/newLow count destruction CUMULATIVELY - damage
+        // an earlier accepted move already did still counts against this one. That is what Astra's "every
+        // prefix of the chain must preserve the protected samples" requires, and it is the half an aggregate
+        // share cannot express.
+        const d = FORWARD.damageOf(buf, g.param, v, undefined, origin);
         if (!d) break;
-        if (d.clipped <= allow.clipped && d.floored <= allow.crushed) break;
+        // Both tests, not either: the shares keep the old behaviour on frames that arrived damaged, and the
+        // newly-railed counts catch the destruction the shares can mask.
+        const shares = d.clipped <= allow.clipped && d.floored <= allow.crushed;
+        const destroyed = d.newHigh === null ? false : (d.newHigh > allow.clipped || d.newLow > allow.crushed);
+        if (shares && !destroyed) break;
         caught = d;
         if (Math.abs(v - from) <= 1 || tries++ >= 12) { v = from; break; }
         v = from + (v - from) * 0.8;
       }
       if (caught && Math.abs(v - value) > 1e-6) {
-        note = (note ? note + "; " : "") + "held by the pixels: " + round(value) + " would clip " + round(caught.clipped) + "% / floor " + round(caught.floored) + "%";
+        // Report the DESTRUCTION when that is what stopped it - the shares can look innocent while pixels
+        // are being lost, so a row that says only "would clip 0.4%" would be telling the wrong story.
+        const destroyedIt = caught.newHigh !== null && (caught.newHigh > allow.clipped || caught.newLow > allow.crushed);
+        note = (note ? note + "; " : "") + "held by the pixels: " + round(value) + (destroyedIt
+          ? " would destroy " + round(caught.newHigh) + "% at the top / " + round(caught.newLow) + "% at the bottom of pixels the source still had"
+          : " would clip " + round(caught.clipped) + "% / floor " + round(caught.floored) + "%");
         value = Math.round(v * 100) / 100;
         predicted = predict(state, g.param, from, value);
       }

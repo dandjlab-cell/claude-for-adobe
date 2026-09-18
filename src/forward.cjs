@@ -165,12 +165,48 @@ function sample(rgb, want = SAMPLE_PIXELS) {
 // percentiles. Returns the damage shares only - this is a guard, not a predictor, and it is deliberately
 // not used to choose a value. Null when the control has no measured form, so a caller can tell "safe"
 // from "unknown" and treat them differently.
-function damageOf(rgbSample, op, amount, extra) {
+function damageOf(rgbSample, op, amount, extra, source) {
   if (!rgbSample || !OPS[op]) return null;
   try {
-    const m = measure(apply(rgbSample, op, amount, extra));
-    return { clipped: Math.max(m.clipped.red, m.clipped.green, m.clipped.blue), floored: Math.max(m.floor.red, m.floor.green, m.floor.blue) };
+    const out = apply(rgbSample, op, amount, extra);
+    const m = measure(out);
+    const nr = source ? newlyRailed(source, out) : null;
+    return {
+      clipped: Math.max(m.clipped.red, m.clipped.green, m.clipped.blue),
+      floored: Math.max(m.floor.red, m.floor.green, m.floor.blue),
+      newHigh: nr ? nr.high : null,
+      newLow: nr ? nr.low : null,
+    };
   } catch (_) { return null; }
 }
 
-module.exports = { apply, pipeline, forward, sample, damageOf, SAMPLE_PIXELS, OPS, SECTION_ORDER, CONTRAST_PIVOT, BLACKS_LAMBDA, EXPOSURE_GAMMA };
+// What the AGGREGATE share cannot tell you, per gpt-6-astra 2026-09-18.
+//
+// Comparing "floored % now" against "floored % before" is maskable in two ways, and both are ordinary rather
+// than exotic. Lifting pixels off the floor while pushing others onto it can leave the total unchanged or
+// even lower while destroying information. And a final-only check misses a channel that floored at one stage
+// and was lifted back at the next: the pixels are gone, the total says nothing happened.
+//
+// The honest constraint is per sample, against the SOURCE: a channel that was strictly interior in the
+// original frame and is on a rail now has been destroyed, whatever the totals say. Pixels that arrived
+// already railed are excluded - a legitimately clipped specular is not the grade's doing, and it is also not
+// recoverable by anyone.
+//
+// This is measured against the source rather than the previous stage on purpose, so it is CUMULATIVE: damage
+// done by an earlier accepted move still counts against a later one, which is what "every prefix of the
+// chain must preserve the protected samples" means.
+function newlyRailed(source, now) {
+  if (!source || !now || source.length !== now.length) return null;
+  let high = 0, low = 0, interior = 0;
+  for (let i = 0; i < source.length; i++) {
+    const s = source[i];
+    if (s <= 0 || s >= 255) continue; // already railed at the source: not ours, and not recoverable
+    interior++;
+    const v = now[i];
+    if (v >= 255) high++; else if (v <= 0) low++;
+  }
+  if (!interior) return { high: 0, low: 0, interior: 0 };
+  return { high: (high / interior) * 100, low: (low / interior) * 100, interior };
+}
+
+module.exports = { apply, pipeline, forward, sample, damageOf, newlyRailed, SAMPLE_PIXELS, OPS, SECTION_ORDER, CONTRAST_PIVOT, BLACKS_LAMBDA, EXPOSURE_GAMMA };

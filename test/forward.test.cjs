@@ -183,6 +183,30 @@ test("the forward guard refuses a move that would clip, and stays out of the way
       assert.ok(Math.abs(mine - theirs) < 0.4, "the two anchored forms agree at " + v + ": " + mine + " vs " + theirs);
     }
   }
+  // The destruction an aggregate share CANNOT see (gpt-6-astra, 2026-09-18). Comparing "floored % now"
+  // against "floored % before" is maskable: push some pixels onto the floor while lifting others off it and
+  // the total is unchanged, or lower, while information is gone for good. newlyRailed counts per sample
+  // against the SOURCE, so it cannot be masked that way.
+  {
+    const { newlyRailed } = require("../src/forward.cjs");
+    // 100 samples: 10 already on the floor at the source, 90 interior.
+    const src = Buffer.alloc(100), now = Buffer.alloc(100);
+    for (let i = 0; i < 100; i++) src[i] = i < 10 ? 0 : 40;
+    // The move lifts all ten off the floor and pushes ten interior samples onto it. Aggregate floored share
+    // is IDENTICAL before and after - 10 and 10 - and ten real pixels have been destroyed.
+    for (let i = 0; i < 100; i++) now[i] = i < 10 ? 30 : (i < 20 ? 0 : 40);
+    const flooredBefore = Array.from(src).filter((v) => v <= 0).length;
+    const flooredAfter = Array.from(now).filter((v) => v <= 0).length;
+    assert.equal(flooredBefore, flooredAfter, "the aggregate share is unchanged - this is the masking case");
+    const nr = newlyRailed(src, now);
+    assert.equal(nr.interior, 90, "the ten already on the floor are excluded: not the grade's doing");
+    assert.ok(nr.low > 11 && nr.low < 11.2, "and the destruction is seen: " + nr.low + "% of the interior");
+    assert.equal(nr.high, 0);
+    // Pixels that arrived railed are never counted, however the move moves them.
+    const untouched = newlyRailed(src, src);
+    assert.equal(untouched.low, 0, "a frame put through nothing has destroyed nothing");
+    assert.equal(untouched.high, 0);
+  }
   // A frame with headroom: the guard must not interfere at all.
   const safe = frame(190, 0);
   const a = await run(safe, false), b = await run(safe, true);

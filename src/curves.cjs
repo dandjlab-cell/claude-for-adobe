@@ -212,6 +212,18 @@ function toesFor(bottoms, caps = 0.12, targets = null) {
 // afterwards (the 17:59 run left `black point 9.8 lifted` because red's toe had eaten all of it), a lift
 // spends none - zero floor at every swept setting. So a channel above its target is toed down, a channel
 // below it is lifted up, and the caller chooses the target rather than being stuck with the lowest channel.
+//
+// The `v > t ? toe : lift` branch below is an if/else, not two independent flags - v > t and v <= t are
+// mutually exclusive, so a channel can never come back with BOTH toe > 0 and lift > 0. That is not a
+// coincidence worth a runtime check; it is the same fact 478b9db found for Whites/Exposure and the toe/lift
+// on a single RGB-curve channel: out = (v - 100x)/(1 - x) (toe) and out = 100y + v(1 - y) (lift) are the
+// SAME gain about the pivot v=100 in two unit systems - out = 100 + (v - 100)k with k = 1/(1 - x) (> 1, a
+// toe) or k = 1 - y (< 1, a lift) (astra review, docs/reviews/astra_headroom_answer.md section A). One
+// channel has one k; the branch on v vs t is just choosing which unit system to render it in. It is also
+// the algebraic reason the three channel curves commute exactly - the isolation `channelToe._isolation`
+// measured empirically (pairedRed and pairedGreen identical across six rows while blue alone moved): a
+// shared pivot makes the commutator (kA - 1)(kB - 1)(PA - PB) vanish, so applying Red/Green/Blue's curves
+// in any order gives the same result.
 function movesFor(bottoms, caps = 0.12, targets = null) {
   const floor = Math.min(bottoms.red, bottoms.green, bottoms.blue);
   const capOf = (ch) => (typeof caps === "number" ? caps : (isFinite(caps[ch]) ? caps[ch] : 0.12));
