@@ -213,6 +213,7 @@ by 0.9–1.2. Wired into `levelsMap` / `predictLevels` / `masterToeAnchored`; `b
 C187's percentiles red is now within 0.4 at every x. Master's green anomaly repeats on C187's pixels. **The
 design that follows:** write the black point as three anchored channel curves (RGB), one bottom point per
 channel merging the black-balance toe and the black point — exact, 1-D, predictable — instead of Master.
+**Built 21:50 (`rgbLevels`); the seventh live run verifies it.**
 
 ## Group 2 — finish the nine forms that are half-done
 

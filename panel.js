@@ -20,7 +20,7 @@ const { measure: measureScopes, report: scopeReport, decodeRgb, decodeGray, mask
 const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATISTICS: GRADE_STATS, damage: gradeDamage, allowance: gradeAllowance, unsafe: gradeUnsafe } = require(path.join(extensionRoot, "src", "grade.cjs"));
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, bottomsFor: gradeBottomsFor, shadowsLiftFor: gradeShadowsLiftFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
-const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump, satRolloff: curveSatRolloff } = require(path.join(extensionRoot, "src", "curves.cjs"));
+const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, rgbLevels: curveRgbLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump, satRolloff: curveSatRolloff } = require(path.join(extensionRoot, "src", "curves.cjs"));
 const { sample: sampleRgb } = require(path.join(extensionRoot, "src", "forward.cjs"));
 const { context: gradePixelContext } = require(path.join(extensionRoot, "src", "grade_pixels.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
@@ -1262,7 +1262,7 @@ const hslPadText = (pad) => "Shadows:0.00,0.00,0.50;Midtones:" + (pad && pad.sat
 
 function gradeStateSummary(s) {
   const pads = s.wheels ? Object.keys(s.wheels).filter((w) => s.wheels[w].sat > 0.005).map((w) => w + " " + round2(s.wheels[w].hue) + "°/" + round2(s.wheels[w].sat)) : [];
-  return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.hsl && s.hsl.hueCurve ? ", skin hue curve " + s.hsl.hueCurve.shift.toFixed(3) + " at " + s.hsl.hueCurve.centre.toFixed(2) : "") + (s.curves && s.curves.Master && s.curves.Master[0][0] > 0.005 ? ", curve black " + s.curves.Master[0][0].toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
+  return "temperature " + round2(s.temp) + ", tint " + round2(s.tint) + (pads.length ? ", " + pads.join(", ") : "") + (s.hsl && s.hsl.hueCurve ? ", skin hue curve " + s.hsl.hueCurve.shift.toFixed(3) + " at " + s.hsl.hueCurve.centre.toFixed(2) : "") + (s.curves && s.curves.blackPoint > 0.005 ? ", curve black " + s.curves.blackPoint.toFixed(2) : "") + (s.sat && s.sat.length ? ", sat roll-off" : "") + Object.entries(s.sliders || {}).filter(([, val]) => Math.abs(val) >= 0.5).map(([p, val]) => ", " + p + " " + round2(val)).join("");
 }
 
 // Skin writes: the key's Midtones wheel, calibrated 2026-09-16 12:54 (HSL Tint was a wash toward magenta).
@@ -1829,7 +1829,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           const half = (p) => { if (ref.sliders[p]) { ref.sliders[p] = Math.round(ref.sliders[p] * k * 100) / 100; changed.push(p + " → " + ref.sliders[p] + (k !== 0.5 ? " (scaled to land at " + (GRADE_ACCEPT.whiteMax - 2) + ")" : "")); } };
           if (h.clipped > allow.clipped) for (const p of ["whites", "highlights", "exposure", "contrast"]) half(p);
           if (h.crushed > allow.crushed) {
-            if (ref.curves && ref.curves.Master && ref.curves.Master[0][0] > 0.005) { ref.curves.Master[0][0] = Math.round(ref.curves.Master[0][0] / 2 * 100) / 100; changed.push("curve black → " + ref.curves.Master[0][0].toFixed(2)); }
+            if (ref.curves && ref.curves.blackPoint > 0.005) { ref.curves = curveRgbLevels(Math.round(ref.curves.blackPoint / 2 * 100) / 100, ref.curves.base, ref.curves.anchor); changed.push("curve black → " + ref.curves.blackPoint.toFixed(2)); }
             for (const p of ["blacks", "shadows", "contrast"]) half(p);
           }
           if (changed.length) {
@@ -2110,7 +2110,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
           // onto lev.curves, NOT currentCurves: lev.curves carries the channel toes of the black balance and
           // curveLevels only replaces Master. Writing the original curves here threw the black balance away
           // on the first correction (the 18:13 run: the bottoms were levelled, then wiped).
-          if (curve2 !== null) { await cw.write(curveLevels(curve2, 1, lev.curves, lev.anchor)); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
+          if (curve2 !== null) { await cw.write(curveRgbLevels(curve2, lev.curves.base || lev.curves, lev.anchor)); curveBaseP1 = fa.luma.p1; curvePredictedP1 = lev.target; curveNow = curve2; }
           state = await confirmMeasure(); renders++;
           parts.push((pass === 0 ? "corrected: " : "corrected again: ") + notes.join(", "));
         } else { if (notes.length && pass === 0) parts.push(notes.join(", ")); break; }

@@ -211,3 +211,20 @@ test("bands.blacks is only trustworthy while nothing is on the floor", () => {
   const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "scopes.cjs"), "utf8");
   assert.match(src, /MEASURED CONSEQUENCE \(curve_sweep/, "and the histogram filter says so where it is written");
 });
+
+// 2026-09-18 21:50: the black point is three channel curves, each merging its black-balance toe or lift
+// with the black point into ONE bottom point (`curveToeAnchoredC202._perPixelSpline` for why).
+test("rgbLevels merges each channel's toe or lift with the black point, Master stays identity", () => {
+  const { rgbLevels, format } = require("../src/curves.cjs");
+  const base = { Red: [[0.05, 0], [1, 1]], Green: [[0, 0], [1, 1]], Blue: [[0, 0.04], [1, 1]] };
+  const c = rgbLevels(0.1, base, 0.5);
+  assert.deepEqual(c.Master, [[0, 0], [1, 1]]);
+  assert.deepEqual(c.Red, [[0.145, 0], [0.5, 0.5], [0.8, 0.8], [1, 1]], "toe 0.05 then 0.1 = 0.05 + 0.1 * 0.95");
+  assert.deepEqual(c.Green, [[0.1, 0], [0.5, 0.5], [0.8, 0.8], [1, 1]], "no toe: the black point alone");
+  assert.deepEqual(c.Blue, [[0.0625, 0], [0.5, 0.5], [0.8, 0.8], [1, 1]], "lift 0.04 then toe 0.1 = a toe at (0.1 - 0.04) / 0.96");
+  const small = rgbLevels(0.02, { Blue: [[0, 0.1], [1, 1]] }, 0.5);
+  assert.deepEqual(small.Blue, [[0, 0.082], [1, 1]], "a lift larger than the black point stays a lift, unanchored");
+  assert.equal(c.blackPoint, 0.1); assert.equal(c.anchor, 0.5); assert.deepEqual(c.base, base);
+  assert.doesNotMatch(format(c), /blackPoint|base|anchor/, "the extra keys never reach the serialised text");
+  assert.equal(format(c).split(";")[0], "Master:2:0.00,0.00,1.00,1.00,");
+});

@@ -74,6 +74,34 @@ function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
   out.Master = levelsPoints(blackIn, whiteIn, anchor);
   return out;
 }
+// The black point as THREE CHANNEL CURVES, not Master. Measured 2026-09-18 21:42 (`curveToeAnchoredC202
+// ._perPixelSpline`): the Master curve is not a 1-D map on green (its output rises with the pixel's red and
+// falling blue, never crushes, on two frames), while each channel curve is exactly the natural spline
+// through its points, and RGB anchored is pixel-identical to Master's red and blue. So the black point is
+// written per channel, and each channel's existing black-balance toe or lift is MERGED with it into one
+// bottom point: a toe at t then a bottom point at x is one bottom point at t + x(1 - t) on the line; a lift
+// y then x is a toe at (x - y)/(1 - y) when x >= y, else a lift (y - x)/(1 - x) (unanchored: an anchored
+// lift is unmeasured). ponytail: the merge is exact on the line; on the spline the bow differs by the toe's
+// stretch, under 0.2 IRE at t <= 0.12. Extra keys (blackPoint, anchor, base) ride on the object for the
+// correction pass and the shot-match summary; format() only serialises the four curves.
+function rgbLevels(blackIn = 0, current = null, anchor = null) {
+  const base = Object.assign({}, current || {});
+  delete base.blackPoint; delete base.anchor; delete base.base;
+  const out = Object.assign({}, base, { Master: [[0, 0], [1, 1]] });
+  const x = Math.max(0, Math.min(0.5, blackIn));
+  for (const ch of ["Red", "Green", "Blue"]) {
+    const pts = base[ch] || IDENTITY[ch];
+    const toe = pts.length === 2 && pts[0][1] === 0 ? pts[0][0] : 0;
+    const lift = pts.length === 2 && pts[0][0] === 0 ? pts[0][1] : 0;
+    if (lift > 0.002) {
+      if (x >= lift) out[ch] = levelsPoints(Math.round((x - lift) / (1 - lift) * 10000) / 10000, 1, anchor);
+      else out[ch] = [[0, Math.round((lift - x) / (1 - x) * 1000) / 1000], [1, 1]];
+    } else out[ch] = levelsPoints(Math.round((toe + x * (1 - toe)) * 1000) / 1000, 1, anchor);
+  }
+  out.blackPoint = x; out.anchor = anchor; out.base = base;
+  return out;
+}
+
 // THE FORM of a curve written through these points, as a map on levels 0..100. Two points: the straight
 // line. More: Premiere draws a NATURAL CUBIC SPLINE through them - read pixel by pixel 2026-09-18 21:42
 // (`curveToeAnchoredC202._perPixelSpline`): on a channel curve anchored at 0.55 the natural spline
@@ -294,4 +322,4 @@ function predictBottoms(m, moves) {
   return out;
 }
 
-module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, levelsPoints, levelsMap, blackInFor, whiteInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
+module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, rgbLevels, levelsPoints, levelsMap, blackInFor, whiteInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };

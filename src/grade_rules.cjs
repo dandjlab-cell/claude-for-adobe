@@ -18,7 +18,7 @@ const { STATISTICS, PARAMS, damage, allowance } = require("./grade.cjs");
 const PIXELS = require("./grade_pixels.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
 const { castAt, solveCast, predictPads, MAX_SAT } = require("./wheels.cjs");
-const { levels, blackInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
+const { levels, rgbLevels, blackInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
 
 const BLACK_POINT = [0, 5];      // luma p1 of the FRAME: sits here, not crushed flat
 const WHITE_POINT = [88, 95];    // luma p99 of the FRAME: 90-95 with nothing true white; never clipped
@@ -477,8 +477,10 @@ function padsFor(m, current = null, pixels = null) {
   return { wheels, needs, targets, how, pixels: how === "pixels" ? px : null, predicted, evaluations };
 }
 
-// The black point, set EXACTLY with the Master curve's bottom point - a levels move, output = (in - x)
-// / (1 - x), measured to within the toe's softness (src/curves.cjs). Solved on the balanced frame,
+// The black point, set with a bottom point on each CHANNEL curve (rgbLevels, since 2026-09-18 21:42: the
+// Master curve is not a 1-D map on green; the channel curves are the natural spline exactly), pinned at the
+// anchor. Solved as ONE x for the frame (the chooser's op is the anchored spline on every channel after the
+// toes; the write merges each channel's toe with x). Solved on the balanced frame,
 // written before the sliders, which are then solved on the state it predicts. An automatic pass stops
 // at x = 0.25: a black point above ~28 is not a lifted black, it is a picture with no black in it.
 const LEVELS_CAP = 0.25;
@@ -517,14 +519,14 @@ function levelsFor(m, current = null, asRead = null, pixels = null) {
       constraint: (s, v) => v > 0 && v < 0.02 ? "below the existing 0.02 minimum curve move" : null,
       allow: allowance(damage(px.baseline)), discrete: true, rangeNote: "lowest channel floor cap / levels cap / serialization" });
     const blackIn = r.feasible ? r.value : 0;
-    return { how: "pixels", held: blackIn < 0.02, blackIn, anchor: pin, target, curves: blackIn < 0.02 ? current : levels(blackIn, 1, current, pin),
+    return { how: "pixels", held: blackIn < 0.02, blackIn, anchor: pin, target, curves: blackIn < 0.02 ? current : rgbLevels(blackIn, current, pin),
       predicted: r.feasible ? r.state : m, pixels: r.feasible ? r.pixels : px, evaluations: r.evaluations,
       why: r.note + "; pinned at " + pin.toFixed(2) + (colored ? "; colored bottom, frozen policy unchanged" : "") };
   }
   const blackIn = Math.min(LEVELS_CAP, want, floorCap);
   if (blackIn < 0.02) return null;
   return {
-    how: "table", blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
+    how: "table", blackIn, anchor, target, curves: rgbLevels(blackIn, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
     why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (colored ? " (a colored bottom: only as far as its lowest channel allows)" : "") + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
   };
 }

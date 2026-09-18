@@ -79,7 +79,11 @@ test("a lifted black point is the curve's job: the Master bottom point, solved e
   assert.ok(Math.abs(lev.predicted.luma.p1 - 4) < 0.05, "and the prediction lands on 4: " + lev.predicted.luma.p1.toFixed(2));
   assert.equal(lev.predicted.luma.p50, 40, "the median does not move: the curve is a toe pull, not a stretch");
   assert.ok(Math.abs(lev.predicted.luma.p99 - 90) < 0.2, "the top stays within tenths: " + lev.predicted.luma.p99.toFixed(2));
-  assert.deepEqual(lev.curves.Master, [[lev.blackIn, 0], [0.4, 0.4], [0.8, 0.8], [1, 1]], "four points: bottom, the median pin, the 0.8 pin, the top corner");
+  // 2026-09-18 21:50: the black point is written on the three CHANNEL curves (Master's green is not a 1-D
+  // map; the channel curves are the spline exactly), Master left at identity.
+  assert.deepEqual(lev.curves.Master, [[0, 0], [1, 1]], "Master is identity");
+  for (const ch of ["Red", "Green", "Blue"]) assert.deepEqual(lev.curves[ch], [[lev.blackIn, 0], [0.4, 0.4], [0.8, 0.8], [1, 1]], ch + ": four points: bottom, the median pin, the 0.8 pin, the top corner");
+  assert.equal(lev.curves.blackPoint, lev.blackIn);
   const coloredShadow = frame(20, 45, 90, [30, 12, 4], [90, 90, 90]); // B-R -26 at the bottom: a red-orange surface, not a black
   // 19:40: a colored bottom is no longer refused outright (C187 stayed at 23.5 and read flat); it is pulled
   // as far as its lowest channel allows - here blue's bottom at 4 leaves no room at all, so still no curve.
@@ -497,8 +501,8 @@ test("the black-point correction keeps the channel toes instead of writing over 
   const fs = require("node:fs"), path = require("node:path");
   const panel = fs.readFileSync(path.join(__dirname, "..", "panel.js"), "utf8");
   const seq = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
-  assert.match(seq, /await cw\.write\(curveLevels\(curve2, 1, lev\.curves, lev\.anchor\)\)/, "composed onto the first write, which carries the toes");
-  assert.doesNotMatch(seq, /curveLevels\(curve2, 1, currentCurves/, "never onto the clip's originals");
+  assert.match(seq, /await cw\.write\(curveRgbLevels\(curve2, lev\.curves\.base \|\| lev\.curves, lev\.anchor\)\)/, "re-merged onto the BASE of the first write, which carries the toes");
+  assert.doesNotMatch(seq, /curveRgbLevels\(curve2, currentCurves/, "never onto the clip's originals");
 });
 
 test("the deterministic pass can grade one clip, and the skill sends single-shot work there", () => {
@@ -566,7 +570,11 @@ test("the proof frame's warm bottom is levelled by the toes, and the Shadows whe
   // And the black point still gets set afterwards, on a bottom that is already level.
   const lev = levelsFor(bot.predicted, bot.curves, m);
   assert.ok(lev && lev.blackIn >= 0.02, "and a Master bottom point is actually SET - down-only left floorCap at 0.005 and set none at all: " + (lev && lev.blackIn));
-  assert.deepEqual(lev.curves.Red, bot.curves.Red, "and it composes onto the toes rather than replacing them");
+  // The toe and the black point are ONE bottom point per channel: t + x(1 - t), the base kept for the corrections.
+  const t = bot.curves.Red[0][0], merged = Math.round((t + lev.blackIn * (1 - t)) * 1000) / 1000;
+  assert.ok(Math.abs(lev.curves.Red[0][0] - merged) < 0.0015, "red's bottom point merges its toe " + t + " with the black point " + lev.blackIn + ": " + lev.curves.Red[0][0] + " vs " + merged);
+  assert.deepEqual(lev.curves.base.Red, bot.curves.Red, "and the toes are kept as the base");
+  assert.deepEqual(lev.curves.Master, [[0, 0], [1, 1]]);
 });
 
 // The same frame as the pass itself reads it - from the SOURCE file, by subject region - where red's own
