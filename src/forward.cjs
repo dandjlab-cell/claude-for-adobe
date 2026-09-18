@@ -115,11 +115,20 @@ const CHANNELS = ["red", "green", "blue"];
 function apply(rgb, op, amount, extra) {
   if (!OPS[op]) throw new Error("no measured form for " + op + " - add one or do not model it");
   const f = OPS[op](amount, extra);
+  // 2026-09-18 chooser benchmark: replaying a channel function for every sample dominated composed
+  // searches. RGB24 has only 256 inputs per channel; these exact tables retain rounding and EVERY
+  // intermediate clamp while doing the expensive exp()/gain work once per code, not per pixel.
+  const red = new Uint8Array(256), green = new Uint8Array(256), blue = new Uint8Array(256);
+  for (let v = 0; v < 256; v++) {
+    red[v] = clamp255(Math.round(f(v, "red")));
+    green[v] = clamp255(Math.round(f(v, "green")));
+    blue[v] = clamp255(Math.round(f(v, "blue")));
+  }
   const out = Buffer.allocUnsafe(rgb.length);
   for (let i = 0; i < rgb.length; i += 3) {
-    out[i] = clamp255(Math.round(f(rgb[i], "red")));
-    out[i + 1] = clamp255(Math.round(f(rgb[i + 1], "green")));
-    out[i + 2] = clamp255(Math.round(f(rgb[i + 2], "blue")));
+    out[i] = red[rgb[i]];
+    out[i + 1] = green[rgb[i + 1]];
+    out[i + 2] = blue[rgb[i + 2]];
   }
   return out;
 }
@@ -128,13 +137,16 @@ function apply(rgb, op, amount, extra) {
 // is a STACK of instances, which is how an arbitrary order is reached - Lumetri's internal order is fixed
 // per instance, not overall.
 const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "masterToeAnchored", "channelToe", "channelLift"];
-function pipeline(rgb, stages) {
+function pipeline(rgb, stages, visit = null) {
   let buf = rgb;
   for (const stage of stages) {
-    const ops = Object.keys(stage).sort((a, b) => SECTION_ORDER.indexOf(a) - SECTION_ORDER.indexOf(b));
-    for (const op of ops) {
-      const a = stage[op];
-      buf = Array.isArray(a) ? apply(buf, op, a[0], a[1]) : apply(buf, op, a);
+    // 2026-09-18: a tuple list permits three channel toes in ONE instance. Separate objects would
+    // accidentally model stacked Lumetris, putting Master after channels instead of before them.
+    const ops = (Array.isArray(stage) ? stage.slice() : Object.entries(stage).map(([op, a]) => [op, ...(Array.isArray(a) ? a : [a])]))
+      .sort((a, b) => SECTION_ORDER.indexOf(a[0]) - SECTION_ORDER.indexOf(b[0]));
+    for (const [op, amount, extra] of ops) {
+      buf = apply(buf, op, amount, extra);
+      if (visit) visit(buf, op);
     }
   }
   return buf;

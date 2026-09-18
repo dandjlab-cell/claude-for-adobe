@@ -1,8 +1,8 @@
 // Grading a shot the way a colorist does: read the scopes once, know what each knob will do, set the
-// knobs, glance at the scopes to confirm. One render before, one after. No searching.
+// knobs, glance at the scopes to confirm. Candidate searches are offline, never probe renders.
 //
-// The knowledge of what a knob does is src/grade_model.cjs (the internal scopes, built from the live
-// calibration sweeps). What talks to Premiere is injected (`set` writes a parameter and returns what it
+// Measured pixel forms choose on the source sample; grade_model.cjs remains the labelled fallback when
+// there is no complete pixel pipeline. What talks to Premiere is injected (`set` returns what it
 // reads back; `measure` renders and measures), so all of this runs and is tested without Premiere.
 //
 // Why a confirm render at all: the model composes one-knob-at-a-time calibrations, and Premiere's tone
@@ -14,6 +14,7 @@
 const { solveFor } = require("./grade_solve.cjs");
 const { predict, solveKnob, SWEEPS } = require("./grade_model.cjs");
 const FORWARD = require("./forward.cjs");
+const PIXELS = require("./grade_pixels.cjs");
 
 // Statistics a grade is read from and steered by. The parade ones are what white balance IS on a
 // scope: the three channels' whites line up when the picture is neutral, whatever color the subject
@@ -192,27 +193,15 @@ async function steer({ set, measure, param, target, statistic, start = 0, tolera
 // to neutral and confirmed once more - safety spends the third render, not a nudge.
 const WHITE_CEILING = 95; // the sweep clipped nothing until p99 reached 99.6; 92 blocked moves that were safe
 const BRIGHTNESS_KNOBS = new Set(["exposure", "contrast", "highlights", "whites", "shadows", "blacks"]);
-// `baseline` is the damage the shot ARRIVED with (clipped/crushed of the untouched read); without it
-// the reading passed in is taken as the baseline, which is wrong once color writes precede the plan.
-// `pixels` is an optional retained RGB SAMPLE of the frame as it stands after everything already written
-// (src/forward.cjs `sample`). When present, every candidate value is run through the forward model on
-// those pixels before it is accepted, and backed off if it would clip or floor past the allowance.
-//
-// This is a GUARD, not a predictor: it never chooses a value, only refuses one. That distinction is the
-// whole reason it is safe to add - the worst it can do is under-move. It exists because on 2026-09-17 the
-// white-point lift was routed through Exposure, whose swept table is railed upward on its calibration
-// frame, so the solver predicted +2 stops would reach p99 90.2 and the real gain of 1.78 took 76.5 to 136.
-// A table of another frame's percentiles cannot see that; the frame's own pixels see it in 6ms.
-async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null, pixels = null }) {
-  const before = measured || await measure(); // a caller that has just read the scopes passes the reading
-  let buf = pixels; // walks forward with the accepted moves, so each candidate is judged on the right state
-  // The sample as it ARRIVED, never advanced. Destruction is counted against this rather than against the
-  // previous stage, so it accumulates: a pixel an earlier accepted move put on a rail still counts against
-  // the next candidate. An aggregate share cannot express that - it can be masked by lifting other pixels
-  // off the rail, and a final-only check misses a floor-then-lift entirely (Astra, 2026-09-18).
-  const origin = pixels;
+// 2026-09-18: `pixels` is the arriving sample or {source, operations}. Candidates replace a control
+// in that one Lumetri instance and replay Basic → Master → channel curves, regardless of write order.
+// A table move invalidates the context; pretending its buffer advanced would restore the old defect.
+async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, measured = null, current = null, baseline = null, pixels = null, pixelReason = "no retained sample" }) {
+  const before = measured || await measure();
+  let buf = PIXELS.context(pixels);
+  let unavailable = pixelReason;
   let renders = measured ? 1 : 2;
-  let state = before;
+  let state = buf ? PIXELS.readingFor(buf, before) : before;
   const plan = [];
   const frameWhite = (m) => (m.frame || m).luma.p99;
   for (const g of goals) {
@@ -228,15 +217,45 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     if (g.onlyIf && !g.onlyIf(state)) { plan.push({ param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), skipped: "not needed after the knobs before it" }); continue; }
     const from = current ? Number(await current(g.param)) : (spec.neutral || 0);
     const entry = { param: g.param, statistic: statName, target: g.target, before: round(readStat(state)), from };
+    const limit = g.cap ? [Math.max(spec.range[0], -g.cap), Math.min(spec.range[1], g.cap)] : spec.range.slice();
+    if (!Number.isFinite(g.target)) throw new Error("target must be a number");
+    if (buf && FORWARD.OPS[g.param]) {
+      // Raw samples are at neutral; a nonzero readback needs explicit provenance, never an inverse of
+      // clamped pixels. The panel declines source sampling for already graded clips; other callers must
+      // supply the actual source operations when starting away from zero.
+      const prior = buf.operations.find(([op]) => op === g.param);
+      if (from !== (prior ? prior[1] : 0)) { buf = null; unavailable = "current " + g.param + " is absent from the source pipeline"; }
+    }
+    if (buf && FORWARD.OPS[g.param]) {
+      if (state.frame && ["brightness", "skinHue", "saturation", "red", "green", "blue", "warmth", "tintCast"].includes(statName)) {
+        plan.push({ ...entry, how: "pixels", skipped: "held: frame sample has no region pixels for " + statName }); continue;
+      }
+      if (g.param === "exposure") limit[1] = Math.min(0, limit[1]); // exposureRule: upward shoulder unmeasured.
+      const allow = allowance(baseline || damage(buf.baseline), guard);
+      // Loaded at call time: grade_rules itself uses STATISTICS, so a top-level import would cycle.
+      const { candidateScore } = require("./grade_rules.cjs");
+      const choice = PIXELS.choose({ pixels: buf, reading: state, op: g.param, range: limit, from,
+        target: g.target, readStat, allow,
+        constraint: (m) => BRIGHTNESS_KNOBS.has(g.param) && frameWhite(state) <= WHITE_CEILING && frameWhite(m) > WHITE_CEILING
+          ? "white ceiling " + WHITE_CEILING : g.ceiling && !g.ceiling(m) ? "goal ceiling" : null,
+        score: (m, d) => candidateScore(m, d, readStat, g.target, buf.targets),
+        rangeNote: g.param === "exposure" ? "downward range only; upward shoulder unmeasured" : g.cap ? "range/cap " + g.cap + " or serialization" : "range/serialization limit" });
+      if (!choice.feasible) { plan.push({ ...entry, how: "pixels", predicted: round(choice.stat), evaluations: choice.evaluations, skipped: choice.note }); continue; }
+      plan.push({ ...entry, how: "pixels", value: choice.value, predicted: round(choice.stat), predictedResidual: choice.residual,
+        evaluations: choice.evaluations, note: choice.note });
+      buf = choice.pixels; state = choice.state;
+      continue;
+    }
+    const how = "table";
+    const fallback = FORWARD.OPS[g.param] ? "table: " + unavailable : "table: no pixel form for " + g.param;
     // A caller may bring its own solve (from a measured slope the sweep cannot give, like lowering
     // Blacks): a function gets the state predicted after the knobs before it, a value is taken as is.
     const own = g.solve ? g.solve(state, from) : g.value;
     const s = own !== undefined
       ? { value: own, bracketed: true, partial: false, helps: true }
       : (SWEEPS[g.param] ? solveKnob(state, g.param, from, readStat, g.target) : null);
-    if (!s) { plan.push({ ...entry, skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
-    if (s.partial && !s.helps) { plan.push({ ...entry, skipped: "beyond the knob's range and the range end does not help" }); continue; }
-    const limit = g.cap ? [Math.max(spec.range[0], -g.cap), Math.min(spec.range[1], g.cap)] : spec.range;
+    if (!s) { plan.push({ ...entry, how: "table", skipped: SWEEPS[g.param] ? "no solution" : "no calibration for " + g.param }); continue; }
+    if (s.partial && !s.helps) { plan.push({ ...entry, how: "table", skipped: "beyond the knob's range and the range end does not help" }); continue; }
     let value = clampTo(limit, s.value), note = s.partial ? "partial: as far as the knob goes" : (Math.abs(value - s.value) > 1e-6 ? "capped at " + g.cap + ": a balance is not a look" : "");
     let predicted = predict(state, g.param, from, value);
     // Cap a brightness move by where the model says the frame's white point lands.
@@ -252,62 +271,44 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     if (g.ceiling && !g.ceiling(predicted)) {
       let v = value, tries = 0;
       while (!g.ceiling(predict(state, g.param, from, v)) && Math.abs(v - from) > 1 && tries++ < 12) v = from + (v - from) * 0.8;
-      if (Math.abs(v - from) <= 1) { plan.push({ ...entry, skipped: "held: any move would pass its own ceiling" }); continue; }
+      if (Math.abs(v - from) <= 1) { plan.push({ ...entry, how: "table", skipped: "held: any move would pass its own ceiling" }); continue; }
       value = Math.round(v * 100) / 100; predicted = predict(state, g.param, from, value); note = (note ? note + "; " : "") + "held back at its ceiling";
     }
-    // The forward guard. Judged on the frame's own pixels, composed with everything accepted so far.
-    if (buf && FORWARD.OPS[g.param]) {
-      const allow = allowance(baseline || damage(before), guard);
-      let v = value, tries = 0, caught = null;
-      for (;;) {
-        // `origin` is the sample as it arrived, so newHigh/newLow count destruction CUMULATIVELY - damage
-        // an earlier accepted move already did still counts against this one. That is what Astra's "every
-        // prefix of the chain must preserve the protected samples" requires, and it is the half an aggregate
-        // share cannot express.
-        const d = FORWARD.damageOf(buf, g.param, v, undefined, origin);
-        if (!d) break;
-        // Both tests, not either: the shares keep the old behaviour on frames that arrived damaged, and the
-        // newly-railed counts catch the destruction the shares can mask.
-        const shares = d.clipped <= allow.clipped && d.floored <= allow.crushed;
-        const destroyed = d.newHigh === null ? false : (d.newHigh > allow.clipped || d.newLow > allow.crushed);
-        if (shares && !destroyed) break;
-        caught = d;
-        if (Math.abs(v - from) <= 1 || tries++ >= 12) { v = from; break; }
-        v = from + (v - from) * 0.8;
-      }
-      if (caught && Math.abs(v - value) > 1e-6) {
-        // Report the DESTRUCTION when that is what stopped it - the shares can look innocent while pixels
-        // are being lost, so a row that says only "would clip 0.4%" would be telling the wrong story.
-        const destroyedIt = caught.newHigh !== null && (caught.newHigh > allow.clipped || caught.newLow > allow.crushed);
-        note = (note ? note + "; " : "") + "held by the pixels: " + round(value) + (destroyedIt
-          ? " would destroy " + round(caught.newHigh) + "% at the top / " + round(caught.newLow) + "% at the bottom of pixels the source still had"
-          : " would clip " + round(caught.clipped) + "% / floor " + round(caught.floored) + "%");
-        value = Math.round(v * 100) / 100;
-        predicted = predict(state, g.param, from, value);
-      }
-      // The buffer has to carry EVERY accepted move or it stops describing the picture. `apply` can throw -
-      // exposure above 0 is deliberately not modelled - and an uncaught throw here aborted the whole clip's
-      // write. A throw means the state is unknown from here on, so the guard stands down for the rest of
-      // this clip rather than judging later candidates on a frame that is missing a move.
-      if (Math.abs(value - from) > 1e-6) {
-        try { buf = FORWARD.apply(buf, g.param, value) || null; } catch (_) { buf = null; }
-      }
-    } else if (buf && Math.abs(value - from) > 1e-6) {
-      // A knob with no measured pixel form moved. `highlights` and `shadows` have no OPS entry and both fire
-      // on the ordinary low-white-point path, so this is the common case, not an exotic one: leaving `buf`
-      // alone would judge every LATER candidate on pixels missing a move that was really written - exactly
-      // the stale-state failure the forward model exists to end. Stand down instead.
-      buf = null;
+    value = round(value);
+    predicted = predict(state, g.param, from, value);
+    note = fallback + (note ? "; " + note : "");
+    if (Math.abs(value - from) > 1e-6) {
+      if (buf) note += "; pixel choice stands down for later goals";
+      buf = null; unavailable = "after table-chosen " + g.param + ": no complete pixel pipeline";
     }
-    plan.push({ ...entry, value, predicted: round(readStat(predicted)), note });
+    plan.push({ ...entry, how, value, predicted: round(readStat(predicted)), note });
     state = predicted;
   }
   // The state the model expects after every slider, kept so a caller can compare it with what the confirm
   // actually reads. Each knob reports its OWN statistic before/achieved, so a value no knob steers - the
   // black point - had nowhere to show a model miss (2026-09-17: the chain went dark between the curve and
   // the read, and neither the sweeps nor the row could say which step lost 1.4 points of it).
-  const expected = state;
-  for (const p of plan) if (p.value !== undefined) p.readBack = Number(await set(p.value, p.param));
+  let expected = state;
+  let expectedHow = buf ? "pixels" : "table";
+  // 2026-09-18: a request is not a write. A clamped/refused value must replace the operation used for
+  // MODEL OFF BY; an unreadable result cannot certify any expectation. The confirm still judges it.
+  const write = async (p, value) => {
+    p.readBack = Number(await set(value, p.param));
+    p.value = value;
+    if (!Number.isFinite(p.readBack)) {
+      buf = null; expected = null; expectedHow = "unavailable: nonfinite readback";
+      p.note += "; readback unavailable";
+    } else {
+      if (p.readBack !== value) {
+        p.note += "; requested " + value + ", readback " + p.readBack;
+        if (!buf) { expected = null; expectedHow = "unavailable after changed readback"; }
+      }
+      p.value = p.readBack;
+      if (buf) buf = PIXELS.replace(buf, p.param, p.value);
+    }
+  };
+  for (const p of plan) if (p.value !== undefined) await write(p, p.value);
+  if (buf) expected = PIXELS.readingFor(buf, before);
   let after = await measure();
   const judge = (m) => { for (const p of plan) if (p.value !== undefined) { p.achieved = round(STATISTICS[p.statistic](m)); p.residual = round(p.achieved - p.target); p.hit = Math.abs(p.achieved - p.target) <= tolerance; } };
   judge(after);
@@ -326,13 +327,19 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
     // +25 (the 21:37 run left four white points at 82 by going back to zero). Still one render.
     for (const p of plan) if (p.value !== undefined && culprits.has(p.param)) {
       const half = round(p.from + (p.value - p.from) / 2);
-      p.readBack = Number(await set(half, p.param)); p.value = half;
-      p.note = "backed off to half: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
+      await write(p, half);
+      p.note = (p.note ? p.note + "; " : "") + "backed off to half: the frame clipped " + round(harm.clipped) + "% / crushed " + round(harm.crushed) + "%";
     }
+    // The first estimate described the first writes. A safety half-write must have a matching
+    // expectation, or MODEL OFF BY would compare the render against values no longer on the clip.
+    if (buf) {
+      for (const p of plan) if (p.value !== undefined) buf = PIXELS.replace(buf, p.param, p.value);
+      expected = PIXELS.readingFor(buf, before);
+    } else { expected = null; expectedHow = "unavailable after confirm backoff"; }
     after = await measure(); renders++;
     judge(after); harm = damage(after); backedOff = true;
   }
-  return { before, after, expected, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, allow), backedOff };
+  return { before, after, expected, expectedHow, pixels: buf, plan, renders, clipped: harm.clipped, crushed: harm.crushed, unsafe: unsafe(harm, allow), backedOff };
 }
 
 const round = (n) => Math.round(Number(n) * 100) / 100;

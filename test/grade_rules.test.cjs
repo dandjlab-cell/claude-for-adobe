@@ -175,8 +175,8 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
-  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iBot = seqTool.indexOf("gradeBottomsFor(afterPads, currentCurves)"),
-    iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
+  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iBot = seqTool.indexOf("gradeBottomsFor(afterPads, currentCurves, curvePixels)"),
+    iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m, curvePixels)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
   assert.ok(iPads > 0 && iPads < iBot && iBot < iLev && iLev < iGoals, "balance on the frame as read, then the black balance, then the curve's black point on a bottom that is already level, then the sliders on the state after all of it");
   assert.match(seqTool, /if \(lev\) await cw\.write\(lev\.curves\); else if \(bot\) await cw\.write\(bot\.curves\);/, "the channel toes reach Premiere even when there is no black point to set");
   assert.match(seqTool, /if \(lev && h\.crushed > allow\.crushed\) \{ await cw\.write\(currentCurves \|\| \{\}\);/, "a crush rolls back the curve first, not the whole balance");
@@ -188,6 +188,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(seqTool, /planGradeShot\(\{[^\n]*pixels: guardPixelsFor\(\)/, "planShot is given this clip's own pixels, not only another frame's percentile table");
   assert.match(seqTool, /if \(!pixels \|\| padMoves\.length \|\| lift\) return null;/, "no pixels when a move with no measured pixel form was written: a guard on the wrong picture is worse than none");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap, visible\)/, "one snapshot per run, and every source read cropped to what the timeline shows");
+  assert.match(seqTool, /"saturation", "vibrance"/, "existing saturation controls also invalidate raw source pixels");
+  assert.match(seqTool, /value !== \(GRADE_PARAMS\[param\].neutral \|\| 0\)/, "Saturation's neutral is 100, not zero");
+  assert.match(seqTool, /"Hue vs Hue", "Hue vs Sat", "Hue vs Luma", "Sat vs Sat"/, "existing hue curves invalidate source pixels too");
+  assert.match(seqTool, /const lev = levelChoice && !levelChoice.held/, "a held curve produces a row, never an identity-curve write");
   // Motion scale and position decide which source pixels are on screen: a clip past 100% hides some.
   assert.match(seqTool, /const visible = visibleFor\(c\);/, "each clip's visible window is computed once");
   assert.match(seqTool, /confirm && v\.balanced \? 1 : 0/, "an unconfirmed run never counts a clip as balanced");

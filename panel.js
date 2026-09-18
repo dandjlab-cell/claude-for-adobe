@@ -21,7 +21,8 @@ const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATIS
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, bottomsFor: gradeBottomsFor, shadowsLiftFor: gradeShadowsLiftFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump, satRolloff: curveSatRolloff } = require(path.join(extensionRoot, "src", "curves.cjs"));
-const { sample: sampleRgb, apply: applyRgb } = require(path.join(extensionRoot, "src", "forward.cjs"));
+const { sample: sampleRgb } = require(path.join(extensionRoot, "src", "forward.cjs"));
+const { context: gradePixelContext } = require(path.join(extensionRoot, "src", "grade_pixels.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
@@ -1611,14 +1612,27 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // match; the 00:58 run copied the state without that and clipped 4% / crushed 9.4%, the 01:10 run
     // matched the color only and the per-cut tone and the clip guard pulled the cuts apart again.
     const ref = matched[c.name] || null;
-    let currentWheels = null, wheelsErr = null, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null, currentSat = null, satErr = null;
+    let currentWheels = null, wheelsErr = null, balanceReadFailed = false, tempFrom = 0, tintFrom = 0, currentCurves = null, curvesErr = null, currentSat = null, satErr = null;
     try { currentWheels = (await ww.read()).wheels; } catch (error) { wheelsErr = error.message; }
-    try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) tempFrom = 0; } catch (_) { tempFrom = 0; }
-    try { tintFrom = await tiw.read(); if (!isFinite(tintFrom)) tintFrom = 0; } catch (_) { tintFrom = 0; }
+    try { tempFrom = await tw.read(); if (!isFinite(tempFrom)) { tempFrom = 0; balanceReadFailed = true; } } catch (_) { tempFrom = 0; balanceReadFailed = true; }
+    try { tintFrom = await tiw.read(); if (!isFinite(tintFrom)) { tintFrom = 0; balanceReadFailed = true; } } catch (_) { tintFrom = 0; balanceReadFailed = true; }
     try { currentCurves = (await cw.read()).curves; } catch (error) { curvesErr = error.message; }
     try { currentSat = (await sw.read()).points; } catch (error) { satErr = error.message; }
-    let hslKeyed = false; try { const kt = String(await hslWriter(at, track).readKey()); hslKeyed = /:0,?[.,]?00,0,?[.,]?00;/.test(kt) === false && kt.indexOf(",0,00,0,00") < 0 && kt.indexOf(",0.00,0.00") < 0; } catch (_) { hslKeyed = false; }
-    const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves)) || !!(currentSat && currentSat.length) || hslKeyed;
+    let hslKeyed = false; try { const kt = String(await hslWriter(at, track).readKey()); hslKeyed = /:0,?[.,]?00,0,?[.,]?00;/.test(kt) === false && kt.indexOf(",0,00,0,00") < 0 && kt.indexOf(",0.00,0.00") < 0; } catch (_) { hslKeyed = false; balanceReadFailed = true; }
+    // 2026-09-18: source pixels are valid only at neutral Basic settings too. The old gate checked
+    // curves/WB/wheels but missed an editor's Contrast or Whites; that silently certified another image.
+    // Read failures also withhold the source: an unknown pipeline is not a neutral one.
+    let basicGraded = false;
+    if (!ref) for (const param of ["exposure", "contrast", "highlights", "shadows", "whites", "blacks", "saturation", "vibrance"]) {
+      try { const value = Number(await lumetriWriter(at, track, GRADE_PARAMS[param].lumetri, region).read()); if (!isFinite(value) || value !== (GRADE_PARAMS[param].neutral || 0)) basicGraded = true; }
+      catch (_) { basicGraded = true; }
+    }
+    // Includes the skin curve this pass writes. Its source sample is stale on a subsequent run too.
+    if (!ref) for (const name of ["Hue vs Hue", "Hue vs Sat", "Hue vs Luma", "Sat vs Sat"]) {
+      try { if ((await hueCurveWriter(at, track, name).read()).points.length) basicGraded = true; }
+      catch (_) { basicGraded = true; }
+    }
+    const graded = basicGraded || balanceReadFailed || !!wheelsErr || !!curvesErr || !!satErr || tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves)) || !!(currentSat && currentSat.length) || hslKeyed;
 
     let m, readFrom = read;
     // The retained sample of this clip's own frame, for the forward guard. Only from the preread, and only
@@ -1718,6 +1732,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       logPart = ("log → " + conv.name + " (a source setting, at your word; " + (conv.declared ? "the file declares this space" : conv.tried + " conversion" + (conv.tried > 1 ? "s" : "") + " tried" + (conv.hint ? ", " + conv.hint + " first from the file's tags" : "") + "; chosen by the picture") + ": black " + round2(cm.luma.p1) + " / white " + round2(cm.luma.p99) + " / color " + round2(cm.saturation.p99) + ")");
       }
     }
+    if (readFrom !== "source") pixels = null; // a conversion/render replaced the source reading
     const seen = m.region || region;
     const sawV = m.vision ? [m.vision.faces && m.vision.faces.length ? m.vision.faces.length + " face" + (m.vision.faces.length > 1 ? "s" : "") : "", m.vision.hands && m.vision.hands.length ? m.vision.hands.length + " hand" + (m.vision.hands.length > 1 ? "s" : "") : ""].filter(Boolean).join(", ") : "";
     const f0 = m.frame || m;
@@ -1769,7 +1784,8 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     //    shares, then each end's wheel pad for what is left, solved on the state predicted after
     //    temperature. The casts are read here, before the tonal sliders, because a bottom pulled to the
     //    floor cannot be read. The sliders are solved on the state predicted after the pads.
-    const temp = gradeTemperatureFor(m, tempFrom, tintFrom);
+    const temp = gradeTemperatureFor(m, tempFrom, tintFrom, pixels);
+    let curvePixels = pixels ? (temp ? temp.pixels : gradePixelContext(pixels)) : null;
     const afterTemp = temp ? temp.predicted : m;
     const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
     const padMoves = Object.keys(pads.wheels);
@@ -1778,33 +1794,43 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // the Shadows wheel, which is what wrote the blue blacks in the first place (see bottomsFor). Solved
     // before the Master bottom point so the black point is set on a bottom that is already level, and
     // written in the same curve object: levels() composes onto the channel curves.
-    const bot = curvesErr ? null : gradeBottomsFor(afterPads, currentCurves);
+    const bot = curvesErr ? null : gradeBottomsFor(afterPads, currentCurves, curvePixels);
+    if (bot && curvePixels) curvePixels = bot.pixels;
     const afterBalance = bot ? bot.predicted : afterPads;
     // The black point: the Master curve's bottom point, a levels move that lands where it is asked
     // (src/curves.cjs); the sliders are then solved on the state it predicts.
-    const lev = curvesErr ? null : gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m);
+    const levelChoice = curvesErr ? null : gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m, curvePixels);
+    const lev = levelChoice && !levelChoice.held ? levelChoice : null;
+    if (levelChoice && levelChoice.held) parts.push("curve black held [pixels]: " + levelChoice.why);
+    if (lev && curvePixels) curvePixels = lev.pixels;
     if (curvesErr && (afterBalance.frame || afterBalance).luma.p1 > GRADE_ACCEPT.blackMax) needs.push("curves not read (" + curvesErr + "): the black point is left where it is");
     // What the Master curve could not reach goes to the Shadows wheel's luma - the Lift half of the pair.
     // It only ever fires where the curve gave up (its floor cap), and it is capped by the lowest channel's
     // own room just as the curve is. See shadowsLiftFor for why the curve goes first.
-    const lift = curvesErr ? null : gradeShadowsLiftFor(lev ? lev.predicted : afterBalance, currentWheels);
-    const afterLevels = lift ? lift.predicted : lev ? lev.predicted : afterBalance;
+    // Curves physically precede wheels even though the pad was solved first. Pixel curve choices see
+    // that pre-wheel image; the table wheel estimate is attached AFTER them, never baked into their source.
+    const afterCurves = curvePixels ? (lev ? lev.predicted : bot ? bot.predicted : afterTemp) : (lev ? lev.predicted : afterBalance);
+    const beforeLift = curvePixels && padMoves.length ? wheelPredictPads(afterCurves, pads.wheels, currentWheels) : afterCurves;
+    const lift = curvesErr ? null : gradeShadowsLiftFor(beforeLift, currentWheels);
+    const afterLevels = lift ? lift.predicted : beforeLift;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...(bot ? bot.needs : []), ...goals.needs);
     if (temp && temp.sceneColor) parts.push("no white balance (" + temp.why + ")");
-    else if (temp) parts.push("white balance: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
+    else if (temp) parts.push("white balance [" + temp.how + "]: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
     if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
-    if (bot) parts.push("black balance: " + bot.why);
+    if (bot) parts.push("black balance [" + bot.how + "]: " + bot.why);
     // The black point is the one value in the pass with no predicted-vs-actual anywhere: every slider
     // reports before→achieved through planShot, while the black balance and the curve report only what they
     // ASKED for. The 18:39 run predicted ~9.6 after the curve and the frame read 11.0, and nothing in the
     // row said which step lost it - shadows can only move p1 0.08 a unit (its sweep) and contrast +40 moves
     // it DOWN ~2.9, so the miss was neither. These are free: the numbers already exist, nothing is rendered.
     const bpChain = [["as read", (m.frame || m).luma.p1]];
-    if (bot) bpChain.push(["black balance", (bot.predicted.frame || bot.predicted).luma.p1]);
-    if (lev) bpChain.push(["curve " + lev.blackIn.toFixed(2), (lev.predicted.frame || lev.predicted).luma.p1]);
+    let modelBlackRead = null; // plan confirm (including its safety backoff), before corrections/skin
+    if (temp) bpChain.push(["white balance " + temp.how, (temp.predicted.frame || temp.predicted).luma.p1]);
+    if (bot) bpChain.push(["black balance " + bot.how, (bot.predicted.frame || bot.predicted).luma.p1]);
+    if (lev) bpChain.push(["curve " + lev.blackIn.toFixed(2) + " " + lev.how, (lev.predicted.frame || lev.predicted).luma.p1]);
     if (lift) bpChain.push(["shadows lift " + lift.luma.toFixed(3), (lift.predicted.frame || lift.predicted).luma.p1]);
-    if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " (" + lev.why + ")");
+    if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " [" + lev.how + "] (" + lev.why + ")");
     if (lift) parts.push("shadows lift: " + lift.why);
     // The colorists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
     // Sat, the QE text door, probed 2026-09-16), never on a colored end, judged on the frame as read.
@@ -1831,37 +1857,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // for the lift and the two cannot collide.
     let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels, lift ? { shadows: lift.wheels.shadows } : {}), corrected = false, hsl = null, shadowsLifted = false;
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
-    // The pixels the sliders will actually act on: this clip's retained sample with the balance already
-    // written onto it, so planShot's forward guard judges each candidate on the right picture. Only the
-    // moves whose form is MEASURED go on - the white balance, the channel bottom points (bare two-point
-    // curves, matching `channelToe._model` exactly) and the Master bottom point in either its plain or its
-    // ANCHORED form (`curveToe._anchored`, predicted to 0.24 IRE). Anything else returns null rather than an
-    // approximation: a guard fed a picture the frame is not in would refuse safe moves and pass unsafe ones,
-    // which is worse than no guard. So still no pixels when the wheels moved - a pad and the Shadows wheel
-    // luma have no measured pixel form, and the luma's magnitude does not even transfer between frames.
-    //
-    // The anchored case used to return null too, and that made the guard DEAD CODE: `levelsFor` sets the
-    // anchor to at least 0.30 and caps blackIn at 0.25, so `anchor > blackIn + 0.05` holds for every clip
-    // that gets a black point - which on this footage is all of them.
+    // 2026-09-18: retain source + operations, NOT a baked buffer. planShot inserts Basic candidates
+    // before Master/channel curves and replays the instance in SECTION_ORDER. Wheels have no form;
+    // once they move, later choice explicitly falls back to the table. Luma-vs-Sat is also unmodelled:
+    // pixel certification is through RGB Curves only, and the confirm/rollback judges the final image.
     const guardPixelsFor = () => {
       if (!pixels || padMoves.length || lift) return null;
-      const ops = [];
-      if (temp && temp.value !== tempFrom) ops.push(["temperature", temp.value]);
-      if (temp && temp.tint !== null && temp.tint !== tintFrom) ops.push(["tint", temp.tint]);
-      for (const ch of ["red", "green", "blue"]) {
-        const mv = bot && bot.toes ? bot.toes[ch] : null;
-        if (mv && mv.toe > 0.002) ops.push(["channelToe", mv.toe, ch]);
-        else if (mv && mv.lift > 0.002) ops.push(["channelLift", mv.lift, ch]);
-      }
-      // The same condition levels() itself uses to decide whether it writes an anchored curve, so the
-      // replay matches what was actually written rather than a curve of its own.
-      if (lev && lev.blackIn > 0.002) {
-        const anchored = lev.anchor !== null && lev.anchor > lev.blackIn + 0.05 && lev.anchor < 0.95;
-        ops.push(anchored ? ["masterToeAnchored", lev.blackIn, lev.anchor] : ["masterToe", lev.blackIn]);
-      }
-      try { let b = pixels; for (const [op, a, extra] of ops) b = applyRgb(b, op, a, extra); return b; }
-      catch (_) { return null; }
+      return curvePixels;
     };
+    const pixelReason = !pixels ? "no retained sample of an ungraded source" : padMoves.length ? "wheel pad has no pixel form" : lift ? "Shadows wheel lift has no pixel form" : "incomplete source pipeline";
+    if (sat && curvePixels) parts.push("pixels certify through RGB Curves; Luma vs Sat has no pixel form, final damage checked by confirm");
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
       if (padMoves.length || lift) await ww.write(applied);
@@ -1871,12 +1876,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       if (goals.length) {
         const writers = {};
         for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
-        const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline, pixels: guardPixelsFor() });
+        const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline, pixels: guardPixelsFor(), pixelReason });
         renders += confirm ? r.renders : 0; state = r.after; corrected = r.backedOff;
-        if (r.expected) bpChain.push(["sliders", ((r.expected.frame || r.expected).luma || {}).p1]);
+        modelBlackRead = r.expected ? (r.after.frame || r.after).luma.p1 : null;
+        if (r.expected) bpChain.push(["sliders " + r.expectedHow, ((r.expected.frame || r.expected).luma || {}).p1]);
         shadowsLifted = r.plan.some((p) => p.param === "shadows" && p.value !== undefined);
-        parts.push(r.plan.map((p) => p.skipped ? p.param + " skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
-      } else if (confirm) { state = await confirmMeasure(); renders++; }
+        parts.push(r.plan.map((p) => p.skipped ? p.param + " [" + (p.how || "rule") + "] skipped (" + p.skipped + ")" : p.param + " " + round2(p.value) + " [" + p.how + "]" + " (" + p.statistic + " " + p.before + "→" + p.achieved + (p.hit ? "" : ", asked " + p.target) + (p.note ? "; " + p.note : "") + ")").join("; "));
+      } else if (confirm) { state = await confirmMeasure(); modelBlackRead = (state.frame || state).luma.p1; renders++; }
       else state = afterLevels;
       // Damage the balance writes caused (no sliders, or the sliders' rollback was not enough): the
       // likely culprit goes back first - a crush is the curve's (its bottom point clamps the tail),
@@ -1906,7 +1912,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       let padBase = Object.assign({}, currentWheels || {}), stateBefore = afterTemp, wbBefore = m, padSolved = pads.wheels;
       let tempNow = temp ? temp.value : tempFrom, tintNow = temp && temp.tint !== null ? temp.tint : tintFrom, tempBase = tempFrom, tintBase = tintFrom;
       let tempWrote = !!(temp && temp.value !== tempFrom), tintWrote = !!(temp && temp.tint !== null); // what the last write moved
-      let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? lev.predicted.luma.p1 : null;
+      let curveNow = lev ? lev.blackIn : null, curveBaseP1 = lev ? (afterBalance.frame || afterBalance).luma.p1 : null, curvePredictedP1 = lev ? (lev.predicted.frame || lev.predicted).luma.p1 : null;
       // A backoff (planShot's or the balance restore) spent one render: it counts as the first pass,
       // so one correction still follows it (22:51: C198 and C209 kept whites blue by 3.5-6.7 because the
       // whites backoff ended the clip).
@@ -1964,10 +1970,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             let v = tempBase + tT * (tempNow - tempBase);
             while (Math.abs(v - tempNow) > 1 && tops(gradePredict(state, "temperature", tempNow, v)) > topLimit) v = tempNow + (v - tempNow) * 0.8;
             v = Math.round(v * 100) / 100;
-            if (Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
+            if (Math.abs(v - tempNow) >= 1 && Math.abs(v) <= 100) { temp2 = v; notes.push("temperature [render slope; table ceiling] " + round2(tempNow) + " → " + round2(v) + " (whites read " + round2(c1[0]) + ")"); }
           }
           const tG = tintWrote ? scale1(c0[1], c1[1]) : null;
-          if (tG !== null) { const tv = Math.round((tintBase + tG * (tintNow - tintBase)) * 100) / 100; if (Math.abs(tv - tintNow) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint " + round2(tintNow) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
+          if (tG !== null) { const tv = Math.round((tintBase + tG * (tintNow - tintBase)) * 100) / 100; if (Math.abs(tv - tintNow) >= 1 && Math.abs(tv) <= 100) { tint2 = tv; notes.push("tint [render slope] " + round2(tintNow) + " → " + round2(tv) + " (whites G read " + round2(c1[1]) + ")"); } }
           // A green-magenta residual that only appeared after the temperature move (under the line at
           // read, 1.6-2.4 after): Tint is solved from the real reading, from the model, one write.
           if (tint2 === null && !tintWrote && Math.abs(c1[1]) > 1.5) {
@@ -1978,7 +1984,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
               let tv = Math.max(-100, Math.min(100, st.value));
               while (Math.abs(tv - tintNow) > 1 && tops(gradePredict(state, "tint", tintNow, tv)) > topLimit) tv = tintNow + (tv - tintNow) * 0.8;
               tv = Math.round(tv * 100) / 100;
-              if (Math.abs(tv - tintNow) >= 1) { tint2 = tv; notes.push("tint " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
+              if (Math.abs(tv - tintNow) >= 1) { tint2 = tv; notes.push("tint [table: no confirm sample] " + round2(tv) + " (whites G read " + round2(c1[1]) + " after the temperature)"); }
             }
           }
         }
@@ -2012,7 +2018,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
             const room = Math.max(0, (Math.min(fr.red.p1, fr.green.p1, fr.blue.p1) - GRADE_FLOOR_MIN) / (100 - GRADE_FLOOR_MIN));
             const xAdd = Math.min(xWant, room);
             const x2 = Math.max(0, Math.min(GRADE_LEVELS_CAP, curveNow + xAdd * (a - curveNow) / a));
-            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + (xAdd < xWant - 1e-9 ? "; held at the lowest channel bottom" : "") + ")"); }
+            if (Math.abs(x2 - curveNow) >= 0.005) { curve2 = x2; notes.push("curve black [render levels: no confirm sample] " + curveNow.toFixed(2) + " → " + x2.toFixed(2) + " (black point read " + round2(p1) + (xAdd < xWant - 1e-9 ? "; held at the lowest channel bottom" : "") + ")"); }
             else if (xAdd < xWant - 1e-9 && pass === 0) notes.push("black point read " + round2(p1) + " and left there: the lowest channel has no room under it");
           }
         }
@@ -2133,7 +2139,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     } catch (_) {}
     const took = tookOf();
     log("grade " + label + took);
-    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (confirm && bpChain.length > 1 ? " [black point " + bpChain.map(([w, n]) => round2(n) + " " + w).join(" → ") + " → " + round2(f1.luma.p1) + " read" + (Math.abs(f1.luma.p1 - bpChain[bpChain.length - 1][1]) > 1 ? ", MODEL OFF BY " + round2(f1.luma.p1 - bpChain[bpChain.length - 1][1]) : "") + "]" : "") + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
+    lines.push(label + " [" + seen + (sawV ? "; " + sawV : "") + "] " + before + " → " + parts.join(" → ") + " → black " + round2(f1.luma.p1) + " / white " + round2(f1.luma.p99) + " / blacks " + round2(GRADE_STATS.blacksRB(state)) + " / whites " + round2(GRADE_STATS.whitesRB(state)) + (confirm && modelBlackRead !== null && bpChain.length > 1 ? " [black point " + bpChain.map(([w, n]) => round2(n) + " " + w).join(" → ") + " → " + round2(modelBlackRead) + " plan confirm" + (modelBlackRead !== null && Math.abs(modelBlackRead - bpChain[bpChain.length - 1][1]) > 1 ? ", MODEL OFF BY " + round2(modelBlackRead - bpChain[bpChain.length - 1][1]) : "") + "]" : "") + (v.balanced ? (confirm ? " ✓" : " (predicted)") : " — " + v.notes.join("; ")) + (v.hints && v.hints.length ? " [" + v.hints.join("; ") + "]" : "") + (needs.length ? " NEEDS: " + needs.join("; ") : "") + took);
   }
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;

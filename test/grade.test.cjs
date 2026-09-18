@@ -223,7 +223,8 @@ test("damage the shot arrived with is allowed to stay: a source clipping 1.7% is
 test("only the knobs that push the offending end are backed off: a crushed bottom leaves Whites alone", async () => {
   const base = premiereStandIn("exposure");
   let n = 0;
-  const host = { set: base.set, measure: () => Object.assign(base.measure(), { crushed: ++n > 1 ? 5 : 0 }) };
+  // This multi-knob fake accepts each value; the Exposure-only stand-in clamps Blacks to -2.
+  const host = { set: (v) => v, measure: () => Object.assign(base.measure(), { crushed: ++n > 1 ? 5 : 0 }) };
   const r = await planShot({ set: host.set, measure: host.measure, goals: [{ param: "whites", target: 92 }, { param: "blacks", value: -30, target: 4 }] });
   assert.equal(r.backedOff, true);
   assert.equal(r.plan.find((p) => p.param === "blacks").value, -15, "Blacks crushed it: back to half its move");

@@ -115,7 +115,7 @@ test("the sample spans the whole frame, not the first 80% of it", () => {
 // The guard the pass needed on 2026-09-17: the white-point lift was solved from a table that was railed on
 // its calibration frame, so the model said +2 stops reached p99 90.2 while the real gain took 76.5 to 136.
 // A table of another frame's percentiles cannot see that. The frame's own pixels see it in milliseconds.
-test("the forward guard refuses a move that would clip, and stays out of the way when it would not", async () => {
+test("the pixel chooser refuses clipping and reports measured expectations on safe frames", async () => {
   const { planShot } = require("../src/grade.cjs");
   const { sample, apply } = require("../src/forward.cjs");
   const frame = (topCode, tailShare) => {
@@ -207,9 +207,12 @@ test("the forward guard refuses a move that would clip, and stays out of the way
     assert.equal(untouched.low, 0, "a frame put through nothing has destroyed nothing");
     assert.equal(untouched.high, 0);
   }
-  // A frame with headroom: the guard must not interfere at all.
+  // 2026-09-18: pixels now CHOOSE, so the safe value must hit the measured target, not equal the
+  // other frame's table value. Keeping that old equality would explicitly require the original defect.
   const safe = frame(190, 0);
   const a = await run(safe, false), b = await run(safe, true);
-  assert.equal(b.value, a.value, "same value with and without the guard when nothing would clip");
+  assert.ok(Math.abs(measure(apply(sample(safe), "whites", b.value)).luma.p99 - 92) <= 0.4);
+  assert.equal(b.how, "pixels");
+  assert.equal(a.how, "table");
   assert.ok(!/held by the pixels/.test(b.note || ""), "and it says nothing");
 });

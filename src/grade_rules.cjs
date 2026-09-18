@@ -14,7 +14,8 @@
 // which are equal-channel operations. Equal-channel is not "cannot tint" - three independently taken
 // percentiles need not be the same pixels - which is why the confirm reads the casts again.
 "use strict";
-const { STATISTICS } = require("./grade.cjs");
+const { STATISTICS, PARAMS, damage, allowance } = require("./grade.cjs");
+const PIXELS = require("./grade_pixels.cjs");
 const { solveKnob, predict } = require("./grade_model.cjs");
 const { castAt, solveCast, predictPads, MAX_SAT } = require("./wheels.cjs");
 const { levels, blackInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, satRolloff, ROLLOFF_DEPTH } = require("./curves.cjs");
@@ -73,6 +74,30 @@ const BLACKS_SLOPE = 0.41;
 
 const frameOf = (m) => m.frame || m;
 
+// 2026-09-18: the quantitative form of verdict's frame tests, using its SAME thresholds and cast
+// trust gate. A blind end has the worst possible IRE deficit (100), never a fictitious zero cast.
+// Distortion is mean absolute RGB displacement in IRE, supplied by the pixel evaluator. The tuple is
+// lexicographic: worst violation, total violations, distortion, all in the measured 0.4 IRE bins.
+function objective(m, distortion = 0, targets = {}) {
+  const f = frameOf(m), spread = STATISTICS.spread(m), body = STATISTICS.body(m);
+  const errors = [f.luma.p1 - ACCEPT.blackMax, ACCEPT.whiteMin - f.luma.p99, f.luma.p99 - ACCEPT.whiteMax,
+    SPREAD.flat - spread, spread - SPREAD.harsh];
+  if (spread >= SPREAD.flat && spread <= SPREAD.harsh) errors.push(SPREAD.bodyFlat - body);
+  for (const wheel of ["shadows", "highlights"]) {
+    if (!castTrust(f, wheel).trusted) errors.push(100); // 100 IRE is the entire display container.
+    else castAt(f, wheel).forEach((axis, i) => errors.push(Math.abs(axis - (targets[wheel] || [0, 0])[i]) - NEUTRAL));
+  }
+  const bins = errors.map(PIXELS.bin);
+  return [Math.max(...bins), bins.reduce((a, b) => a + b, 0), PIXELS.bin(distortion)];
+}
+
+// 2026-09-18: acceptance comes first for Master and Basic choices. Inside equal acceptance bins, aim at the
+// rule's frozen target before minimizing displacement; otherwise Whites would stop at 85, never 92.
+function candidateScore(m, distortion, readStat, target, targets) {
+  const o = objective(m, distortion, targets);
+  return [o[0], o[1], PIXELS.bin(Math.abs(readStat(m) - target) - PIXELS.NOISE), o[2]];
+}
+
 // Log footage, recognised from the picture. A log encode has a black floor that never reaches the
 // bottom (S-Log2/3 sit near 9-13 on this scale), a top that never reaches the top, and color at a
 // fraction of a display picture's - measured 2026-09-16 23:10 on a Sony A7S II XAVC S file that declared
@@ -109,7 +134,22 @@ const TOP_MAX = 98.5;
 // `satFloor` (0..1): stop the move where the predicted saturation would fall under that fraction of what
 // the picture has - the scene-color case, where a full neutralisation drains the objects (C227's oak,
 // 01:33) and none at all leaves an orange picture (the owner, 23:12: "it's not balanced").
-function balanceAxis(m, param, from, stat, satFloor = 0, share = 1) {
+function balanceAxis(m, param, from, stat, satFloor = 0, share = 1, pixels = null) {
+  const px = PIXELS.context(pixels);
+  if (px) {
+    const sat0 = STATISTICS.saturation(m);
+    const target = stat(m) * (1 - share);
+    const r = PIXELS.choose({ pixels: px, reading: m, op: param, from, range: PARAMS[param].range,
+      readStat: stat, target, allow: allowance(damage(px.baseline)),
+      // WB's neutral/mixed-light target is a frozen policy, like the channel meeting below.
+      // A deferred black-point deficit must not turn "split the two lights" into "neutralize whites".
+      score: (s, d) => [PIXELS.bin(Math.abs(stat(s) - target) - PIXELS.NOISE), ...objective(s, d, px.targets)],
+      constraint: (p) => channelFloor(p) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN ? "channel floor " + FLOOR_MIN
+        : channelTop(p) > TOP_MAX && channelTop(m) <= TOP_MAX ? "channel ceiling " + TOP_MAX
+        : satFloor > 0 && sat0 > 0 && STATISTICS.saturation(p) < sat0 * satFloor ? "saturation floor" : null });
+    return { value: r.feasible ? r.value : from, predicted: r.feasible ? r.state : m, pixels: r.feasible ? r.pixels : px,
+      how: "pixels", evaluations: r.evaluations, note: " (" + r.note + ")" };
+  }
   const s = solveKnob(m, param, from, stat, stat(m) * (1 - share)); // share < 1: take out only that part of the cast
   if (!s || !s.helps) return null;
   let value = s.value, predicted = predict(m, param, from, value), held = null;
@@ -117,13 +157,18 @@ function balanceAxis(m, param, from, stat, satFloor = 0, share = 1) {
   const unsafe = (p) => (channelFloor(p) < FLOOR_MIN && channelFloor(m) >= FLOOR_MIN) || (channelTop(p) > TOP_MAX && channelTop(m) <= TOP_MAX) || (satFloor > 0 && sat0 > 0 && STATISTICS.saturation(p) < sat0 * satFloor);
   while (unsafe(predicted) && Math.abs(value - from) > 2) { value = from + (value - from) * 0.8; predicted = predict(m, param, from, value); held = channelFloor(predicted) < FLOOR_MIN ? "floor" : channelTop(predicted) > TOP_MAX ? "ceiling" : "color"; }
   if (Math.abs(value - from) <= 2) return null;
-  return { value, predicted, note: held === "color" ? " (held back: further would drain the objects' color)" : held ? " (held back: further would put a channel on the " + held + ")" : "" };
+  return { value, predicted, how: "table", note: " (table: no retained sample)" + (held === "color" ? " (held back: further would drain the objects' color)" : held ? " (held back: further would put a channel on the " + held + ")" : "") };
 }
 const SCENE_SAT_FLOOR = 0.7, SCENE_SHARE = 0.5; // the scene's own color: at most half of it, never past the saturation floor
 // Temperature on blue-red, then Tint on green-magenta, solved on the state temperature predicts. Both
 // are gains on the top, both clip past +50 (their sweeps), both are the white balance. `tint` is null
 // when the green axis is already neutral.
-function temperatureFor(m, from = 0, tintFrom = 0) {
+function temperatureFor(m, from = 0, tintFrom = 0, pixels = null) {
+  let px = PIXELS.context(pixels);
+  // A raw retained source is neutral. A nonneutral caller needs explicit source operations, otherwise
+  // taking the absolute slider value through already graded pixels would double-apply it.
+  if (px && [["temperature", from], ["tint", tintFrom]].some(([op, v]) => v !== (px.operations.find(([name]) => name === op) || [null, 0])[1])) px = null;
+  if (px) m = PIXELS.readingFor(px, m);
   const f = frameOf(m);
   const whites = STATISTICS.whitesRB(f), blacks = STATISTICS.blacksRB(f), whitesG = STATISTICS.whitesG(f);
   let temp = null;
@@ -145,20 +190,26 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
   // blacks that lean the same way by less than COLORED make a warm top the light. The pads take the
   // blacks; a colored top gets no pad either.
   const sceneColor = Math.abs(whites) > COLORED && (Math.sign(whites) !== Math.sign(blacks) || Math.abs(blacks) > COLORED);
-  if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColor) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB);
+  // The scene-color rule explicitly preserves the red/blue cast; an unrelated Tint search must not
+  // earn a better score by stripping it through coupled channel gains.
+  if (px && sceneColor) px = { ...px, targets: { ...(px.targets || {}), shadows: [blacks, 0], highlights: [whites, 0] } };
+  if (Math.abs(whites) > NEUTRAL && !twoLights && !sceneColor) temp = balanceAxis(m, "temperature", from, mixed ? meanRB : STATISTICS.whitesRB, 0, 1, px);
   // A picture warm at BOTH ends keeps its temperature: half the cast still solved to -49 on the oak-table
   // fixture, and the owner had called -47 pale (23:20). The scene's color comes out, when it does, through
   // the pads at half strength (padsFor) - which is what a warm bottom under neutral whites needs.
   const afterTemp = temp ? temp.predicted : m;
-  const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG) : null;
+  if (temp && px) px = temp.pixels;
+  const tint = Math.abs(STATISTICS.whitesG(frameOf(afterTemp))) > NEUTRAL ? balanceAxis(afterTemp, "tint", tintFrom, STATISTICS.whitesG, 0, 1, px) : null;
+  if (tint && px) px = tint.pixels;
+  const provenance = { how: px ? "pixels" : "table", pixels: px, evaluations: (temp ? temp.evaluations || 0 : 0) + (tint ? tint.evaluations || 0 : 0) };
   const sceneWhy = Math.sign(whites) === Math.sign(blacks) ? "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " / " + round(Math.abs(blacks)) + ": at this size that is the scene's own color, not the light" : "whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + " over blacks that lean the other way: the brightest pixels are an object's color (a sheen, a lamp), not the light";
-  if (!temp && !tint) return sceneColor ? { value: from, tint: null, predicted: m, why: sceneWhy + " - no white balance (neutralising it would drain the objects)", sceneColor: true } : null;
+  if (!temp && !tint) return sceneColor ? { ...provenance, value: from, tint: null, predicted: m, why: sceneWhy + " - no white balance (neutralising it would drain the objects)", sceneColor: true } : null;
   if (temp && sceneColor) { const out = { value: temp.value, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : temp.predicted, why: sceneWhy + ": partly neutralised, temperature " + round(temp.value) + temp.note + (tint ? "; tint " + round(tint.value) : ""), sceneColor: true, partial: true }; return out; }
   const why = [];
   if (temp) why.push(mixed ? "mixed light (whites " + (whites > 0 ? "blue" : "warm") + " by " + round(Math.abs(whites)) + ", blacks " + (blacks > 0 ? "blue" : "warm") + " by " + round(Math.abs(blacks)) + "): temperature " + round(temp.value) + " splits the difference, the pads take each end" + temp.note
     : "whites and blacks both " + (whites > 0 ? "blue" : "warm") + " (" + round(whites) + " / " + round(blacks) + "): temperature " + round(temp.value) + temp.note);
   if (tint) why.push("whites " + (whitesG > 0 ? "green" : "magenta") + " by " + round(Math.abs(whitesG)) + ": tint " + round(tint.value) + tint.note);
-  return { value: temp ? temp.value : from, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : afterTemp, why: why.join("; ") };
+  return { ...provenance, value: temp ? temp.value : from, tint: tint ? tint.value : null, predicted: tint ? tint.predicted : afterTemp, why: why.join("; ") };
 }
 
 // The cast at the parade's BOTTOM, lined up per channel on the RGB curves instead of with the Shadows
@@ -180,7 +231,9 @@ function temperatureFor(m, from = 0, tintFrom = 0) {
 // channel and touches nothing else - measured isolated to the digit (`channelToe`: pairedRed and
 // pairedGreen identical across six rows while blue moved 7.8 -> 0) and accurate to 0.15 IRE.
 const TOE_MARGIN = 2; // measured (`channelToe._crushCap`): blue's own p1 at 2.7 left 0.02% on the floor, at 0.4 left 0.91%
-function bottomsFor(m, current = null) {
+function bottomsFor(m, current = null, pixels = null) {
+  let px = PIXELS.context(pixels);
+  if (px) m = PIXELS.readingFor(px, m);
   const f = frameOf(m);
   const lv = f.bands && f.bands.blacks && f.bands.blacks.levels;
   if (!lv || !isFinite(lv.red) || !isFinite(lv.green) || !isFinite(lv.blue)) return null;
@@ -208,6 +261,35 @@ function bottomsFor(m, current = null) {
   // meeting level instead of all the way. Same call padsFor makes, same reason (C228's blue cloth, 01:00).
   const share = scene ? SCENE_SHARE : 1;
   const want = {}; for (const ch of ["red", "green", "blue"]) want[ch] = lv[ch] + (meet - lv[ch]) * share;
+  if (px) {
+    // 2026-09-18: keep the meeting level/half-colour policy above; choose only the writable AMOUNTS.
+    // Channel maps are isolated, but paired-band membership is not. Each trial remeasures all pixels;
+    // the final row states every remaining bottom error instead of claiming three scalar solves met.
+    px = { ...px, targets: { ...(px.targets || {}), shadows: [want.blue - want.red, want.green - (want.red + want.blue) / 2] } };
+    const moves = {}, rows = []; let state = m;
+    for (const ch of ["red", "green", "blue"]) {
+      const toe = lv[ch] > want[ch], op = toe ? "channelToe" : "channelLift";
+      const r = PIXELS.choose({ pixels: px, reading: state, op, extra: ch, range: [0, toe ? Math.min(0.5, caps[ch]) : 0.5], // blackInFor/movesFor's existing .5 cap
+        target: want[ch], readStat: (s) => frameOf(s).bands.blacks.levels[ch],
+        // Meeting is a preceding policy decision (§5c of the brief). A lifted source black is
+        // the NEXT stage's job: letting it veto these lifts silently changes the meeting rule.
+        score: (s, d) => [PIXELS.bin(Math.abs(frameOf(s).bands.blacks.levels[ch] - want[ch]) - PIXELS.NOISE), ...objective(s, d, px.targets)],
+        allow: allowance(damage(px.baseline)), discrete: true, rangeNote: toe ? "channel toe floor cap / serialization" : "channel lift cap / serialization" });
+      const value = r.feasible ? r.value : 0;
+      moves[ch] = { toe: toe ? value : 0, lift: toe ? 0 : value };
+      if (r.feasible) { px = r.pixels; state = r.state; }
+      rows.push({ channel: ch, value, note: r.note, evaluations: r.evaluations });
+    }
+    const curves = { ...(current || {}) };
+    for (const [ch, name] of [["red", "Red"], ["green", "Green"], ["blue", "Blue"]]) curves[name] = [[moves[ch].toe, moves[ch].lift], [1, 1]];
+    const actual = frameOf(state).bands.blacks.levels;
+    return { how: "pixels", pixels: px, curves, toes: moves, meet: Math.round(meet * 10) / 10, predicted: state,
+      targets: want, evaluations: rows.reduce((n, r) => n + r.evaluations, 0),
+      needs: scene ? ["blacks: half of the scene's cast preserved by the frozen meeting targets"] : [],
+      why: "pixels: meet at " + round(meet) + (scene ? "; half only, the rest is the scene's color" : "") + "; " +
+        rows.map((r) => r.channel + " " + r.note).join("; ") + "; final paired bottoms " +
+        ["red", "green", "blue"].map((ch) => ch + " " + round(actual[ch]) + " (target " + round(want[ch]) + ", residual " + round(actual[ch] - want[ch]) + ")").join(", ") };
+  }
   const moves = movesFor(lv, caps, want);
   const moved = ["red", "green", "blue"].filter((ch) => moves[ch].toe > 0.002 || moves[ch].lift > 0.002);
   if (!moved.length) return null;
@@ -221,7 +303,7 @@ function bottomsFor(m, current = null) {
   const left = Math.round((Math.max(after.red, after.green, after.blue) - Math.min(after.red, after.green, after.blue)) * 10) / 10;
   const say = (ch) => ch + (moves[ch].toe > 0.002 ? " down " + moves[ch].toe.toFixed(3) : " up " + moves[ch].lift.toFixed(3));
   return {
-    curves: neutralBottoms(current, lv, caps, want), toes: moves, meet: Math.round(meet * 10) / 10, predicted: predictBottoms(m, moves),
+    how: "table", curves: neutralBottoms(current, lv, caps, want), toes: moves, meet: Math.round(meet * 10) / 10, predicted: predictBottoms(m, moves),
     needs: scene ? ["blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + ": at this size much of it is the scene's own color - half of it taken out, the rest is the objects"] : [],
     why: "blacks " + lean + " by " + round(Math.abs(lv.blue - lv.red)) + " (paired R " + round(lv.red) + " G " + round(lv.green) + " B " + round(lv.blue) + ")" +
       " → meet at " + round(meet) + ": " + moved.map(say).join(", ") + (scene ? "; half only, the rest is the scene's color" : "") +
@@ -359,7 +441,9 @@ const LEVELS_CAP = 0.25;
 // `asRead` is the frame as read, before any predicted move: the colored-surface test must see the
 // footage, not the state after a predicted pad has been subtracted from it (21:37: C227 and C187 got a
 // curve because the predicted-after-pads cast was under 20).
-function levelsFor(m, current = null, asRead = null) {
+function levelsFor(m, current = null, asRead = null, pixels = null) {
+  const px = PIXELS.context(pixels);
+  if (px) m = PIXELS.readingFor(px, m);
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
@@ -379,10 +463,22 @@ function levelsFor(m, current = null, asRead = null) {
   // written on: after a cyan pad has taken red at the bottom to 3, a curve at 0.13 puts it at 0 (C220,
   // 21:43 - restored by the guard every run). x <= (lowest channel p1 - margin); under 0.02 is no curve.
   const floorCap = Math.max(0, (channelFloor(m) - FLOOR_MIN) / 100);
+  if (px) {
+    const pin = Number(anchor.toFixed(2)); // curves.format rounds the anchor too; evaluate that spline.
+    const r = PIXELS.choose({ pixels: px, reading: m, op: "masterToeAnchored", extra: pin,
+      range: [0, Math.min(LEVELS_CAP, floorCap)], target, readStat: STATISTICS.blackPoint,
+      score: (s, d) => candidateScore(s, d, STATISTICS.blackPoint, target, px.targets),
+      constraint: (s, v) => v > 0 && v < 0.02 ? "below the existing 0.02 minimum curve move" : null,
+      allow: allowance(damage(px.baseline)), discrete: true, rangeNote: "lowest channel floor cap / levels cap / serialization" });
+    const blackIn = r.feasible ? r.value : 0;
+    return { how: "pixels", held: blackIn < 0.02, blackIn, anchor: pin, target, curves: blackIn < 0.02 ? current : levels(blackIn, 1, current, pin),
+      predicted: r.feasible ? r.state : m, pixels: r.feasible ? r.pixels : px, evaluations: r.evaluations,
+      why: r.note + "; pinned at " + pin.toFixed(2) + (colored ? "; colored bottom, frozen policy unchanged" : "") };
+  }
   const blackIn = Math.min(LEVELS_CAP, want, floorCap);
   if (blackIn < 0.02) return null;
   return {
-    blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
+    how: "table", blackIn, anchor, target, curves: levels(blackIn, 1, current, anchor), predicted: predictLevels(m, blackIn, 1, anchor),
     why: "black point " + round(bp) + " → " + target + ": curve bottom point at " + blackIn.toFixed(2) + ", pinned at " + anchor.toFixed(2) + (colored ? " (a colored bottom: only as far as its lowest channel allows)" : "") + (want > blackIn ? (floorCap < want && floorCap <= LEVELS_CAP ? " (held at the lowest channel bottom: further would put a channel on the floor)" : " (capped at " + LEVELS_CAP + ")") : ""),
   };
 }
@@ -620,4 +716,4 @@ function skinFor(m, from = { saturation: 100 }, attenuation = 1) {
 
 const round = (n) => Math.round(Number(n) * 10) / 10;
 
-module.exports = { looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, castTrust, CAST_READABLE, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
+module.exports = { objective, candidateScore, balanceAxis, looksLikeLog, LOG_SIGNATURE, skinFor, temperatureFor, bottomsFor, TOE_MARGIN, shadowsLiftFor, WHEEL_LUMA_FLOOR, padsFor, levelsFor, goalsFor, satCurveFor, verdict, castTrust, CAST_READABLE, ACCEPT, BLACK_POINT, WHITE_POINT, SKIN_LUMA, SKIN_HUE, SKIN_SAT, SKIN_HUE_TARGET, SKIN_SAT_TARGET, skinTargetFor, HSL_PAD, HSL_SAT_RANGE, SPREAD, TEMPERATURE_CAP, BLACKS_REACH, LEVELS_CAP, NEUTRAL, FLOOR_MIN };
