@@ -224,6 +224,10 @@ than the form — the sign C220 and C202 record for the bare wheel. Live and swe
 sign (Master's anomaly had flipped it), so the wheel-luma amount refit on three frames is the next form
 work, not a guess. Master identity not read back live (no curve-read tool); asserted by test.
 
+**Refit done (22:05, `shadowsWheelLumaForm._pooled`).** C202's bump points pooled in (the 11.8–19.2 gap peaked
+at −10.2, not −9.1); the amount by excursion is the three-frame mean. All held-out rows of all three frames
+within 1 IRE (medians 0.46 / 0.40 / 0.37 from 0.81 / 0.10 / 0.58). Eighth live run verifies.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |

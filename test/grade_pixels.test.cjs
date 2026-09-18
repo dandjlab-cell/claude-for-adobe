@@ -355,21 +355,19 @@ test("the Shadows wheel luma is a bump over input level, linear in the excursion
     }
   }
   const med = (a) => a.map(Math.abs).sort((x, y) => x - y)[Math.floor(a.length / 2)];
-  // C187 is the frame whose amount curve is linear to the digit: it must sit inside the noise floor.
-  assert.ok(med(perFrame.shadowsWheelLumaC187) <= 0.4, "C187 median held-out residual " + med(perFrame.shadowsWheelLumaC187).toFixed(2) + " IRE");
-  // C220 responds slightly MORE than linear at small excursions (ratio 0.31 at x=0.45 against 0.20), so
-  // every interior prediction runs ~0.8 under - a uniform-sign residual, which the method rule says is the
-  // amount curve disagreeing between frames, not the level-bump being wrong, and is NOT to be refitted
-  // (that would break the exact frame). Asserted as what it is, with its sign, so it cannot drift silently.
+  // 2026-09-18 22:05: the level bump carries C202's points (the 11.8-19.2 gap) and the AMOUNT is the mean of
+  // the three frames' measured shares by excursion (`shadowsWheelLumaForm._pooled`). Every held-out row of
+  // all three frames is within 1 IRE; medians 0.46 / 0.40 / 0.37 (C220 / C187 / C202). C187 was 0.10 on the
+  // linear amount and pays ~0.3 for the pool - the trade three frames plus a live run justified. C220's
+  // residual keeps its uniform sign (the wheel moves it a little more than the pooled amount, still).
+  for (const key of Object.keys(perFrame)) {
+    const e = perFrame[key];
+    assert.ok(med(e) <= 0.5, key + " median held-out residual " + med(e).toFixed(2) + " IRE");
+    assert.ok(Math.max(...e.map(Math.abs)) <= 1.0, key + " worst held-out residual " + Math.max(...e.map(Math.abs)).toFixed(2));
+  }
   const c220 = perFrame.shadowsWheelLuma;
-  assert.ok(c220.every((e) => e < 0), "C220's residual is uniform in sign (the wheel moved it more than the pooled table says)");
-  assert.ok(med(c220) <= 1.0 && Math.max(...c220.map(Math.abs)) <= 1.4, "C220 median " + med(c220).toFixed(2) + ", worst " + Math.max(...c220.map(Math.abs)).toFixed(2));
-  // C202 (2026-09-18 20:35, the third frame) reads like C220: 40 of 45 residuals negative, median 0.58, worst
-  // 1.42, even at the x = 0.25 the table was built at. Asserted the same way: sign and size, not refitted.
-  const c202 = perFrame.shadowsWheelLumaC202;
-  assert.ok(c202.filter((e) => e < 0).length >= 0.85 * c202.length, "C202's residual is mostly negative like C220's (" + c202.filter((e) => e < 0).length + "/" + c202.length + ")");
-  assert.ok(med(c202) <= 0.7 && Math.max(...c202.map(Math.abs)) <= 1.5, "C202 median " + med(c202).toFixed(2) + ", worst " + Math.max(...c202.map(Math.abs)).toFixed(2));
-  const all = [...c220, ...perFrame.shadowsWheelLumaC187, ...c202];
+  assert.ok(c220.every((e) => e < 0), "C220's residual is uniform in sign (the wheel moved it more than the pooled amount says)");
+  const all = [...c220, ...perFrame.shadowsWheelLumaC187, ...perFrame.shadowsWheelLumaC202];
   assert.ok(all.filter((e) => Math.abs(e) <= 1).length / all.length >= 0.85, "at least 85% of all held-out predictions within 1 IRE");
   // Shape: a bump, peaking near 20 and dying at the top; neutral is the identity; upward is refused.
   const f = OPS.shadowsWheelLuma(0.25);

@@ -108,13 +108,13 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Verified: the black point on channel curves (seventh run, 22:00, 0e6f6b5).** 4/18 balanced (was 3),
-   every chain pixels, no `[table]`, the Master residuals gone (C198 / C187 / C202 → none). Left: C227 +1.2
-   and C228 −1.1, both on Shadows-wheel lifts, both with the sign the bare-wheel sweeps record (the wheel
-   moves a little more than the pooled bump). **Next form work: refit the wheel-luma amount on all three
-   frames** (`shadowsWheelLuma`, `shadowsWheelLumaC187`, `shadowsWheelLumaC202`) — pooled, not to one frame;
-   keep C187 within 0.4 and bring C220/C202's uniform-sign residual toward zero; then a live run. Record: 
-   `curveToeAnchoredC202._verifiedLive`, queue Group 1h.
+1. **Verify the pooled wheel-luma form live (eighth run).** Built 22:05 (`shadowsWheelLumaForm._pooled`):
+   C202's bump points fill the 11.8–19.2 gap, and the amount by excursion is the mean of three frames' shares
+   (BUMP.shadowsWheelLuma.amount). Every held-out row of all three sweeps is within 1 IRE (medians 0.46 /
+   0.40 / 0.37). Seventh-run baseline: 4/18 balanced, every chain pixels, worst MODEL OFF BY +1.2 (C227)
+   and −1.1 (C228), both on wheel lifts. **Unverified live.** Owner: delete `Prototype_TEST [AI]`, reload,
+   paste the standard grade_sequence prompt (below). *Done when* no MODEL OFF BY exceeds 1.0 on a wheel-lift
+   chain; C228's is expected to fall from −1.1 toward −0.7 (a C220-like frame keeps a residual of its own).
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -192,7 +192,7 @@ No gates tool. The agreement is:
 |---|---|
 | `tools/pixel_map.cjs` | **new** — per-pixel map between two kept renders (Master's form) |
 | `src/curves.cjs` | `levelsPoints`, `levelsMap` (the natural-spline form), `blackInFor` solves on it, `predictLevels` uses it; `rgbLevels` — the black point as three channel curves |
-| `src/forward.cjs` | `masterToeAnchored` evaluates `levelsMap` |
+| `src/forward.cjs` | `masterToeAnchored` evaluates `levelsMap`; `shadowsWheelLuma` pooled bump + amount table |
 | `panel.js` (evening) | `curve_sweep`: `masterBlack` (wheel under the grade's curve), `keepFrames` (names carry clip time + anchor), `anchor` on channel curves, `curve: "RGB"` |
 | `src/grade_pixels.cjs` | **new** — the chooser: `choose`, `evaluate` (prefix rail witness), `context`, `readingFor` |
 | `src/forward.cjs` | OPS gained `shadows`, `highlights` (bumps), `shadowsWheelLuma`, `highlightsPad`, `masterToeAnchored`; `newlyRailed`; 256-entry LUT apply; tuple stages |

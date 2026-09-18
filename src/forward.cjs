@@ -86,7 +86,11 @@ const BUMP = {
   // 10.2 -> -7.8 [C220] / 10.6 -> -8.2 [C187]. Linear in the excursion (0.5 - x): C187 reads 0.19 / 0.40 /
   // 0.60 / 0.80 / 1.00 of the x=0.25 delta at 0.45 / 0.40 / 0.35 / 0.30 / 0.25. Only x < 0.5 is measured.
   shadowsWheelLuma: {
-    down: [[0, 0], [4.7, -4.3], [7.9, -6.5], [8.6, -7], [9.4, -7.4], [10.4, -8], [11.8, -8.7], [19.2, -9.8], [21.2, -9.8], [23.9, -9.4], [38, -7.8], [41.2, -7.5], [55.3, -5.5], [91.8, -0.8], [100, 0]],
+    // 2026-09-18 22:05: C202's x = 0.25 points pooled in (`shadowsWheelLumaC202`). They fall in the 11.8-19.2
+    // gap of the two-frame table, where the bump peaks at -10.2 rather than the -9.1 the gap interpolated to -
+    // the whole of C202's uniform-sign residual, and the sign of the seventh run's two wheel residuals.
+    down: [[0, 0], [4.7, -4.3], [7.9, -6.5], [8.6, -7], [9.4, -7.4], [10.4, -8], [11.8, -8.7], [13.7, -9.4], [14.5, -9.8], [17.3, -10.2], [18, -10.2], [19.2, -9.8], [21.2, -9.8], [23.9, -9.4], [38, -7.8], [41.2, -7.5], [55.3, -5.5], [84.7, -2], [91.8, -0.8], [100, 0]],
+    amount: [[0, 0], [0.05, 0.243], [0.10, 0.473], [0.15, 0.66], [0.20, 0.85], [0.25, 1]], // share of the full move by excursion 0.5 - x, mean of three frames
   },
 };
 // The Highlights wheel PAD, measured 2026-09-18 17:50-18:00 on C202 at five hues and five sats
@@ -162,9 +166,15 @@ const OPS = {
     const c = padVector(hue), k = { red: 1 + sat * c.red, green: 1 + sat * c.green, blue: 1 + sat * c.blue };
     return (v, ch) => v * k[ch];
   },
+  // The AMOUNT by excursion (0.5 - x), pooled over three frames 2026-09-18 22:05. Measured share of the
+  // full (x = 0.25) move at x = 0.45 / 0.40 / 0.35 / 0.30: C220 0.31 / 0.58 / 0.74 / 0.91, C187 0.19 / 0.40 /
+  // 0.60 / 0.80 (linear to the digit), C202 0.23 / 0.44 / 0.64 / 0.84. The mean is the table; a single
+  // frame would break another (`_fitMethod` rule 5), three plus the seventh run's C228 (-1.1, the wheel
+  // moving more than linear at x 0.35) justify the pool. Costs C187 up to ~0.6 IRE at mid-excursion.
   shadowsWheelLuma: (x) => {
     if (x > 0.5 + 1e-9) throw new Error("Shadows wheel luma above 0.5 is not modelled: only the downward half was swept (shadowsWheelLuma, shadowsWheelLumaC187)");
-    const scale = (0.5 - x) / 0.25;
+    const exc = Math.max(0, 0.5 - x);
+    const scale = exc >= 0.25 ? exc / 0.25 : lerpPts(BUMP.shadowsWheelLuma.amount, exc);
     if (scale <= 0) return (v) => v;
     return (v) => v + to255(scale * lerpPts(BUMP.shadowsWheelLuma.down, toIRE(v)));
   },
