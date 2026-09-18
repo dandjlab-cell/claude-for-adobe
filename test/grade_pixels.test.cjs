@@ -340,13 +340,13 @@ test("the Shadows and Highlights bumps reproduce the held-out sweep rows on both
 // on BOTH frames are held out. "Its magnitude does not transfer" had been recorded twice; it was a key error
 // - the frames were compared at luma p1, a different input level on each - and by input level they are one
 // curve.
-test("the Shadows wheel luma is a bump over input level, linear in the excursion, and reproduces both frames' held-out rows", () => {
+test("the Shadows wheel luma is a bump over input level, linear in the excursion, and reproduces the held-out rows of all three frames", () => {
   const sweeps = require("../src/lumetri_sweeps.json");
   const { OPS } = require("../src/forward.cjs");
   const LV = ["blueP1", "greenP1", "redP1", "lumaP1", "pairedBlue", "pairedGreen", "pairedRed", "lumaP50", "lumaP99"];
   const ire = (v) => v / 255 * 100, code = (ire) => ire / 100 * 255;
   const perFrame = {};
-  for (const key of ["shadowsWheelLuma", "shadowsWheelLumaC187"]) {
+  for (const key of ["shadowsWheelLuma", "shadowsWheelLumaC187", "shadowsWheelLumaC202"]) {
     const rows = sweeps[key].rows, n = rows.find((r) => r.x === 0.5), errs = perFrame[key] = [];
     for (const row of rows) {
       if (row.x === 0.5 || row.x === 0.25) continue; // 0.25 built the table
@@ -364,7 +364,12 @@ test("the Shadows wheel luma is a bump over input level, linear in the excursion
   const c220 = perFrame.shadowsWheelLuma;
   assert.ok(c220.every((e) => e < 0), "C220's residual is uniform in sign (the wheel moved it more than the pooled table says)");
   assert.ok(med(c220) <= 1.0 && Math.max(...c220.map(Math.abs)) <= 1.4, "C220 median " + med(c220).toFixed(2) + ", worst " + Math.max(...c220.map(Math.abs)).toFixed(2));
-  const all = [...c220, ...perFrame.shadowsWheelLumaC187];
+  // C202 (2026-09-18 20:35, the third frame) reads like C220: 40 of 45 residuals negative, median 0.58, worst
+  // 1.42, even at the x = 0.25 the table was built at. Asserted the same way: sign and size, not refitted.
+  const c202 = perFrame.shadowsWheelLumaC202;
+  assert.ok(c202.filter((e) => e < 0).length >= 0.85 * c202.length, "C202's residual is mostly negative like C220's (" + c202.filter((e) => e < 0).length + "/" + c202.length + ")");
+  assert.ok(med(c202) <= 0.7 && Math.max(...c202.map(Math.abs)) <= 1.5, "C202 median " + med(c202).toFixed(2) + ", worst " + Math.max(...c202.map(Math.abs)).toFixed(2));
+  const all = [...c220, ...perFrame.shadowsWheelLumaC187, ...c202];
   assert.ok(all.filter((e) => Math.abs(e) <= 1).length / all.length >= 0.85, "at least 85% of all held-out predictions within 1 IRE");
   // Shape: a bump, peaking near 20 and dying at the top; neutral is the identity; upward is refused.
   const f = OPS.shadowsWheelLuma(0.25);

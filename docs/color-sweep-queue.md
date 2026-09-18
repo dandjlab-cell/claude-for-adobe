@@ -153,6 +153,15 @@ is not the pad.** Remaining candidates: the wheel-luma amount curve (C187 +1.5 a
 C227 at lift 0.49) and the sliders on a frame that newly rails 4.7% high. Group 2's wheel-luma third frame is
 the next measurement.
 
+**Third frame swept (20:35):** `shadowsWheelLumaC202`. It reads like C220, not C187: 40 of 45 residuals
+negative (the wheel moves the frame *more* than the pooled bump), median 0.58, worst 1.42, the sign present
+even at x 0.25. Two of three frames now say "a little more than the bump"; not refitted (a ~0.4 IRE pooled
+shift, at the floor, breaking the exact frame). **It does not explain the live residuals, which have the
+opposite sign**: C187 +1.5 and C227 +1.6 both read the render moving *less* than the form, and both chains
+had an anchored Master curve (0.09 / 0.02) under the wheel, where every sweep on file is on a bare clip.
+The open question is therefore Group 4's curve→wheel interaction. `curve_sweep` gained `masterBlack` (with
+`anchor`) to sweep the wheel under the grade's own curve; unverified live.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |

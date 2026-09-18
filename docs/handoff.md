@@ -108,12 +108,20 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **C227's +1.6 is not the pad — measured 20:14.** Hues 211 and 225 swept at sat 0.2 / 0.3 on C202; the
-   mirrored table predicts both within 0.016 per unit sat (`highlightsPad._mirrorVerifiedAtTheSatsThePassWrites`).
-   What is left for that residual is item 3 (the wheel-luma amount curve: C227 lifts at 0.49, C187 at 0.30 reads
-   +1.5 deterministically) or the sliders on a frame that newly rails 4.7% high. A third frame for the wheel
-   luma is the next sweep: `curve_sweep` "Shadows luma" on a clip that is neither C220 nor C187, black point
-   visible, unrailed. Pick C202 @23.94s (p1 14.5) — the same frame every other form was fitted on.
+1. **Measure the curve→wheel interaction.** The pad is cleared (hues 211/225 within 0.016 per unit sat of the
+   mirrored table) and the wheel's own form is measured on a third frame (`shadowsWheelLumaC202`: like C220,
+   moves a little *more* than the pooled bump, not refitted). The live residuals (C187 +1.5, C227 +1.6) have
+   the OPPOSITE sign and both sit on chains with an anchored Master curve under the wheel — every sweep on
+   file is on a bare clip. `curve_sweep` now takes `masterBlack` (+ `anchor`) for a wheel-luma sweep under
+   the grade's own curve; the 0.5 row reads the curve alone. **Unverified live.** Owner, on a fresh copy:
+
+   ```
+   curve_sweep "Shadows luma" on A056_05072128_C202.braw at 23.94s with masterBlack 0.09 and anchor 0.55, default positions. Return the raw tool output, no summary. Confirm the first line says UNDER a Master curve black 0.09.
+   ```
+
+   Then compare each row to OPS.masterToeAnchored(0.09, 0.55) followed by OPS.shadowsWheelLuma(x) on the 0.5
+   row's levels; a uniform positive residual that grows with the excursion is the interaction, and the live
+   1.5 should fall out of it at x 0.30.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -125,7 +133,8 @@ is blocked; the next items are measurement, in order below.
 
 3. **C187's 1.5 and the wheel-luma amount curve.** On C187 the pixel-chosen wheel lift predicted 6.3 and read
    7.8 — on both the fifth and sixth runs, digit for digit, so it is deterministic, not noise (the first value
-   in this project measured twice at one setting). C220's held-out rows run a uniform ~0.8 IRE under. The two frames disagree on the amount exponent
+   in this project measured twice at one setting). C220's held-out rows run a uniform ~0.8 IRE under, and the
+   third frame (C202, 20:35) agrees with C220. Folded into item 1: the sign says interaction, not amount curve. The two frames disagree on the amount exponent
    (`shadowsWheelLumaForm._heldOut`). Not refitted — that would break the exact frame. A third frame settles it.
 
 4. **Runtime.** 105–135 s for 18 clips (was 90). The curve amounts enumerate every writable value; a
