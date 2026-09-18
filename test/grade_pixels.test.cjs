@@ -486,3 +486,31 @@ test("channel curves are the line on their own channel; the Master curve is not 
   }
   assert.equal(rows[rows.length - 1].floorGreen, 0, "green never crushes under Master on C187, even with the bottom point above its p1");
 });
+
+// 2026-09-18 22:29: Contrast is a bump over input level, one table per direction, linear in the slider
+// (`contrastForm`), not a gain about a pivot. Pooled from C202 and C220 at +-100; the interior rows of both
+// frames are held out and must sit inside the same bar the Shadows / Highlights form meets.
+test("Contrast is a two-direction bump over input level and reproduces both frames' held-out rows", () => {
+  const sweeps = require("../src/lumetri_sweeps.json");
+  const { OPS } = require("../src/forward.cjs");
+  const ire = (v) => v / 255 * 100, code = (ire) => ire / 100 * 255;
+  const K = ["blueP1", "pairedBlue", "greenP1", "lumaP1", "pairedGreen", "redP1", "pairedRed", "lumaP50", "blueP99", "greenP99", "lumaP99", "redP99", "lumaMax"];
+  const c202 = {}; for (const r of sweeps.contrastForm.rows) c202[r.value] = r;
+  const c = sweeps.contrast, c220 = {};
+  c.values.forEach((v, i) => { c220[v] = { lumaP1: c.p1[i], lumaP50: c.p50[i], lumaP99: c.p99[i], lumaMax: c.max[i], redP1: c.redP1[i], greenP1: c.greenP1[i], blueP1: c.blueP1[i], redP99: c.redP99[i], greenP99: c.greenP99[i], blueP99: c.blueP99[i] }; });
+  for (const [name, frame] of [["C202", c202], ["C220", c220]]) {
+    const e = [];
+    for (const a of Object.keys(frame).map(Number)) {
+      if (a === 0 || Math.abs(a) === 100) continue; // +-100 built the tables
+      const f = OPS.contrast(a);
+      for (const k of K) if (k in frame[0] && k in frame[a]) e.push(Math.abs(frame[a][k] - ire(f(code(frame[0][k])))));
+    }
+    e.sort((x, y) => x - y);
+    assert.ok(e[e.length >> 1] <= 0.3, name + " median held-out residual " + e[e.length >> 1].toFixed(2));
+    assert.ok(e[e.length - 1] <= 0.7, name + " worst held-out residual " + e[e.length - 1].toFixed(2));
+  }
+  const f = OPS.contrast(100);
+  assert.ok(ire(f(code(17))) < 17 && ire(f(code(80))) > 80, "+100 pushes the ends apart");
+  assert.ok(ire(f(code(97))) - 97 < ire(f(code(80))) - 80, "and rolls off at the top: an S, not a gain");
+  assert.equal(OPS.contrast(0)(128), 128, "0 is the identity");
+});

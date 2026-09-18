@@ -237,6 +237,13 @@ and the render put it up 0.4, on a frame Whites newly rails 4.7%. **Contrast (it
 approximate) is the next form work.** The wheel amount is now a footage property (±0.4 between frames),
 recorded not chased.
 
+**Contrast done (22:29, `contrastForm`, queue item 9 closed).** Not a gain about a pivot: an S over input
+level rolling off at both ends, one table per direction, linear in the slider — the Shadows/Highlights bump
+family. Pooled from C202 (today's sweep, a digit-for-digit repeat of the 17th's) and C220; held-out interior
+rows median 0.20 / 0.20, worst 0.53 / 0.45, where the pivot gain missed the ends by up to 3.3. Shipped as
+`BUMP.contrast`; `contrastRule` stays as the record of the old belief. **Ninth live run verifies.** With this,
+no form the pass writes is marked approximate.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
@@ -244,7 +251,7 @@ recorded not chased.
 | 6 | **Exposure upward — the shoulder** | 0.985 at p1, 0.971 median, 0.926 p99, 0.886 max at +0.5 stops. Unmeasured as a curve. The reverted white-point change is blocked on this. | yes |
 | 7 | **Highlights — parameterise the band** | form identified (median +12.6 vs p99 +7.8 — no gain can), no parameters | yes |
 | 8 | **Shadows — refit without the degenerate pivot** | quoted P of 95–100 is ill-determined and must not be used | yes |
-| 9 | **Contrast — refit** | residual 2.09, signed and monotone → approximate | yes |
+| 9 | **Contrast — refit** | DONE 2026-09-18 22:29: a two-direction bump, `contrastForm`; held-out worst 0.53 | — |
 | 10 | **Blacks — λ and strength on a second frame** | form confirmed, constant from one frame only | yes |
 | 11 | **Shadows wheel luma — why the magnitude does not transfer** | 6.6 vs 9.4 IRE for the same move; disqualifies it as a form | yes |
 

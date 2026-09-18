@@ -56,8 +56,12 @@ const lerpTable = (pts, vals, x) => {
 // frames; on C202 the rows are bit-identical field for field. So there is one gain function here, not two
 // tables - keeping two would have been a redundancy pretending to be evidence.
 const gainForStops = (stops) => Math.pow(2, stops / 2.4);
-// Contrast: a gain about a pivot near 49.6 (`contrastRule`) - APPROXIMATE, median residual up to 2.09.
-const CONTRAST_K = { pts: [-100, -50, -20, 0, 20, 50, 100], k: [0.798, 0.900, 0.966, 1, 1.046, 1.100, 1.191] };
+// Contrast WAS a gain about a pivot near 49.6 (`contrastRule`, approximate, residual up to 3.3 at the ends).
+// 2026-09-18 22:29 (`contrastForm`): it is the same BUMP family as Shadows / Highlights - an S over input
+// level that rolls off at BOTH ends, one table per direction (the directions are not mirrors: the zero
+// crossing sits below 55 going up, above it going down), linear in the slider. Two frames pooled (C202,
+// C220); held-out interior rows median 0.20 / 0.20, worst 0.53 / 0.45. The pivot is kept exported for the
+// callers that describe the move in words; it no longer predicts anything.
 const CONTRAST_PIVOT = 49.6;
 // The gamma the gain is taken in. Exported so a caller can see what the constant is rather than find 2.4
 // buried in gainForStops.
@@ -70,6 +74,11 @@ const BLACKS_LAMBDA = 23, BLACKS_PER_POINT = 0.082;
 // within one code of each other averaged, pinned to zero at 0 and 100. `p` is the slider-amount exponent per
 // direction. See OPS.shadows below and `shadowsHighlightsForm` in the sweeps for the fit and its residuals.
 const BUMP = {
+  contrast: {
+    up: [[0, 0], [8.2, -5.1], [9, -5.5], [10.6, -5.5], [11, -5.9], [11.4, -6.3], [13.7, -6.2], [14.5, -6.5], [17.3, -7.5], [18, -7.4], [37.3, -1.2], [54.9, 3.1], [78.8, 7.9], [83.9, 7.5], [84.7, 6.7], [85.5, 6.7], [85.9, 6.6], [86.3, 6.6], [88.6, 6.3], [92.2, 5.4], [97.3, 2.3], [100, 0]],
+    down: [[0, 0], [8.2, 6.7], [9, 7.1], [10.6, 7.4], [11, 7], [11.4, 7.2], [13.7, 7.1], [14.5, 7.1], [17.3, 7.4], [18, 7.5], [37.3, 1.9], [54.9, -1.6], [78.8, -7], [83.9, -7.4], [84.7, -7.25], [85.5, -7.5], [85.9, -7.5], [86.3, -7.5], [88.6, -7.4], [92.2, -7.1], [97.3, -4.8], [100, 0]],
+    pUp: 1, pDown: 1,
+  },
   shadows: {
     up: [[0, 0], [4.7, 5.5], [8, 8.9], [9.2, 10], [13.7, 13.4], [14.5, 13.7], [17.3, 15.6], [41.6, 11.3], [54.9, 8.2], [74.1, 3.2], [76, 2.7], [78.8, 2.4], [84.7, 1.2], [88.6, 0.8], [91.4, 0.4], [97.3, 0], [100, 0]],
     down: [[0, 0], [4.7, -1.2], [8, -3.3], [9.2, -4.1], [13.7, -7], [14.5, -7.4], [17.3, -9.5], [41.6, -10.6], [54.9, -9], [74.1, -4.7], [76, -4.3], [78.8, -3.5], [84.7, -2], [88.6, -1.1], [91.4, -0.8], [97.3, 0.3], [100, 0]],
@@ -125,7 +134,7 @@ const OPS = {
   temperature: (amount) => { const k = { red: lerpTable(WB.temperature.pts, WB.temperature.red, amount), green: lerpTable(WB.temperature.pts, WB.temperature.green, amount), blue: lerpTable(WB.temperature.pts, WB.temperature.blue, amount) }; return (v, ch) => v * k[ch]; },
   tint: (amount) => { const k = { red: lerpTable(WB.tint.pts, WB.tint.red, amount), green: lerpTable(WB.tint.pts, WB.tint.green, amount), blue: lerpTable(WB.tint.pts, WB.tint.blue, amount) }; return (v, ch) => v * k[ch]; },
   whites: (amount) => { const k = gainForStops(amount / 100); return (v) => v * k; },
-  contrast: (amount) => { const k = lerpTable(CONTRAST_K.pts, CONTRAST_K.k, amount), P = to255(CONTRAST_PIVOT); return (v) => P + (v - P) * k; },
+  contrast: (amount) => bumpOp(amount, BUMP.contrast),
   // Exposure is the same gain DOWNWARD and rolls off UPWARD, and the roll-off is Lumetri's own - not the
   // sequence tone mapper, which would have to act on Whites too and does not (`exposureRule._notTheToneMapper`).
   // The shoulder is level-dependent: measured/predicted at +0.5 stops is 0.985 at p1, 0.971 at the median,

@@ -108,15 +108,13 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Refit Contrast (queue item 9).** Eighth run (22:20, 133a9bf): 4/18 balanced, every chain pixels, worst
-   MODEL OFF BY ±1.2. The wheel amount is settled as a footage property (C228 closed, C187 paid, ±0.4 between
-   frames). The one residual with a named form is C227 @5.63: no lift, the sliders step predicted the black
-   point down 0.8 under Contrast 22 and the render put it up 0.4, on a frame Whites rails 4.7%. `contrastRule`
-   is the only form still marked approximate (gain about pivot 49.6, residual 2.09, signed and monotone).
-   Sweep it on C202 @23.94s (unrailed) with `slider_sweep` at ±25 / ±50 / ±100, overlay against the C220 rows
-   by input level, fit the pivot and the curvature, ship only if both frames trace one curve; then a live
-   run. *Done when* C227's chain reads ≤1.0 or its residual is named as the rail interaction (13% clip under
-   Whites), which is queue Group 3 item 13, the clamp model.
+1. **Verify the Contrast form live (ninth run).** Built 22:29 (`contrastForm`, `BUMP.contrast`): Contrast is a
+   two-direction bump over input level, linear in the slider, pooled from C202 and C220; held-out rows median
+   0.20, worst 0.53. It replaces the pivot gain that was the last form marked approximate. **Unverified live.**
+   Eighth-run baseline: 4/18 balanced, every chain pixels, worst MODEL OFF BY ±1.2 (C227 @5.63 on the sliders
+   step, C187 on the wheel). *Done when* C227's sliders step lands within 1.0; C187's ±1.2 is the wheel amount
+   (a footage property) and is expected to stay. After that, every form the pass writes is measured and none
+   is approximate, and the remaining items are policy: dark subjects (item 2) and headroom (item 6).
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -194,7 +192,7 @@ No gates tool. The agreement is:
 |---|---|
 | `tools/pixel_map.cjs` | **new** — per-pixel map between two kept renders (Master's form) |
 | `src/curves.cjs` | `levelsPoints`, `levelsMap` (the natural-spline form), `blackInFor` solves on it, `predictLevels` uses it; `rgbLevels` — the black point as three channel curves |
-| `src/forward.cjs` | `masterToeAnchored` evaluates `levelsMap`; `shadowsWheelLuma` pooled bump + amount table |
+| `src/forward.cjs` | `masterToeAnchored` evaluates `levelsMap`; `shadowsWheelLuma` pooled bump + amount table; `contrast` is `BUMP.contrast` |
 | `panel.js` (evening) | `curve_sweep`: `masterBlack` (wheel under the grade's curve), `keepFrames` (names carry clip time + anchor), `anchor` on channel curves, `curve: "RGB"` |
 | `src/grade_pixels.cjs` | **new** — the chooser: `choose`, `evaluate` (prefix rail witness), `context`, `readingFor` |
 | `src/forward.cjs` | OPS gained `shadows`, `highlights` (bumps), `shadowsWheelLuma`, `highlightsPad`, `masterToeAnchored`; `newlyRailed`; 256-entry LUT apply; tuple stages |
