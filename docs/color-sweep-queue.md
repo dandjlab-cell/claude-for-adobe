@@ -44,7 +44,11 @@ The sharp end: three controls reach the picture on every run with nothing measur
 |---|---|---|---|
 | 5b | **Whites at large positive values on a LOW white-point frame** | On C231 (source p99 61.6) the pixel form predicted `whites 99.61 → 82.4` and the render read **90.2** — 8 IRE under, a gain of 1.46 where the form's maximum is 2^(1/2.4) = 1.33. Every other pixel-chosen Whites on the run landed within 0.4 (C193 86.7 vs 87.1, C198 91.8 vs 91.4, C202 91.8 vs 91.8, C209 85.9 vs 85.9) — all at 28–80 points. The +100 row that fixed the form was taken on a frame that **clipped 13.4 % of red**, so its p99 was pinned at 100 and the gain at the top of the range was never actually observed. The railed-table trap again, in a place the sweep file marks *exact*. Sweep Whites 60–100 on a frame whose p99 stays under ~75 so nothing rails. | yes |
 
-This is the only place the first live run caught the pixel model itself being wrong rather than absent.
+**RETRACTED 2026-09-18 15:50 — the form is exact and the reading was mine.** The sweep (`whitesC231`) gives
+p99 61.6 → 82.4 at +100, gain 1.338 against the form's 1.335, and 73.3 at +60 exactly as predicted. The
+"90.2" was the plan row's *achieved* column, which is judged on the confirm render after **every** slider
+and shared by all knobs — Highlights 75.49 ran after Whites and added the last 8. A per-knob prediction can
+only be checked against a per-knob measurement. Kept here rather than deleted so the mistake is findable.
 
 ## Group 1c — Shadows and Highlights now own every remaining MODEL OFF BY (2026-09-18 15:31)
 
