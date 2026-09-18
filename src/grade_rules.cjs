@@ -316,7 +316,7 @@ function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1) {
 }
 
 function padsFor(m, current = null) {
-  const f = frameOf(m), now = current || {}, wheels = {}, needs = [];
+  const f = frameOf(m), now = current || {}, wheels = {}, needs = [], targets = {};
   for (const [wheel, label] of [["highlights", "whites"]]) {
     const cast = castAt(f, wheel);
     if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
@@ -327,6 +327,10 @@ function padsFor(m, current = null) {
     // neutral, blacks warm by 25). Half of it comes out, the floor guard below still holds the channels.
     const scene = Math.hypot(cast[0], cast[1]) > COLORED;
     if (scene) needs.push(label + " " + (cast[0] > 0 ? "blue" : "warm") + " by " + round(Math.abs(cast[0])) + " after the white balance: at this size much of it is the scene's own color - half of it taken out, the rest is the objects");
+    // The cast this pad AIMS AT, frozen here from the reading as it stands. A scene-coloured end keeps
+    // (1 - SCENE_SHARE) of its cast on purpose, so the target is not neutral - and the correction pass has
+    // to be told, because left to itself it solves for 0 and drains the very half this rule preserves.
+    targets[wheel] = scene ? [cast[0] * (1 - SCENE_SHARE), cast[1] * (1 - SCENE_SHARE)] : [0, 0];
     const r = solveCast(wheel, scene ? [-cast[0] * SCENE_SHARE, -cast[1] * SCENE_SHARE] : [-cast[0], -cast[1]]);
     if (!r) continue;
     const w = { ...(now[wheel] || { hue: 0, sat: 0, luma: 0.5 }), why: [] };
@@ -342,7 +346,7 @@ function padsFor(m, current = null) {
     if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased");
     wheels[wheel] = w;
   }
-  return { wheels, needs };
+  return { wheels, needs, targets };
 }
 
 // The black point, set EXACTLY with the Master curve's bottom point - a levels move, output = (in - x)

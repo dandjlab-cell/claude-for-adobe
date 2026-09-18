@@ -145,11 +145,20 @@ function nudgeLuma(wheel, key, before, after, target, fromLuma, appliedLuma) {
 // CROSSED neutral (-10 -> +5) read as "half removed" and the pad was doubled - the warm-to-blue flip
 // on eight clips of the 2026-09-15 18:03 run. Scales the delta the move made, not the whole pad.
 // null = leave it: the move did nothing measurable, went the wrong way, or rounds to the same write.
-function nudgePad(before, applied, c0, c1, maxSat = MAX_SAT) {
+//
+// `target` is the cast the pad is AIMING at, and it is not always neutral. Where the parade end is more than
+// COLORED off neutral, padsFor deliberately removes only HALF of it - the rest is the object's own colour,
+// and taking it all out was what made a warm table read orange. This solved for cast = 0 unconditionally,
+// which reads that preserved half as "the move fell short by 2x" and drives it out on the correction pass:
+// a whites cast of -21 ended at -1.0 instead of -10.5, and -29.8 ended at -9.8 instead of -14.9, saved from
+// 0 only by the nudge's own saturation cap. The policy the first pass implements has to be the policy the
+// correction converges to, or the correction is not a correction (gpt-6-astra, 2026-09-18: "freeze the
+// colour target from the ORIGINAL reading ... do not reclassify after correction").
+function nudgePad(before, applied, c0, c1, maxSat = MAX_SAT, target = [0, 0]) {
   const d = [c1[0] - c0[0], c1[1] - c0[1]];
   const dd = d[0] * d[0] + d[1] * d[1];
   if (dd < 1e-6) return null;
-  const t = -(c0[0] * d[0] + c0[1] * d[1]) / dd;
+  const t = ((target[0] - c0[0]) * d[0] + (target[1] - c0[1]) * d[1]) / dd;
   if (!(t > 0) || t > 3) return null;
   const b = vec(before), a = vec(applied);
   const next = [b[0] + t * (a[0] - b[0]), b[1] + t * (a[1] - b[1])];

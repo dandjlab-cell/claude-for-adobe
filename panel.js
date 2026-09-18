@@ -1908,8 +1908,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         const fb = stateBefore.frame || stateBefore, fa = state.frame || state, next = {}, notes = [];
         for (const w of Object.keys(padSolved)) {
           const after = wheelCastAt(fa, w);
-          if (Math.hypot(after[0], after[1]) <= 1.5) continue;
-          const n = wheelNudgePad(padBase[w] || { hue: 0, sat: 0 }, applied[w], wheelCastAt(fb, w), after, NUDGE_MAX_SAT);
+          // The target the FIRST pass froze, not neutral. A parade end past COLORED keeps half its cast on
+          // purpose, so both the "close enough" test and the nudge itself must be measured against that
+          // target - otherwise the correction reads the preserved half as a shortfall and drives it out
+          // (measured: a -21 whites cast ending at -1.0 instead of -10.5). See nudgePad.
+          const tgt = (pads.targets && pads.targets[w]) || [0, 0];
+          if (Math.hypot(after[0] - tgt[0], after[1] - tgt[1]) <= 1.5) continue;
+          const n = wheelNudgePad(padBase[w] || { hue: 0, sat: 0 }, applied[w], wheelCastAt(fb, w), after, NUDGE_MAX_SAT, tgt);
           if (n) {
             // The same floor guard as the first pad: a nudge must not put a channel bottom on the floor,
             // nor push one already there lower (C227 at 5.6 s, 00:48: an orange Shadows pad 0.21 -> 0.35

@@ -113,3 +113,53 @@ test("grade_sequence writes the wheel pads through QE by name, on the frame as r
   assert.match(panel, /then each end's wheel pad for what is left, solved on the state predicted after/);
   assert.match(panel, /before the tonal sliders, because a bottom pulled to the/);
 });
+
+// The correction has to converge to the policy the first pass implemented, not to neutral. Where a parade
+// end is past COLORED, padsFor deliberately leaves half the cast in - it is the object's own colour, and
+// taking it all out is what made a warm table read orange. nudgePad solved for cast = 0 regardless, so it
+// read that preserved half as "the move fell short by 2x" and drove it out on the very next pass.
+test("nudgePad aims at the FROZEN target, not at neutral, so the coloured-end half survives the correction", () => {
+  // Measured case: whites cast -21, past COLORED, so the policy target is half of it. The first pad moved
+  // the cast from -21 to -10.5 - it landed exactly on the policy and there is nothing left to correct.
+  const before = { hue: 0, sat: 0 }, applied = { hue: 180, sat: 0.24 };
+  const c0 = [-21, 0], landed = [-10.5, 0];
+  const toNeutral = nudgePad(before, applied, c0, landed, 0.5);
+  assert.ok(toNeutral && Math.abs(toNeutral.t - 2) < 0.01, "solving for neutral doubles the pad: t = " + (toNeutral && toNeutral.t));
+  assert.equal(nudgePad(before, applied, c0, landed, 0.5, [-10.5, 0]), null, "aimed at the policy, there is nothing to do");
+
+  // And it still corrects a genuine shortfall against a non-neutral target. The pad under-delivered: it
+  // moved the cast from -21 to only -16, which is 5 of the 10.5 the policy wanted, so the move scales by
+  // 10.5/5 = 2.1. Chasing a real miss is not the same thing as chasing the preserved half.
+  const short = nudgePad(before, applied, c0, [-16, 0], 0.5, [-10.5, 0]);
+  assert.ok(short && Math.abs(short.t - 2.1) < 0.01, "a real shortfall is still chased: t = " + (short && short.t));
+  // Proof the target is doing the work, on a reading where both solves return something. The pad OVERSHOT
+  // the policy - it took the cast from -21 all the way to -8, past the -10.5 that was wanted. Aimed at the
+  // policy the correction pulls the pad BACK (t < 1); aimed at neutral it pushes it further out (t > 1).
+  // Opposite directions on identical numbers, which is the whole of the bug in one line.
+  const overshot = [-8, 0];
+  const toPolicy = nudgePad(before, applied, c0, overshot, 0.5, [-10.5, 0]);
+  const toNeutralSame = nudgePad(before, applied, c0, overshot, 0.5);
+  assert.ok(toPolicy.t < 1, "the policy pulls an overshoot back: t = " + toPolicy.t);
+  assert.ok(toNeutralSame.t > 1, "neutral drives it further out: t = " + toNeutralSame.t);
+
+  // An ordinary end is unaffected - the default target is neutral, which is what it always was.
+  const ordinary = nudgePad(before, applied, [-8, 0], [-4, 0], 0.5);
+  const explicit = nudgePad(before, applied, [-8, 0], [-4, 0], 0.5, [0, 0]);
+  assert.deepEqual(ordinary, explicit, "the default is neutral: no behaviour change off the coloured path");
+});
+
+test("padsFor publishes the target it froze, so the correction can aim at it", () => {
+  const { padsFor, COLORED } = require("../src/grade_rules.cjs");
+  const at = (rb) => ({ luma: { min: 2, p1: 8, p10: 20, p50: 45, p90: 70, p99: 84, max: 90 },
+    red: { mean: 45, p1: 8, p99: 84 - rb / 2 }, green: { mean: 45, p1: 8, p99: 84 }, blue: { mean: 45, p1: 8, p99: 84 + rb / 2 },
+    clipped: { red: 0, green: 0, blue: 0 }, floor: { red: 0, green: 0, blue: 0 }, crushed: 0,
+    saturation: { p50: 20, p99: 40 }, cast: { cb: 0, cr: 0 } });
+  const big = padsFor(at(-30), null);   // a warm end well past COLORED
+  assert.ok(big.targets, "targets are published");
+  if (big.targets.highlights) {
+    const t = big.targets.highlights;
+    assert.ok(Math.hypot(t[0], t[1]) > 1, "a coloured end's target is NOT neutral: " + JSON.stringify(t));
+  }
+  const small = padsFor(at(-8), null);  // an ordinary cast
+  if (small.targets.highlights) assert.deepEqual(small.targets.highlights, [0, 0], "an ordinary end aims at neutral");
+});
