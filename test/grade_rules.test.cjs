@@ -186,7 +186,11 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*\bbaseline\b[^\n]*\}\)/.test(seqTool), "the damage guard is the source's own, through every write");
   // The forward guard is only worth anything if a caller supplies the pixels; it shipped inert once.
   assert.match(seqTool, /planGradeShot\(\{[^\n]*pixels: guardPixelsFor\(\)/, "planShot is given this clip's own pixels, not only another frame's percentile table");
-  assert.match(seqTool, /if \(!pixels \|\| padMoves\.length \|\| lift\) return null;/, "no pixels when a move with no measured pixel form was written: a guard on the wrong picture is worse than none");
+  // A pad has no pixel form and still drops the pixels. The Shadows-wheel LIFT gained one at 16:40 and is
+  // now chosen on pixels, so only a lift that fell to the table (a pad in play) drops them.
+  assert.match(seqTool, /if \(!pixels \|\| padMoves\.length \|\| \(lift && lift\.how !== "pixels"\)\) return null;/, "no pixels when a move with no measured pixel form was written: a guard on the wrong picture is worse than none");
+  assert.match(seqTool, /gradeShadowsLiftFor\(beforeLift, currentWheels, undefined, padMoves\.length \? null : curvePixels\)/, "the lift is chosen on pixels unless a pad moved");
+  assert.match(seqTool, /if \(lift && lift\.pixels\) curvePixels = lift\.pixels;/, "and the context carries the lift forward to the sliders");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap, visible\)/, "one snapshot per run, and every source read cropped to what the timeline shows");
   assert.match(seqTool, /"saturation", "vibrance"/, "existing saturation controls also invalidate raw source pixels");
   assert.match(seqTool, /value !== \(GRADE_PARAMS\[param\].neutral \|\| 0\)/, "Saturation's neutral is 100, not zero");

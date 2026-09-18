@@ -79,6 +79,14 @@ const BUMP = {
     down: [[0, 0], [4.7, 0], [8, -0.3], [9.2, -0.6], [13.7, -0.8], [14.5, -1.2], [17.3, -1.6], [41.6, -8.3], [54.9, -11.8], [74.1, -16.8], [76, -16.9], [78.8, -16.4], [84.7, -13.9], [88.6, -12.1], [91.4, -9.8], [97.3, -2.8], [100, 0]],
     pUp: 0.78, pDown: 1.0,
   },
+  // The Shadows WHEEL's luma slider - Lumetri's Lift - at its full swept excursion x = 0.25 (0.5 is neutral,
+  // down darkens). Same bump family as the Shadows slider, peaking near 20 IRE (-9.8) and dying at the top.
+  // Both frames (`shadowsWheelLuma` C220, `shadowsWheelLumaC187`) pooled; they meet seamlessly at input
+  // 10.2 -> -7.8 [C220] / 10.6 -> -8.2 [C187]. Linear in the excursion (0.5 - x): C187 reads 0.19 / 0.40 /
+  // 0.60 / 0.80 / 1.00 of the x=0.25 delta at 0.45 / 0.40 / 0.35 / 0.30 / 0.25. Only x < 0.5 is measured.
+  shadowsWheelLuma: {
+    down: [[0, 0], [4.7, -4.3], [7.9, -6.5], [8.6, -7], [9.4, -7.4], [10.4, -8], [11.8, -8.7], [19.2, -9.8], [21.2, -9.8], [23.9, -9.4], [38, -7.8], [41.2, -7.5], [55.3, -5.5], [91.8, -0.8], [100, 0]],
+  },
 };
 const lerpPts = (pts, x) => { if (x <= pts[0][0]) return pts[0][1]; for (let i = 0; i < pts.length - 1; i++) if (x >= pts[i][0] && x <= pts[i + 1][0]) { const t = (x - pts[i][0]) / (pts[i + 1][0] - pts[i][0]); return pts[i][1] + t * (pts[i + 1][1] - pts[i][1]); } return pts[pts.length - 1][1]; };
 const bumpOp = (amount, b) => {
@@ -119,6 +127,17 @@ const OPS = {
   // chooser's first two live runs, the whole of the remaining MODEL OFF BY above 1.2.
   shadows: (amount) => bumpOp(amount, BUMP.shadows),
   highlights: (amount) => bumpOp(amount, BUMP.highlights),
+  // The Shadows wheel's luma, by its slider POSITION x (0.5 neutral). "Its magnitude does not transfer" was
+  // recorded twice (`shadowsWheelLumaC187._transfer`) and was a key error, not a physics one: the two frames
+  // were compared at luma p1, which sits at a different INPUT LEVEL on each (8.2 against 23.9), and a bump
+  // moves different levels by different amounts. Overlaid by input level the two frames are one curve
+  // (2026-09-18 16:40). Upward (x > 0.5) is unswept and refuses, like exposure above 0.
+  shadowsWheelLuma: (x) => {
+    if (x > 0.5 + 1e-9) throw new Error("Shadows wheel luma above 0.5 is not modelled: only the downward half was swept (shadowsWheelLuma, shadowsWheelLumaC187)");
+    const scale = (0.5 - x) / 0.25;
+    if (scale <= 0) return (v) => v;
+    return (v) => v + to255(scale * lerpPts(BUMP.shadowsWheelLuma.down, toIRE(v)));
+  },
   // The Master curve's bottom point, and one channel's. Both are the same measured line
   // (`curveToe._model`, `channelToe._model`): out = (v - 100x) / (1 - x).
   masterToe: (x) => (v) => (v - to255(100 * x)) / (1 - x),
@@ -174,7 +193,8 @@ function apply(rgb, op, amount, extra) {
 // A stage is one Lumetri instance: operations applied in Premiere's own section order. A list of stages
 // is a STACK of instances, which is how an arbitrary order is reached - Lumetri's internal order is fixed
 // per instance, not overall.
-const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "masterToeAnchored", "channelToe", "channelLift"];
+// Wheels come AFTER the curves in Lumetri's own order, so the wheel luma is last.
+const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "masterToeAnchored", "channelToe", "channelLift", "shadowsWheelLuma"];
 function pipeline(rgb, stages, visit = null) {
   let buf = rgb;
   for (const stage of stages) {

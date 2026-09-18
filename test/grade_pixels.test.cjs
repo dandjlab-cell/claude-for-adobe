@@ -333,3 +333,67 @@ test("the Shadows and Highlights bumps reproduce the held-out sweep rows on both
   assert.ok(ire(hi(code(97.3))) - 97.3 < 1, "Highlights spares the top: " + (ire(hi(code(97.3))) - 97.3).toFixed(2));
   assert.ok(ire(hi(code(54.9))) - 54.9 > 10, "and moves the median by more than 10 at +100");
 });
+
+// The Shadows WHEEL's luma - Lumetri's Lift - was the last bottom-end control with no pixel form, and the
+// chooser's third live run put every MODEL OFF BY above 1.2 on a clip whose chain had this step. The form is
+// derived from the two sweeps already on file, fitted at x = 0.25 only; the rows at 0.3, 0.35, 0.4 and 0.45
+// on BOTH frames are held out. "Its magnitude does not transfer" had been recorded twice; it was a key error
+// - the frames were compared at luma p1, a different input level on each - and by input level they are one
+// curve.
+test("the Shadows wheel luma is a bump over input level, linear in the excursion, and reproduces both frames' held-out rows", () => {
+  const sweeps = require("../src/lumetri_sweeps.json");
+  const { OPS } = require("../src/forward.cjs");
+  const LV = ["blueP1", "greenP1", "redP1", "lumaP1", "pairedBlue", "pairedGreen", "pairedRed", "lumaP50", "lumaP99"];
+  const ire = (v) => v / 255 * 100, code = (ire) => ire / 100 * 255;
+  const perFrame = {};
+  for (const key of ["shadowsWheelLuma", "shadowsWheelLumaC187"]) {
+    const rows = sweeps[key].rows, n = rows.find((r) => r.x === 0.5), errs = perFrame[key] = [];
+    for (const row of rows) {
+      if (row.x === 0.5 || row.x === 0.25) continue; // 0.25 built the table
+      const f = OPS.shadowsWheelLuma(row.x);
+      for (const k of LV) if (k in n && k in row) errs.push(row[k] - ire(f(code(n[k]))));
+    }
+  }
+  const med = (a) => a.map(Math.abs).sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  // C187 is the frame whose amount curve is linear to the digit: it must sit inside the noise floor.
+  assert.ok(med(perFrame.shadowsWheelLumaC187) <= 0.4, "C187 median held-out residual " + med(perFrame.shadowsWheelLumaC187).toFixed(2) + " IRE");
+  // C220 responds slightly MORE than linear at small excursions (ratio 0.31 at x=0.45 against 0.20), so
+  // every interior prediction runs ~0.8 under - a uniform-sign residual, which the method rule says is the
+  // amount curve disagreeing between frames, not the level-bump being wrong, and is NOT to be refitted
+  // (that would break the exact frame). Asserted as what it is, with its sign, so it cannot drift silently.
+  const c220 = perFrame.shadowsWheelLuma;
+  assert.ok(c220.every((e) => e < 0), "C220's residual is uniform in sign (the wheel moved it more than the pooled table says)");
+  assert.ok(med(c220) <= 1.0 && Math.max(...c220.map(Math.abs)) <= 1.4, "C220 median " + med(c220).toFixed(2) + ", worst " + Math.max(...c220.map(Math.abs)).toFixed(2));
+  const all = [...c220, ...perFrame.shadowsWheelLumaC187];
+  assert.ok(all.filter((e) => Math.abs(e) <= 1).length / all.length >= 0.85, "at least 85% of all held-out predictions within 1 IRE");
+  // Shape: a bump, peaking near 20 and dying at the top; neutral is the identity; upward is refused.
+  const f = OPS.shadowsWheelLuma(0.25);
+  assert.ok(20 - ire(f(code(20))) > 9 - ire(f(code(9))), "moves input 20 more than input 9");
+  assert.ok(97 - ire(f(code(97))) < 0.5, "spares the top");
+  assert.equal(OPS.shadowsWheelLuma(0.5)(128), 128, "0.5 is neutral");
+  assert.throws(() => OPS.shadowsWheelLuma(0.6), /not modelled/, "the unswept half refuses rather than mirrors");
+});
+
+// And the pass uses it: with pixels, shadowsLiftFor chooses the luma on them and hands back a context that
+// CARRIES the move, so planShot's sliders afterwards stay on pixels instead of falling to the table.
+test("shadowsLiftFor chooses on pixels and its context carries the lift into planShot", async () => {
+  const { shadowsLiftFor } = require("../src/grade_rules.cjs");
+  const P = require("../src/grade_pixels.cjs");
+  // A frame whose black point sits at ~12 with every channel well off the floor: the curve's cap is not the
+  // limit here, so the wheel has room to work.
+  const n = 60000, rgb = Buffer.allocUnsafe(n * 3);
+  for (let i = 0; i < n; i++) { const v = Math.round(30 + 160 * i / n); rgb[i * 3] = v; rgb[i * 3 + 1] = v; rgb[i * 3 + 2] = v; }
+  const m = measure(rgb);
+  const px = P.context(rgb);
+  const lift = shadowsLiftFor(m, null, undefined, px);
+  assert.ok(lift, "a lifted black point gets a lift");
+  assert.equal(lift.how, "pixels");
+  assert.ok(lift.luma < 0.5 && lift.luma >= 0.3, "luma chosen inside the swept range: " + lift.luma);
+  assert.ok(lift.pixels.operations.some(([op]) => op === "shadowsWheelLuma"), "the context carries the wheel move");
+  assert.ok(frameOfP1(lift.predicted) < frameOfP1(m), "and the predicted black point came down");
+  // Now the sliders after it are still pixel-chosen.
+  const r = await planShot({ set: async (v) => v, measure: async () => lift.predicted, measured: lift.predicted, current: async () => 0,
+    goals: [{ param: "whites", statistic: "whitePoint", target: 92 }], pixels: lift.pixels });
+  assert.equal(r.plan[0].how, "pixels", "whites after a pixel lift stays on pixels: " + r.plan[0].note);
+  function frameOfP1(x) { return (x.frame || x).luma.p1; }
+});

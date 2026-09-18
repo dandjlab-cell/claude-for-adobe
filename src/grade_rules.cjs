@@ -353,11 +353,34 @@ const wheelLumaP1 = (l) => {
   return t[t.length - 1][1];
 };
 const wheelLumaOffset = (l) => WHEEL_LUMA_P1[0][1] - wheelLumaP1(l);
-function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1) {
+function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1, pixels = null) {
+  const px = PIXELS.context(pixels);
+  if (px) m = PIXELS.readingFor(px, m);
   const f = frameOf(m);
   const bp = f.luma.p1;
   if (!(bp > ACCEPT.blackMax)) return null;
   const want = bp - target;
+  // 2026-09-18 16:40: chosen on pixels when the sample is there. The wheel luma has a measured pixel form
+  // (`shadowsWheelLumaForm`, OPS.shadowsWheelLuma) - the same bump family as the Shadows slider - so the
+  // luma is picked by trying positions on the frame's own pixels, and the pixel context CARRIES the move
+  // instead of being dropped. On the chooser's third live run every MODEL OFF BY above 1.2 sat on a clip
+  // whose chain had this step, because the step used to end pixel choice for everything after it. The
+  // channel-floor guard below is kept as the constraint; the WHEEL_LUMA_P1 table stays as the fallback.
+  if (px) {
+    const WHEEL_FLOOR_PX = 0.5;
+    const r = PIXELS.choose({ pixels: px, reading: m, op: "shadowsWheelLuma", from: 0.5, range: [WHEEL_LUMA_FLOOR, 0.5],
+      target, readStat: STATISTICS.blackPoint, allow: allowance(damage(px.baseline)),
+      score: (s, d) => candidateScore(s, d, STATISTICS.blackPoint, target, px.targets),
+      constraint: (s) => channelFloor(s) < WHEEL_FLOOR_PX && channelFloor(m) >= WHEEL_FLOOR_PX ? "channel floor " + WHEEL_FLOOR_PX : null,
+      rangeNote: "wheel luma floor " + WHEEL_LUMA_FLOOR + " / serialization" });
+    if (!r.feasible || r.value >= 0.5 - 0.005) return null;
+    const luma = Math.round(r.value * 1000) / 1000;
+    const wheels = Object.assign({}, current || {});
+    wheels.shadows = Object.assign({ hue: 0, sat: 0 }, wheels.shadows || {}, { luma });
+    const after = frameOf(r.state).luma.p1;
+    return { how: "pixels", pixels: r.pixels, wheels, luma, offset: round(bp - after), predicted: r.state, evaluations: r.evaluations,
+      why: "black point " + round(bp) + " → " + round(after) + " with the Shadows wheel's luma at " + luma.toFixed(3) + " (" + r.note + ")" };
+  }
   // An offset takes every channel down by the same amount, so the lowest channel decides how far it can go
   // - exactly the guard the curve has. Without it the dry run on C229 (red's own p1 already at 3.5 after
   // the black balance) asked for an offset of 5.58 and put red at 0.
@@ -391,7 +414,7 @@ function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1) {
   }
   const wheels = Object.assign({}, current || {});
   wheels.shadows = Object.assign({ hue: 0, sat: 0 }, wheels.shadows || {}, { luma });
-  return { wheels, luma, offset: round(got), predicted,
+  return { how: "table", wheels, luma, offset: round(got), predicted,
     why: "black point " + round(bp) + " → " + round(bp - got) + " with the Shadows wheel's luma at " + luma.toFixed(3) +
       " (the curve had no room left; a lift clips about 20x less than a toe, at roughly a point of median each)" +
       (got < want - 0.2 ? (room < want ? "; only " + round(got) + " of " + round(want) + " - the lowest channel has no more room under it" : "; as far as the wheel goes before it crushes too") : "") };

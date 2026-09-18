@@ -1811,7 +1811,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // that pre-wheel image; the table wheel estimate is attached AFTER them, never baked into their source.
     const afterCurves = curvePixels ? (lev ? lev.predicted : bot ? bot.predicted : afterTemp) : (lev ? lev.predicted : afterBalance);
     const beforeLift = curvePixels && padMoves.length ? wheelPredictPads(afterCurves, pads.wheels, currentWheels) : afterCurves;
-    const lift = curvesErr ? null : gradeShadowsLiftFor(beforeLift, currentWheels);
+    // The lift is chosen on pixels when no pad moved (a pad has no pixel form and would make the sample a
+    // lie); with a pad in play it falls to the table as before.
+    const lift = curvesErr ? null : gradeShadowsLiftFor(beforeLift, currentWheels, undefined, padMoves.length ? null : curvePixels);
+    if (lift && lift.pixels) curvePixels = lift.pixels;
     const afterLevels = lift ? lift.predicted : beforeLift;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...(bot ? bot.needs : []), ...goals.needs);
@@ -1829,9 +1832,9 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     if (temp) bpChain.push(["white balance " + temp.how, (temp.predicted.frame || temp.predicted).luma.p1]);
     if (bot) bpChain.push(["black balance " + bot.how, (bot.predicted.frame || bot.predicted).luma.p1]);
     if (lev) bpChain.push(["curve " + lev.blackIn.toFixed(2) + " " + lev.how, (lev.predicted.frame || lev.predicted).luma.p1]);
-    if (lift) bpChain.push(["shadows lift " + lift.luma.toFixed(3), (lift.predicted.frame || lift.predicted).luma.p1]);
+    if (lift) bpChain.push(["shadows lift " + lift.luma.toFixed(3) + " " + lift.how, (lift.predicted.frame || lift.predicted).luma.p1]);
     if (lev) parts.push("curve black " + lev.blackIn.toFixed(2) + " [" + lev.how + "] (" + lev.why + ")");
-    if (lift) parts.push("shadows lift: " + lift.why);
+    if (lift) parts.push("shadows lift [" + lift.how + "]: " + lift.why);
     // The colorists' cleanup: saturation rolled off in the deepest shadows and the near-whites (Luma vs
     // Sat, the QE text door, probed 2026-09-16), never on a colored end, judged on the frame as read.
     // Written with the first batch, not after the corrections: the 00:27 run wrote it last and the
@@ -1861,11 +1864,13 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // before Master/channel curves and replays the instance in SECTION_ORDER. Wheels have no form;
     // once they move, later choice explicitly falls back to the table. Luma-vs-Sat is also unmodelled:
     // pixel certification is through RGB Curves only, and the confirm/rollback judges the final image.
+    // A pixel-chosen lift is IN curvePixels already (shadowsLiftFor returned the context carrying it), so it
+    // no longer ends pixel choice - 2026-09-18 16:40. A table lift (only with a pad in play) still does.
     const guardPixelsFor = () => {
-      if (!pixels || padMoves.length || lift) return null;
+      if (!pixels || padMoves.length || (lift && lift.how !== "pixels")) return null;
       return curvePixels;
     };
-    const pixelReason = !pixels ? "no retained sample of an ungraded source" : padMoves.length ? "wheel pad has no pixel form" : lift ? "Shadows wheel lift has no pixel form" : "incomplete source pipeline";
+    const pixelReason = !pixels ? "no retained sample of an ungraded source" : padMoves.length ? "wheel pad has no pixel form" : lift && lift.how !== "pixels" ? "Shadows wheel lift chosen from the table" : "incomplete source pipeline";
     if (sat && curvePixels) parts.push("pixels certify through RGB Curves; Luma vs Sat has no pixel form, final damage checked by confirm");
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
