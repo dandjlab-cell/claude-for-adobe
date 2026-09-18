@@ -204,7 +204,17 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
   let state = buf ? PIXELS.readingFor(buf, before) : before;
   const plan = [];
   const frameWhite = (m) => (m.frame || m).luma.p99;
-  for (const g of goals) {
+  // Pixel-form goals are CHOSEN first. Lumetri applies the Basic sliders in its own fixed section order
+  // whatever order they are written, so the order they are chosen in is ours to pick - and a table-chosen
+  // move ends pixel choice for everything after it, because an unmodelled op leaves no pixels to judge
+  // on. Measured 2026-09-18 15:12, the first live run of the chooser: a table-only Shadows upstream forced
+  // Whites onto the table on four clips, and those carried three of the four worst MODEL OFF BY values
+  // (7.28, 4.14, 1.9) while every pixel-chosen Whites landed within 1.2. The cost of the reorder is that a
+  // pixel-chosen Whites is judged on pixels missing the later Shadows move - which spares the top
+  // (`shadowsForm`: p99 moves about 1 at +30), an error an order of magnitude under the table's. Stable
+  // within each half, so onlyIf chains (Highlights after Whites) keep their meaning.
+  const ordered = buf ? [...goals.filter((g) => FORWARD.OPS[g.param]), ...goals.filter((g) => !FORWARD.OPS[g.param])] : goals;
+  for (const g of ordered) {
     const spec = PARAMS[g.param];
     if (!spec) throw new Error("unknown parameter: " + g.param);
     const statName = g.statistic || spec.steer;

@@ -148,20 +148,23 @@ test("the pixel chooser refuses clipping and reports measured expectations on sa
     assert.ok(Array.isArray(r.plan) && r.plan.length === 1, "a positive-exposure goal must not abort the plan");
   }
   // 2. A knob with NO measured pixel form - `highlights` and `shadows`, both on the ordinary path - cannot
-  //    be applied to the buffer. Left alone, the buffer would then be missing a move that was really
-  //    written, and every LATER candidate would be judged on the wrong picture. The guard must stand down.
+  //    be applied to the buffer, so a pixel-form goal listed AFTER it would be judged on a frame missing a
+  //    move that was really written. This block first asserted the guard stood down in that case. Then the
+  //    first live run (2026-09-18 15:12) showed the cost: a table Shadows knocked Whites onto the table on
+  //    four clips carrying three of the four worst MODEL OFF BY values. Lumetri applies the sliders in its
+  //    own fixed order whatever order they are written, so planShot now CHOOSES the pixel-form goals first
+  //    and the stale-frame case cannot arise: the table knob still ends pixel choice for what follows, but
+  //    nothing that can use pixels follows.
   {
     const rgb = frame(120, 0.008), m = measure(rgb);
     const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0,
       goals: [{ param: "highlights", statistic: "whitePoint", target: 92, why: "no pixel form" },
-              { param: "whites", statistic: "whitePoint", target: 92, why: "would be judged on stale pixels" }],
+              { param: "whites", statistic: "whitePoint", target: 92, why: "listed second, chosen first" }],
       pixels: sample(rgb) });
-    const after = r.plan.find((p) => p.param === "whites");
-    const moved = r.plan.find((p) => p.param === "highlights");
-    if (moved && !moved.skipped && Math.abs(moved.value) > 1e-6) {
-      assert.ok(!/held by the pixels/.test(after.note || ""),
-        "once an unmodelled knob has moved, the guard must stand down rather than judge on a stale frame");
-    }
+    const whites = r.plan.find((p) => p.param === "whites"), highlights = r.plan.find((p) => p.param === "highlights");
+    assert.equal(whites.how, "pixels", "whites is chosen on pixels although the caller listed it after a table knob");
+    assert.ok(r.plan.indexOf(whites) < r.plan.indexOf(highlights), "because pixel-form goals are chosen first");
+    assert.equal(highlights.how, "table");
   }
   // The anchored Master bottom point. Without this form the guard was dead code: levelsFor sets the anchor
   // to at least 0.30 and caps blackIn at 0.25, so `anchor > blackIn + 0.05` is true for every clip that gets

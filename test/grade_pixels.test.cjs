@@ -55,14 +55,19 @@ test("newly railed rejects a candidate whose aggregate share fits the source all
   assert.match(r.note, /newly railed/);
 });
 
-test("unsupported Shadows/Highlights are labelled and invalidate later pixel choice", async () => {
+// Written first as "a table Shadows knocks the Whites after it onto the table" - which was true, and was
+// the cascade the first live run (2026-09-18 15:12) measured on four clips carrying three of the four
+// worst MODEL OFF BY values. planShot now chooses the pixel-form goals first, so the table knob is still
+// labelled and still ends pixel choice for whatever follows it - but nothing that CAN use pixels follows.
+test("unsupported Shadows/Highlights are labelled, and no longer knock a pixel-form goal listed after them off the pixels", async () => {
   for (const param of ["shadows", "highlights"]) {
     const r = await run(frame(), [{ param, target: param === "shadows" ? 8 : 92 }, { param: "whites", target: 92 }]);
-    assert.equal(r.plan[0].how, "table");
-    assert.ok(r.writes.some(([p, v]) => p === param && v !== 0));
-    assert.match(r.plan[0].note, /no pixel form.*stand.*down/);
-    assert.equal(r.plan[1].how, "table");
-    assert.match(r.plan[1].note, new RegExp(param));
+    const whites = r.plan.find((p) => p.param === "whites"), other = r.plan.find((p) => p.param === param);
+    assert.equal(whites.how, "pixels", "whites keeps its pixels whatever order the caller listed: " + whites.note);
+    assert.ok(r.plan.indexOf(whites) < r.plan.indexOf(other), "because it is chosen first");
+    assert.equal(other.how, "table");
+    assert.match(other.note || other.skipped, /no pixel form/);
+    if (other.value !== undefined) assert.ok(r.writes.some(([p, v]) => p === param && v !== 0));
   }
 });
 
@@ -264,4 +269,28 @@ test("prefix destruction remembers both rails when the same sample reaches each 
   const e = P.evaluate(px, m, { clipped: 0, crushed: 100 });
   assert.match(e.reasons.join("; "), /newly railed [1-9][\d.]*% high/);
   assert.equal(newlyRailed(rgb, e.rgb).high, 0, "final low samples must not erase their earlier high rail");
+});
+
+// The cascade the first live run exposed (2026-09-18 15:12): Shadows has no pixel form, and a table-chosen
+// move ends pixel choice for every goal after it - so a Shadows goal listed BEFORE Whites forced Whites
+// onto the table on four clips, which carried three of the four worst MODEL OFF BY values. Lumetri applies
+// the sliders in its own fixed order regardless of write order, so choosing the pixel-form goals first
+// costs nothing in what Premiere renders and keeps the pixels in play for the goals that can use them.
+test("pixel-form goals are chosen before table-only ones, so a table Shadows cannot knock Whites off the pixels", async () => {
+  const { planShot } = require("../src/grade.cjs");
+  const n = 120000, rgb = Buffer.allocUnsafe(n * 3);
+  for (let i = 0; i < n; i++) { const v = Math.round(20 + 150 * i / n); rgb[i * 3] = v; rgb[i * 3 + 1] = v; rgb[i * 3 + 2] = v; }
+  const m = measure(rgb);
+  const goals = [
+    { param: "shadows", statistic: "blackPoint", target: 12, why: "a dark subject, listed first as goalsFor lists it" },
+    { param: "whites", statistic: "whitePoint", target: 92, why: "the white point" },
+  ];
+  const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0, goals, pixels: rgb });
+  const whites = r.plan.find((p) => p.param === "whites"), shadows = r.plan.find((p) => p.param === "shadows");
+  assert.equal(whites.how, "pixels", "whites keeps its pixels: " + JSON.stringify(whites.note));
+  assert.equal(shadows.how, "table", "shadows has no form and says so");
+  assert.ok(r.plan.indexOf(whites) < r.plan.indexOf(shadows), "and was chosen first");
+  // Without pixels the caller's order is untouched - nothing to protect, and onlyIf chains stay as written.
+  const t = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0, goals });
+  assert.deepEqual(t.plan.map((p) => p.param), ["shadows", "whites"]);
 });

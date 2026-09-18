@@ -38,6 +38,14 @@ The sharp end: three controls reach the picture on every run with nothing measur
 
 ---
 
+## Group 1b — found by the chooser's first live run (2026-09-18 15:12)
+
+| # | sweep | why | render |
+|---|---|---|---|
+| 5b | **Whites at large positive values on a LOW white-point frame** | On C231 (source p99 61.6) the pixel form predicted `whites 99.61 → 82.4` and the render read **90.2** — 8 IRE under, a gain of 1.46 where the form's maximum is 2^(1/2.4) = 1.33. Every other pixel-chosen Whites on the run landed within 0.4 (C193 86.7 vs 87.1, C198 91.8 vs 91.4, C202 91.8 vs 91.8, C209 85.9 vs 85.9) — all at 28–80 points. The +100 row that fixed the form was taken on a frame that **clipped 13.4 % of red**, so its p99 was pinned at 100 and the gain at the top of the range was never actually observed. The railed-table trap again, in a place the sweep file marks *exact*. Sweep Whites 60–100 on a frame whose p99 stays under ~75 so nothing rails. | yes |
+
+This is the only place the first live run caught the pixel model itself being wrong rather than absent.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
