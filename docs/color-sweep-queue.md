@@ -146,8 +146,12 @@ theorised (`highlightsPad._verifiedLive`). C187 read +1.5 again, digit for digit
 first thing in this project measured twice at one setting, and it repeated. The only table text left is
 C187's correction-pass temperature re-scale, outside the chain.
 
-Next sweep, one render series: `curve_sweep` "Highlights pad" hue 211 (or 225) at sat 0.2 / 0.3 on C202,
-which either confirms the mirror at the sat the pass actually writes or gives the hue its own row.
+**Sweep done (20:14):** hues 211 and 225 at sat 0.2 / 0.3 on C202 (`highlightsPad.rows.hue211/hue225`,
+`_mirrorVerifiedAtTheSatsThePassWrites`). Measured c per unit sat is within 0.016 of the mirrored table on
+every channel at both hues; whites at sat 0.3 predicted within 0.5 IRE. **The mirror holds, so C227's +1.6
+is not the pad.** Remaining candidates: the wheel-luma amount curve (C187 +1.5 at lift 0.30, deterministic;
+C227 at lift 0.49) and the sliders on a frame that newly rails 4.7% high. Group 2's wheel-luma third frame is
+the next measurement.
 
 ## Group 2 — finish the nine forms that are half-done
 

@@ -108,11 +108,12 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Close C227's +1.6.** The one pixel-chain residual above 1.2. Its pad is 211.5°/0.29, on the mirrored
-   half of the hue table at the sat cap; the mirror is confirmed only at 270 / sat 0.15. Owner runs one
-   sweep on a fresh copy: `curve_sweep` "Highlights pad", hue 211 (or 225), sat 0.2 / 0.3, on C202 @23.94s.
-   If the measured c(211) matches the mirrored interpolation within 0.02 per unit sat, the 1.6 is not the pad
-   and item 3 is next; if not, add the row to `highlightsPad.rows` and the table in `forward.cjs`.
+1. **C227's +1.6 is not the pad — measured 20:14.** Hues 211 and 225 swept at sat 0.2 / 0.3 on C202; the
+   mirrored table predicts both within 0.016 per unit sat (`highlightsPad._mirrorVerifiedAtTheSatsThePassWrites`).
+   What is left for that residual is item 3 (the wheel-luma amount curve: C227 lifts at 0.49, C187 at 0.30 reads
+   +1.5 deterministically) or the sliders on a frame that newly rails 4.7% high. A third frame for the wheel
+   luma is the next sweep: `curve_sweep` "Shadows luma" on a clip that is neither C220 nor C187, black point
+   visible, unrailed. Pick C202 @23.94s (p1 14.5) — the same frame every other form was fitted on.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
