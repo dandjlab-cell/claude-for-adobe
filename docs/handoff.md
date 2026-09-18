@@ -108,24 +108,13 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Verify the seventh build live: the black point is now three anchored channel curves.** Built 21:50
-   (`rgbLevels` in curves.cjs; `levelsFor` writes it, the correction pass re-merges onto `curves.base`, the
-   shot-match summary and halving read `curves.blackPoint`). Each channel's black-balance toe or lift is
-   merged with the black point into one bottom point; Master is identity; the chooser's op and the
-   prediction are unchanged (the merge is exact on the line, ≤0.2 IRE off on the spline — ponytail note in
-   `rgbLevels`). **Unverified live.** Owner: delete `Prototype_TEST [AI]`, reload, paste:
-
-   ```
-   Run grade_sequence: all 18 clips on V1, confirm on, budget_seconds 600.
-   Check the first line begins "[dev " and give me the sha. If it contains "ALREADY CARRIED A GRADE", STOP and tell me the number.
-   Otherwise report verbatim the header; every clip row; per clip its MODEL OFF BY (or "none") and whether every step of the black-point chain says "pixels"; balanced count and wall time; any [table] tag anywhere.
-   The change under test: the black point is written on the Red, Green and Blue curves (Master stays identity). Flag any row where the confirm read differs from the chain's last prediction by more than 1.2, and any clip whose curves read back with a non-identity Master.
-   ```
-
-   *Done when* every chain is pixels and no MODEL OFF BY exceeds 1.2 (sixth-run baseline: 1.2 / 1.5 / 1.6 /
-   1.2 on C198 / C187 / C227 / C202; 3/18 balanced; 143 s). If a residual survives, its row now names a
-   form that is exact per channel, so the next suspect is the wheel-luma amount curve or the sliders on a
-   railed frame — both recorded in `curveToeAnchoredC202._perPixel*`.
+1. **Verified: the black point on channel curves (seventh run, 22:00, 0e6f6b5).** 4/18 balanced (was 3),
+   every chain pixels, no `[table]`, the Master residuals gone (C198 / C187 / C202 → none). Left: C227 +1.2
+   and C228 −1.1, both on Shadows-wheel lifts, both with the sign the bare-wheel sweeps record (the wheel
+   moves a little more than the pooled bump). **Next form work: refit the wheel-luma amount on all three
+   frames** (`shadowsWheelLuma`, `shadowsWheelLumaC187`, `shadowsWheelLumaC202`) — pooled, not to one frame;
+   keep C187 within 0.4 and bring C220/C202's uniform-sign residual toward zero; then a live run. Record: 
+   `curveToeAnchoredC202._verifiedLive`, queue Group 1h.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -284,5 +273,5 @@ never a summary; tell it to flag anything contradicting what you said you expect
 and stale-cache runs both times. Do not reach the MCP port or drive the UI. The owner clicks Reload and deletes
 the `[AI]` copy; give him one code fence containing only the paste, nothing else in fences.
 
-**Baseline to beat:** 3/18 balanced on a fresh copy with every Basic slider on pixels (adfdd5a, 17:17). The
-number that matters is `MODEL OFF BY` per pixel-chain row: ≤ 1.2 everywhere, or say which step is table.
+**Baseline to beat:** 4/18 balanced on a fresh copy, every chain pixels, worst MODEL OFF BY 1.2 (0e6f6b5, 22:00).
+The number that matters is `MODEL OFF BY` per pixel-chain row: ≤ 1.2 everywhere, or say which step is table.

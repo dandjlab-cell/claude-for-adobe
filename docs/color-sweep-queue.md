@@ -215,6 +215,15 @@ design that follows:** write the black point as three anchored channel curves (R
 channel merging the black-balance toe and the black point — exact, 1-D, predictable — instead of Master.
 **Built 21:50 (`rgbLevels`); the seventh live run verifies it.**
 
+## Group 1h — seventh live run: the black point on channel curves (2026-09-18 22:00)
+
+Build 0e6f6b5, fresh copy, 37 renders in 144 s, **4/18 balanced** (was 3). Every chain pixels, no `[table]`.
+The Master residuals are gone: C198 +1.2 → none, C187 +1.5 → none, C202 +1.2 → none. Left: C227 @5.63
++1.2 (was +1.6) and C228 −1.1 (new). Both carry a Shadows-wheel lift; C228 read the wheel moving *more*
+than the form — the sign C220 and C202 record for the bare wheel. Live and sweep now agree on the wheel's
+sign (Master's anomaly had flipped it), so the wheel-luma amount refit on three frames is the next form
+work, not a guess. Master identity not read back live (no curve-read tool); asserted by test.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
