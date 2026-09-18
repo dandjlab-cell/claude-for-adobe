@@ -2,9 +2,9 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
-**Date:** 2026-09-18 (day session, 08:00–19:40, continued from the overnight handoff)
+**Date:** 2026-09-18 (day session 08:00–19:40, plus the 20:00 verification session)
 **Branch:** `main`
-**Last commit:** `7eac93c` — the header says how many clips already carried a grade
+**Last commit:** `066199f` — the pad form verified live (sixth run)
 **Role:** BUILDER
 
 ---
@@ -21,7 +21,7 @@ not a lookup table per frame; only ship what we know how it works.**
 
 ```
 $ git log -1 --oneline
-7eac93c the header says how many clips already carried a grade, so a stale working copy cannot pass as a chooser test
+066199f the Highlights pad form is verified live: every chain pixels at every step, no [table] left
 $ git status --porcelain
  M docs/handoff.md        # this file only, being written; committed as the handoff commit
 $ node --test test/*.test.cjs
@@ -33,7 +33,7 @@ $ node --test test/privacy.test.cjs
 ℹ pass 4
 ℹ fail 0
 $ git log --oneline origin/main..HEAD | wc -l
-26                 # unpushed. Nothing released since 0.1.87; the installed panel has none of this.
+1                  # unpushed (origin/main is at b423992). Nothing released since 0.1.87; the installed panel has none of this.
 ```
 
 **Pushing needs the owner's explicit go, each time** (CLAUDE.md). The pre-push hook runs the privacy scan on
@@ -101,33 +101,18 @@ which is the whole mechanism of the blue blacks of 2026-09-17.
 
 ## What's in progress or blocked — read this before running anything
 
-**The live verification of the pad form (`0780f24`) has not happened.** The 19:24 run was invalid: the
-`[AI]` working copy was not fresh, 14 of 18 clips read "already carries a balance", the source sample is
-withheld on a graded clip, and every choice on those fell to the table. The four clean clips were pixels at
-every step with the same residuals as before. `7eac93c` makes this unmissable — the header now says
-`N of 18 clips ALREADY CARRIED A GRADE` — but it, too, is unverified live.
-
-The owner has been given the exact paste (below). Whether the panel was reloaded and the copy deleted is
-unknown at handoff time.
+**The pad form (`0780f24`) is verified live** (sixth run, 2026-09-18 20:01, build 7eac93c, fresh copy: header
+`18 changed`, no pre-graded count). Every printed chain is pixels at every step; no `[table]` tag anywhere.
+Record: `highlightsPad._verifiedLive` in the sweep file and Group 1g of `docs/color-sweep-queue.md`. Nothing
+is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Verify the pad form live.** Owner: delete `Prototype_TEST [AI]` in Premiere, reload the dev panel. Then
-   paste to the panel's chat exactly this:
-
-   ```
-   Run grade_sequence: all 18 clips on V1, confirm on, budget_seconds 600.
-
-   Check the first line begins "[dev 7eac93c]". If not, stop and tell me.
-
-   Then check whether that same first line contains "ALREADY CARRIED A GRADE". If it does, STOP — do not report the rows. Tell me the number it gives, and that the working copy was not fresh.
-
-   Only if neither check fails: report verbatim the header; every clip row; per clip its MODEL OFF BY (or "none") and whether every step of the black-point chain says "pixels"; balanced count and wall time; any [table] tag anywhere.
-   ```
-
-   *Done when* every clip that writes a Highlights pad (C227 @5.63, C229 on earlier runs) shows
-   `highlights pad [pixels]` and its chain is `pixels` at every step. Baseline before the pad form: 3/18
-   balanced, 37 renders, 135 s; the only `[table]` tags were on those two pad clips.
+1. **Close C227's +1.6.** The one pixel-chain residual above 1.2. Its pad is 211.5°/0.29, on the mirrored
+   half of the hue table at the sat cap; the mirror is confirmed only at 270 / sat 0.15. Owner runs one
+   sweep on a fresh copy: `curve_sweep` "Highlights pad", hue 211 (or 225), sat 0.2 / 0.3, on C202 @23.94s.
+   If the measured c(211) matches the mirrored interpolation within 0.02 per unit sat, the 1.6 is not the pad
+   and item 3 is next; if not, add the row to `highlightsPad.rows` and the table in `forward.cjs`.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -138,7 +123,8 @@ unknown at handoff time.
    let `planShot` use it for region statistics. Estimate is mine, unsourced: a couple of hours plus a run.
 
 3. **C187's 1.5 and the wheel-luma amount curve.** On C187 the pixel-chosen wheel lift predicted 6.3 and read
-   7.8; C220's held-out rows run a uniform ~0.8 IRE under. The two frames disagree on the amount exponent
+   7.8 — on both the fifth and sixth runs, digit for digit, so it is deterministic, not noise (the first value
+   in this project measured twice at one setting). C220's held-out rows run a uniform ~0.8 IRE under. The two frames disagree on the amount exponent
    (`shadowsWheelLumaForm._heldOut`). Not refitted — that would break the exact frame. A third frame settles it.
 
 4. **Runtime.** 105–135 s for 18 clips (was 90). The curve amounts enumerate every writable value; a
@@ -267,7 +253,7 @@ owner (not yet written; do it if he agreed, skip if he struck it):
 
 ```bash
 cd ~/DevApps/claude-for-adobe
-git log --oneline -3          # main @ 7eac93c, 26 unpushed
+git log --oneline -3          # main @ 066199f, 28 unpushed
 node --test test/*.test.cjs   # 412 pass / 1 skip (413 when schemas.adobe.com is reachable)
 ```
 

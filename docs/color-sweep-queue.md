@@ -134,6 +134,21 @@ Highlights, Whites, Contrast, Blacks, wheel luma, wheel pad — and nothing stan
 correction pass's temperature re-scale (which uses two real renders, not a table), and Luma-vs-Sat / HSL /
 skin hue-curve, which are chroma-only and do not enter the black-point chain. Unverified live.
 
+## Group 1g — sixth live run: the pad on pixels, verified (2026-09-18 20:01)
+
+Build 7eac93c, fresh copy (header says 18 changed, no pre-graded count), 38 renders in 143 s, 3/18 balanced.
+**Every printed chain is pixels at every step, and no `[table]` tag remains anywhere.** Both pad clips read
+`highlights pad [pixels]`. C229 (pad 29°/0.19) is now exact — its 1.56 is gone. C227 @5.63 (pad 211.5°/0.29)
+reads MODEL OFF BY +1.6: its pad sits on the *mirrored* half of the hue table (180–225, mirror of 45) at the
+sat cap, where the mirror is confirmed only at hue 270 / sat 0.15. The row cannot say which step lost the 1.6
+— pad mirror, wheel-luma amount curve, or sliders on a frame that newly rails 4.7% — so it is recorded, not
+theorised (`highlightsPad._verifiedLive`). C187 read +1.5 again, digit for digit the fifth run's value: the
+first thing in this project measured twice at one setting, and it repeated. The only table text left is
+C187's correction-pass temperature re-scale, outside the chain.
+
+Next sweep, one render series: `curve_sweep` "Highlights pad" hue 211 (or 225) at sat 0.2 / 0.3 on C202,
+which either confirms the mirror at the sat the pass actually writes or gives the hue its own row.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
