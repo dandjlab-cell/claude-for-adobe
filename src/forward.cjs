@@ -65,6 +65,28 @@ const EXPOSURE_GAMMA = 2.4;
 // taken from the measured black-point move: +100 lifted luma p1 by 8.2 on C202.
 const BLACKS_LAMBDA = 23, BLACKS_PER_POINT = 0.082;
 
+// The Shadows/Highlights bumps: (input IRE -> delta IRE at +-100), both calibration frames pooled, readings
+// within one code of each other averaged, pinned to zero at 0 and 100. `p` is the slider-amount exponent per
+// direction. See OPS.shadows below and `shadowsHighlightsForm` in the sweeps for the fit and its residuals.
+const BUMP = {
+  shadows: {
+    up: [[0, 0], [4.7, 5.5], [8, 8.9], [9.2, 10], [13.7, 13.4], [14.5, 13.7], [17.3, 15.6], [41.6, 11.3], [54.9, 8.2], [74.1, 3.2], [76, 2.7], [78.8, 2.4], [84.7, 1.2], [88.6, 0.8], [91.4, 0.4], [97.3, 0], [100, 0]],
+    down: [[0, 0], [4.7, -1.2], [8, -3.3], [9.2, -4.1], [13.7, -7], [14.5, -7.4], [17.3, -9.5], [41.6, -10.6], [54.9, -9], [74.1, -4.7], [76, -4.3], [78.8, -3.5], [84.7, -2], [88.6, -1.1], [91.4, -0.8], [97.3, 0.3], [100, 0]],
+    pUp: 1.0, pDown: 0.7,
+  },
+  highlights: {
+    up: [[0, 0], [4.7, 0.4], [8, 0.8], [9.2, 0.6], [13.7, 2], [14.5, 2], [17.3, 2.3], [41.6, 9.8], [54.9, 12.6], [74.1, 13], [76, 12.2], [78.8, 11.4], [84.7, 7.8], [88.6, 5.5], [91.4, 4.3], [97.3, 0.7], [100, 0]],
+    down: [[0, 0], [4.7, 0], [8, -0.3], [9.2, -0.6], [13.7, -0.8], [14.5, -1.2], [17.3, -1.6], [41.6, -8.3], [54.9, -11.8], [74.1, -16.8], [76, -16.9], [78.8, -16.4], [84.7, -13.9], [88.6, -12.1], [91.4, -9.8], [97.3, -2.8], [100, 0]],
+    pUp: 0.78, pDown: 1.0,
+  },
+};
+const lerpPts = (pts, x) => { if (x <= pts[0][0]) return pts[0][1]; for (let i = 0; i < pts.length - 1; i++) if (x >= pts[i][0] && x <= pts[i + 1][0]) { const t = (x - pts[i][0]) / (pts[i + 1][0] - pts[i][0]); return pts[i][1] + t * (pts[i + 1][1] - pts[i][1]); } return pts[pts.length - 1][1]; };
+const bumpOp = (amount, b) => {
+  if (!amount) return (v) => v;
+  const table = amount > 0 ? b.up : b.down, scale = Math.pow(Math.abs(amount) / 100, amount > 0 ? b.pUp : b.pDown);
+  return (v) => v + to255(scale * lerpPts(table, toIRE(v)));
+};
+
 const OPS = {
   temperature: (amount) => { const k = { red: lerpTable(WB.temperature.pts, WB.temperature.red, amount), green: lerpTable(WB.temperature.pts, WB.temperature.green, amount), blue: lerpTable(WB.temperature.pts, WB.temperature.blue, amount) }; return (v, ch) => v * k[ch]; },
   tint: (amount) => { const k = { red: lerpTable(WB.tint.pts, WB.tint.red, amount), green: lerpTable(WB.tint.pts, WB.tint.green, amount), blue: lerpTable(WB.tint.pts, WB.tint.blue, amount) }; return (v, ch) => v * k[ch]; },
@@ -81,6 +103,22 @@ const OPS = {
     return (v) => v * gainForStops(stops);
   },
   blacks: (amount) => { const lift = to255(amount * BLACKS_PER_POINT); return (v) => v + lift * Math.exp(-toIRE(v) / BLACKS_LAMBDA); },
+  // Shadows and Highlights are BUMPS: an additive lift whose weight is a bell over input level, zero at both
+  // ends of the scale, centred in the shadows (~17 IRE) or the upper mids (~75). Neither is a gain and
+  // neither is the Blacks toe - Shadows +100 adds 9.8 at input 9 and RISES to 15.6 at input 17 before
+  // falling to 0 at 97; a lift would move the darkest input most. Measured 2026-09-18 (`shadowsHighlightsForm`)
+  // on two frames with different pictures, and the two frames' (input -> delta) points interleave on ONE
+  // curve, so the weight is a property of the slider, not the picture: fitted on C202 it predicts every row
+  // of C220 to a median 0.22 IRE (Shadows) / 0.34 (Highlights). The tables are both frames pooled.
+  //
+  // The amount scales the bump by (|s|/100)^p, and p differs by DIRECTION: Shadows up and Highlights down
+  // are linear (p 1.03-1.12 across both frames); Shadows down and Highlights up saturate (half the slider
+  // gives 60-65% of the effect). Those two exponents are the soft part - they came out 0.78/0.59 and
+  // 0.70/0.85 on the two frames - and are set to the mean, worth about 0.8 IRE at mid-slider. Everything
+  // else here is within the 0.4 IRE noise floor. This replaces two DOWNGRADED forms and was, on the
+  // chooser's first two live runs, the whole of the remaining MODEL OFF BY above 1.2.
+  shadows: (amount) => bumpOp(amount, BUMP.shadows),
+  highlights: (amount) => bumpOp(amount, BUMP.highlights),
   // The Master curve's bottom point, and one channel's. Both are the same measured line
   // (`curveToe._model`, `channelToe._model`): out = (v - 100x) / (1 - x).
   masterToe: (x) => (v) => (v - to255(100 * x)) / (1 - x),

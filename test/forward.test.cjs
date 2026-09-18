@@ -147,24 +147,23 @@ test("the pixel chooser refuses clipping and reports measured expectations on sa
       goals: [{ param: "exposure", statistic: "brightness", target: 60, why: "lift a dark face" }], pixels: sample(rgb) });
     assert.ok(Array.isArray(r.plan) && r.plan.length === 1, "a positive-exposure goal must not abort the plan");
   }
-  // 2. A knob with NO measured pixel form - `highlights` and `shadows`, both on the ordinary path - cannot
-  //    be applied to the buffer, so a pixel-form goal listed AFTER it would be judged on a frame missing a
-  //    move that was really written. This block first asserted the guard stood down in that case. Then the
-  //    first live run (2026-09-18 15:12) showed the cost: a table Shadows knocked Whites onto the table on
-  //    four clips carrying three of the four worst MODEL OFF BY values. Lumetri applies the sliders in its
-  //    own fixed order whatever order they are written, so planShot now CHOOSES the pixel-form goals first
-  //    and the stale-frame case cannot arise: the table knob still ends pixel choice for what follows, but
-  //    nothing that can use pixels follows.
+  // 2. A knob with no measured pixel form cannot be applied to the buffer, so a pixel-form goal listed AFTER
+  //    it would be judged on a frame missing a move that was really written. This block has tracked the
+  //    day: first it asserted the guard stood down; then (15:12) planShot learned to choose pixel-form goals
+  //    first so a table Shadows could not knock Whites off the pixels; then (16:10) Shadows and Highlights
+  //    got measured forms of their own and the case evaporated for every Basic slider the pass writes. The
+  //    contract that remains: a goal with NO form goes to the back, and everything with one is chosen first.
   {
     const rgb = frame(120, 0.008), m = measure(rgb);
-    const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0,
-      goals: [{ param: "highlights", statistic: "whitePoint", target: 92, why: "no pixel form" },
-              { param: "whites", statistic: "whitePoint", target: 92, why: "listed second, chosen first" }],
+    const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async (p) => (p === "vibrance" ? 100 : 0),
+      goals: [{ param: "vibrance", statistic: "saturation", target: 30, why: "no pixel form" },
+              { param: "highlights", statistic: "whitePoint", target: 92, why: "has a form since 16:10" },
+              { param: "whites", statistic: "whitePoint", target: 92, why: "listed last, chosen before vibrance" }],
       pixels: sample(rgb) });
-    const whites = r.plan.find((p) => p.param === "whites"), highlights = r.plan.find((p) => p.param === "highlights");
-    assert.equal(whites.how, "pixels", "whites is chosen on pixels although the caller listed it after a table knob");
-    assert.ok(r.plan.indexOf(whites) < r.plan.indexOf(highlights), "because pixel-form goals are chosen first");
-    assert.equal(highlights.how, "table");
+    const order = r.plan.map((p) => p.param);
+    assert.deepEqual(order, ["highlights", "whites", "vibrance"], "form-bearing goals first, in the caller's order; the no-form goal last");
+    assert.equal(r.plan.find((p) => p.param === "highlights").how, "pixels", "highlights is pixel-chosen now");
+    assert.equal(r.plan.find((p) => p.param === "whites").how, "pixels");
   }
   // The anchored Master bottom point. Without this form the guard was dead code: levelsFor sets the anchor
   // to at least 0.30 and caps blackIn at 0.25, so `anchor > blackIn + 0.05` is true for every clip that gets

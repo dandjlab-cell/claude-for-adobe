@@ -55,20 +55,20 @@ test("newly railed rejects a candidate whose aggregate share fits the source all
   assert.match(r.note, /newly railed/);
 });
 
-// Written first as "a table Shadows knocks the Whites after it onto the table" - which was true, and was
-// the cascade the first live run (2026-09-18 15:12) measured on four clips carrying three of the four
-// worst MODEL OFF BY values. planShot now chooses the pixel-form goals first, so the table knob is still
-// labelled and still ends pixel choice for whatever follows it - but nothing that CAN use pixels follows.
-test("unsupported Shadows/Highlights are labelled, and no longer knock a pixel-form goal listed after them off the pixels", async () => {
+// This test has been rewritten twice today, and the history is the point. First it asserted a table Shadows
+// stood the guard down for the Whites after it. Then the first live run (15:12) showed that cascade
+// carrying three of the four worst MODEL OFF BY values, and planShot was changed to choose pixel-form goals
+// first. Then the second run (15:31) showed the two table-only sliders owned EVERY remaining error, three
+// sweeps were taken, and both got a measured form (`shadowsHighlightsForm`). So now every Basic slider the
+// pass writes is chosen on pixels and nothing stands down. What has no form is the wheels and the curves.
+test("Shadows and Highlights are chosen on pixels like every other Basic slider, so nothing stands down", async () => {
   for (const param of ["shadows", "highlights"]) {
     const r = await run(frame(), [{ param, target: param === "shadows" ? 8 : 92 }, { param: "whites", target: 92 }]);
-    const whites = r.plan.find((p) => p.param === "whites"), other = r.plan.find((p) => p.param === param);
-    assert.equal(whites.how, "pixels", "whites keeps its pixels whatever order the caller listed: " + whites.note);
-    assert.ok(r.plan.indexOf(whites) < r.plan.indexOf(other), "because it is chosen first");
-    assert.equal(other.how, "table");
-    assert.match(other.note || other.skipped, /no pixel form/);
-    if (other.value !== undefined) assert.ok(r.writes.some(([p, v]) => p === param && v !== 0));
+    for (const p of r.plan) if (!p.skipped) assert.equal(p.how, "pixels", p.param + " should be pixel-chosen: " + JSON.stringify(p.note));
+    assert.ok(!r.plan.some((p) => /stands down|no pixel form/.test((p.note || "") + (p.skipped || ""))), "no fallback anywhere in the plan");
   }
+  // The genuinely unmodelled controls still refuse, so a form is never invented by omission.
+  assert.throws(() => apply(frame(64), "vibrance", 50), /no measured form/);
 });
 
 test("candidate replay uses Basic before Master before every channel curve", async () => {
@@ -288,9 +288,48 @@ test("pixel-form goals are chosen before table-only ones, so a table Shadows can
   const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0, goals, pixels: rgb });
   const whites = r.plan.find((p) => p.param === "whites"), shadows = r.plan.find((p) => p.param === "shadows");
   assert.equal(whites.how, "pixels", "whites keeps its pixels: " + JSON.stringify(whites.note));
-  assert.equal(shadows.how, "table", "shadows has no form and says so");
-  assert.ok(r.plan.indexOf(whites) < r.plan.indexOf(shadows), "and was chosen first");
+  // Shadows gained a measured form at 16:10, so it is pixel-chosen too and the caller's order is kept
+  // within the pixel half - the reorder only ever moves TABLE goals to the back.
+  assert.equal(shadows.how, "pixels", "shadows is pixel-chosen now: " + JSON.stringify(shadows.note));
+  assert.deepEqual(r.plan.map((p) => p.param), ["shadows", "whites"], "both pixel-form: the caller's order stands");
+  // The reorder itself, exercised with a control that really has no form: vibrance goes to the back.
+  const mixed = [{ param: "vibrance", statistic: "saturation", target: 30 }, ...goals];
+  const r2 = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 100, goals: mixed, pixels: rgb });
+  assert.deepEqual(r2.plan.map((p) => p.param), ["shadows", "whites", "vibrance"], "the no-form goal is chosen last");
   // Without pixels the caller's order is untouched - nothing to protect, and onlyIf chains stay as written.
   const t = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0, goals });
   assert.deepEqual(t.plan.map((p) => p.param), ["shadows", "whites"]);
+});
+
+// The form itself, against the data it was NOT fitted on. Fitted on C202's +-100 rows pooled with C220's,
+// so the interior rows (+-20, +-50, +30) of both frames are held out - and the frames are different
+// pictures, which is what makes the second frame a transfer test rather than a refit.
+test("the Shadows and Highlights bumps reproduce the held-out sweep rows on both frames within noise", () => {
+  const sweeps = require("../src/lumetri_sweeps.json");
+  const MAP = { lumaP1: "p1", lumaP50: "p50", lumaP99: "p99", lumaMax: "max", redP1: "redP1", greenP1: "greenP1", blueP1: "blueP1", redP99: "redP99", greenP99: "greenP99", blueP99: "blueP99" };
+  const rowsOf = (b) => b.rows ? b.rows : b.values.map((v, i) => { const r = { value: v }; for (const [k, c] of Object.entries(MAP)) if (b[c]) r[k] = b[c][i]; return r; });
+  const ire = (v) => v / 255 * 100, code = (ire) => ire / 100 * 255;
+  for (const [op, blocks, worstAllowed] of [["shadows", ["shadowsC202", "shadows"], 1.6], ["highlights", ["highlightsC202", "highlights"], 1.8]]) {
+    const errs = [];
+    for (const key of blocks) {
+      const rows = rowsOf(sweeps[key]), n = rows.find((r) => r.value === 0);
+      for (const row of rows) {
+        if (row.value === 0 || Math.abs(row.value) === 100) continue; // the +-100 rows built the table
+        const f = require("../src/forward.cjs").OPS[op](row.value);
+        for (const k of Object.keys(MAP)) if (k in n && k in row) errs.push(Math.abs(row[k] - ire(f(code(n[k])))));
+      }
+    }
+    errs.sort((a, b) => a - b);
+    const median = errs[Math.floor(errs.length / 2)], worst = errs[errs.length - 1];
+    assert.ok(median <= 0.4, op + ": median held-out residual " + median.toFixed(2) + " IRE must sit inside the 0.4 noise floor");
+    assert.ok(worst <= worstAllowed, op + ": worst held-out residual " + worst.toFixed(2) + " IRE over " + errs.length + " predictions");
+    assert.ok(errs.filter((e) => e <= 1).length / errs.length >= 0.9, op + ": at least 90% of held-out predictions within 1 IRE");
+  }
+  // And the shape claims, on the pixels: Shadows +100 moves input 17 MORE than input 9 (a bump, not a lift),
+  // and Highlights +100 leaves the very top almost alone (a band, not a gain).
+  const { OPS } = require("../src/forward.cjs");
+  const sh = OPS.shadows(100), hi = OPS.highlights(100);
+  assert.ok(ire(sh(code(17.3))) - 17.3 > ire(sh(code(9))) - 9, "Shadows is a bump: the lift peaks above the darkest input");
+  assert.ok(ire(hi(code(97.3))) - 97.3 < 1, "Highlights spares the top: " + (ire(hi(code(97.3))) - 97.3).toFixed(2));
+  assert.ok(ire(hi(code(54.9))) - 54.9 > 10, "and moves the median by more than 10 at +100");
 });
