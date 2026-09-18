@@ -397,3 +397,65 @@ test("shadowsLiftFor chooses on pixels and its context carries the lift into pla
   assert.equal(r.plan[0].how, "pixels", "whites after a pixel lift stays on pixels: " + r.plan[0].note);
   function frameOfP1(x) { return (x.frame || x).luma.p1; }
 });
+
+// The Highlights wheel PAD - the last control the pass wrote with no pixel form. Predicted to be an additive
+// bump over the highlights; measured (2026-09-18 17:50, five hues, five sats) to be a per-channel GAIN about
+// zero, luma-preserving, linear in sat, one vector rotating in one plane with a warped angle. The form is a
+// hue table interpolated linearly; here it is checked against every measured row at every hue, including the
+// two off-axis hues that a cos/sin model would have missed by 0.78 IRE.
+test("the Highlights pad is a luma-preserving per-channel gain, and the hue table reproduces every measured row", () => {
+  const sweeps = require("../src/lumetri_sweeps.json");
+  const { OPS } = require("../src/forward.cjs");
+  const ire = (v) => v / 255 * 100, code = (ire) => ire / 100 * 255;
+  const LV = ["P1", "_blacks", "_shadows", "_midtones", "_highlights", "_whites", "P99", "Mean"];
+  const errs = [];
+  for (const [key, rows] of Object.entries(sweeps.highlightsPad.rows)) {
+    const n = rows[0];
+    for (const row of rows.slice(1)) {
+      const f = OPS.highlightsPad(row.sat, row.hue);
+      for (const ch of ["red", "green", "blue"]) for (const l of LV) {
+        const a = n[ch + l], b = row[ch + l];
+        // A reading within a few codes of the rail is not a gain measurement: red p99 at hue 0 reads 98.8
+        // at sat 0.45 where the unclamped gain says 103.4 - the frame's top was already compressing
+        // (luma max 97.3 -> 94.5, 0.02% clipped). Same rule as `_fitMethod`: never fit a gain near a rail.
+        if (!(a > 3) || b >= 95) continue;
+        errs.push({ key, sat: row.sat, ch, l, err: b - ire(f(code(a), ch)) });
+      }
+    }
+  }
+  const abs = errs.map((e) => Math.abs(e.err)).sort((a, b) => a - b);
+  const median = abs[Math.floor(abs.length / 2)], worst = abs[abs.length - 1];
+  assert.ok(median <= 0.4, "median residual over " + errs.length + " (hue, sat, channel, level) points must sit inside the noise floor: " + median.toFixed(2));
+  assert.ok(worst <= 1.5, "worst residual " + worst.toFixed(2) + " IRE at " + JSON.stringify(errs.find((e) => Math.abs(e.err) === worst)));
+  assert.ok(abs.filter((e) => e <= 1).length / abs.length >= 0.95, "at least 95% within 1 IRE");
+  // The three properties, on the pixels: a gain (input 20 and input 80 scale by the same factor), luma
+  // preserving (a neutral grey stays at its luma), linear in sat (0.6 moves twice what 0.3 moves).
+  const g = OPS.highlightsPad(0.3, 0);
+  const r20 = ire(g(code(20), "red")) / 20, r80 = ire(g(code(80), "red")) / 80;
+  assert.ok(Math.abs(r20 - r80) < 0.005, "a gain: the same factor at 20 and at 80, " + r20.toFixed(3) + " vs " + r80.toFixed(3));
+  const grey = 128, Y = 0.2126 * ire(g(grey, "red")) + 0.7152 * ire(g(grey, "green")) + 0.0722 * ire(g(grey, "blue"));
+  assert.ok(Math.abs(Y - ire(grey)) < 0.4, "luma-preserving: grey 50.2 stays at " + Y.toFixed(2));
+  const g6 = OPS.highlightsPad(0.6, 0);
+  assert.ok(Math.abs((ire(g6(code(80), "red")) - 80) - 2 * (ire(g(code(80), "red")) - 80)) < 0.3, "linear in sat");
+  // Off-axis: the table, not cos/sin. At hue 45 red measured +0.118 per unit sat where cos/sin says +0.151.
+  const g45 = OPS.highlightsPad(1, 45);
+  assert.ok(Math.abs(ire(g45(code(50), "red")) / 50 - 1.118) < 0.01, "hue 45 red gain from the table, not the rotation model");
+  assert.equal(OPS.highlightsPad(0, 211)(100, "blue"), 100, "sat 0 is the identity at any hue");
+});
+
+test("padsFor chooses the pad's sat on pixels along the linear model's hue, and hands the pad forward in the context", () => {
+  const { padsFor } = require("../src/grade_rules.cjs");
+  const P = require("../src/grade_pixels.cjs");
+  // A frame whose brightest 3% are warm: red above blue at the top by ~10 IRE, black point clean.
+  const n = 60000, rgb = Buffer.allocUnsafe(n * 3);
+  for (let i = 0; i < n; i++) { const v = Math.round(12 + 200 * i / n); const warm = v > 180 ? 12 : 0; rgb[i * 3] = Math.min(255, v + warm); rgb[i * 3 + 1] = v; rgb[i * 3 + 2] = Math.max(0, v - warm); }
+  const m = measure(rgb);
+  const table = padsFor(m, null), pix = padsFor(m, null, rgb);
+  assert.ok(table.wheels.highlights && pix.wheels.highlights, "a warm top gets a Highlights pad either way");
+  assert.equal(table.how, "table"); assert.equal(pix.how, "pixels");
+  assert.equal(pix.wheels.highlights.hue, table.wheels.highlights.hue, "the hue is the linear model's on both paths");
+  assert.ok(pix.pixels && pix.pixels.operations.some(([op]) => op === "highlightsPad"), "the context carries the pad");
+  const before = STATISTICS.whitesRB(m), after = STATISTICS.whitesRB(pix.predicted);
+  assert.ok(Math.abs(after) < Math.abs(before), "the whites cast moved toward the target: " + before.toFixed(1) + " -> " + after.toFixed(1));
+  assert.deepEqual(pix.predicted, measure(require("../src/forward.cjs").pipeline(rgb, [pix.pixels.operations])), "predicted state is the transformed pixels, not a nudge");
+});

@@ -420,8 +420,11 @@ function shadowsLiftFor(m, current = null, target = BLACK_POINT[1] - 1, pixels =
       (got < want - 0.2 ? (room < want ? "; only " + round(got) + " of " + round(want) + " - the lowest channel has no more room under it" : "; as far as the wheel goes before it crushes too") : "") };
 }
 
-function padsFor(m, current = null) {
+function padsFor(m, current = null, pixels = null) {
+  let px = PIXELS.context(pixels);
+  if (px) m = PIXELS.readingFor(px, m);
   const f = frameOf(m), now = current || {}, wheels = {}, needs = [], targets = {};
+  let how = "table", evaluations = 0, predicted = null;
   for (const [wheel, label] of [["highlights", "whites"]]) {
     const cast = castAt(f, wheel);
     if (Math.hypot(cast[0], cast[1]) <= NEUTRAL) continue;
@@ -442,6 +445,26 @@ function padsFor(m, current = null) {
     const cx = w.sat * Math.cos(w.hue * Math.PI / 180) + r.sat * Math.cos(r.hue * Math.PI / 180);
     const cy = w.sat * Math.sin(w.hue * Math.PI / 180) + r.sat * Math.sin(r.hue * Math.PI / 180);
     w.sat = Math.min(MAX_SAT, Math.hypot(cx, cy)); w.hue = ((Math.atan2(cy, cx) * 180 / Math.PI) + 360) % 360;
+    // 2026-09-18 18:05: with the sample present the SAT is chosen on pixels along the hue solveCast gave.
+    // The pad has a measured pixel form (`highlightsPad`, OPS.highlightsPad) - a per-channel gain about
+    // zero, luma-preserving, linear in sat - and it was the last control the pass wrote with none: on the
+    // chooser's fourth live run the only two clips still carrying a [table] tag had both written this pad,
+    // which dropped the pixel context for the lift and every slider after it. The hue stays the linear
+    // model's; the AMOUNT is measured on the frame. The aim is the frozen target above, and a gain scales
+    // the blacks too, so the blacks' cast is in the objective through px.targets rather than assumed still.
+    if (px && wheel === "highlights" && w.sat > 0.005) {
+      const aim = targets[wheel];
+      const wheelsAt = (sat) => ({ ...now, [wheel]: { ...w, sat } });
+      const rc = PIXELS.choose({ pixels: { ...px, targets: { ...(px.targets || {}), [wheel]: aim } }, reading: m, op: "highlightsPad", extra: w.hue, from: 0,
+        range: [0, MAX_SAT], target: aim[0], readStat: (s) => castAt(frameOf(s), wheel)[0], allow: allowance(damage(px.baseline)),
+        score: (s, d) => [PIXELS.bin(Math.abs(castAt(frameOf(s), wheel)[0] - aim[0]) - PIXELS.NOISE), ...objective(s, d, { ...(px.targets || {}), [wheel]: aim })],
+        rangeNote: "pad sat cap " + MAX_SAT + " / serialization" });
+      if (rc.feasible && rc.value > 0.005) {
+        w.sat = rc.value; how = "pixels"; evaluations += rc.evaluations; px = rc.pixels; predicted = rc.state;
+        w.why.push("sat chosen on pixels: " + rc.note);
+      } else { w.why.push("pixels found no feasible sat (" + (rc.reason || rc.note) + "); table amount kept"); }
+      void wheelsAt;
+    }
     // A Shadows pad that pulls red out of warm shadows can put red on the floor: scale it back until the
     // predicted channel bottoms stay off it.
     let floored = false;
@@ -451,7 +474,7 @@ function padsFor(m, current = null) {
     if (r.capped) needs.push(label + " cast " + round(Math.hypot(cast[0], cast[1])) + " is more than the pad model covers (" + MAX_SAT + "): the rest is reported, not chased");
     wheels[wheel] = w;
   }
-  return { wheels, needs, targets };
+  return { wheels, needs, targets, how, pixels: how === "pixels" ? px : null, predicted, evaluations };
 }
 
 // The black point, set EXACTLY with the Master curve's bottom point - a levels move, output = (in - x)

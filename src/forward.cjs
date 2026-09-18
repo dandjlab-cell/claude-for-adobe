@@ -88,6 +88,27 @@ const BUMP = {
     down: [[0, 0], [4.7, -4.3], [7.9, -6.5], [8.6, -7], [9.4, -7.4], [10.4, -8], [11.8, -8.7], [19.2, -9.8], [21.2, -9.8], [23.9, -9.4], [38, -7.8], [41.2, -7.5], [55.3, -5.5], [91.8, -0.8], [100, 0]],
   },
 };
+// The Highlights wheel PAD, measured 2026-09-18 17:50-18:00 on C202 at five hues and five sats
+// (`highlightsPad`). NOT a band: per row, out/in is one number per channel across every level statistic
+// from the blacks to the whites (spread within a code), so it is a PER-CHANNEL GAIN ABOUT ZERO, luma-
+// preserving (0.2126 gR + 0.7152 gG + 0.0722 gB = 1 within 0.008 on every hue) and linear in sat:
+// gain_ch = 1 + sat * c_ch(hue). c is one vector rotating in one plane, but the wheel's angle is warped
+// (45 sits at plane angle 49, 135 at 130.5) and the vector length runs 0.39-0.46, so the table below is
+// interpolated by hue rather than fitted to cos/sin, which would miss by 0.78 IRE at sat 0.3. 225/270/315
+// are the mirrors of 45/90/135 - 180 mirrors 0 here within 0.02 and 270 mirrors 90 on C220 within 0.02,
+// so the mirror is measured on both axes. Hue convention is QE's: 0 red, 90 green, 180 cyan, 270 magenta.
+const PAD_C = [
+  [0, 0.372, -0.108, -0.104], [45, 0.118, -0.005, -0.371], [90, -0.159, 0.093, -0.409], [135, -0.366, 0.141, -0.244],
+  [180, -0.392, 0.116, 0.113], [225, -0.118, 0.005, 0.371], [270, 0.159, -0.093, 0.409], [315, 0.366, -0.141, 0.244], [360, 0.372, -0.108, -0.104],
+];
+const padVector = (hue) => {
+  const h = ((hue % 360) + 360) % 360;
+  for (let i = 0; i < PAD_C.length - 1; i++) if (h >= PAD_C[i][0] && h <= PAD_C[i + 1][0]) {
+    const t = (h - PAD_C[i][0]) / (PAD_C[i + 1][0] - PAD_C[i][0]), a = PAD_C[i], b = PAD_C[i + 1];
+    return { red: a[1] + t * (b[1] - a[1]), green: a[2] + t * (b[2] - a[2]), blue: a[3] + t * (b[3] - a[3]) };
+  }
+  return { red: PAD_C[0][1], green: PAD_C[0][2], blue: PAD_C[0][3] };
+};
 const lerpPts = (pts, x) => { if (x <= pts[0][0]) return pts[0][1]; for (let i = 0; i < pts.length - 1; i++) if (x >= pts[i][0] && x <= pts[i + 1][0]) { const t = (x - pts[i][0]) / (pts[i + 1][0] - pts[i][0]); return pts[i][1] + t * (pts[i + 1][1] - pts[i][1]); } return pts[pts.length - 1][1]; };
 const bumpOp = (amount, b) => {
   if (!amount) return (v) => v;
@@ -132,6 +153,14 @@ const OPS = {
   // were compared at luma p1, which sits at a different INPUT LEVEL on each (8.2 against 23.9), and a bump
   // moves different levels by different amounts. Overlaid by input level the two frames are one curve
   // (2026-09-18 16:40). Upward (x > 0.5) is unswept and refuses, like exposure above 0.
+  // The Highlights wheel pad: amount is the wheel's sat, extra is its hue. A gain about zero, so it scales
+  // the blacks in the same proportion as the whites - which is the whole story of the blue blacks of
+  // 2026-09-17: a pad aimed at a warm top tints the bottom by construction. The chooser can now see that.
+  highlightsPad: (sat, hue) => {
+    if (!(sat > 0)) return (v) => v;
+    const c = padVector(hue), k = { red: 1 + sat * c.red, green: 1 + sat * c.green, blue: 1 + sat * c.blue };
+    return (v, ch) => v * k[ch];
+  },
   shadowsWheelLuma: (x) => {
     if (x > 0.5 + 1e-9) throw new Error("Shadows wheel luma above 0.5 is not modelled: only the downward half was swept (shadowsWheelLuma, shadowsWheelLumaC187)");
     const scale = (0.5 - x) / 0.25;
@@ -194,7 +223,7 @@ function apply(rgb, op, amount, extra) {
 // is a STACK of instances, which is how an arbitrary order is reached - Lumetri's internal order is fixed
 // per instance, not overall.
 // Wheels come AFTER the curves in Lumetri's own order, so the wheel luma is last.
-const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "masterToeAnchored", "channelToe", "channelLift", "shadowsWheelLuma"];
+const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "masterToeAnchored", "channelToe", "channelLift", "shadowsWheelLuma", "highlightsPad"];
 function pipeline(rgb, stages, visit = null) {
   let buf = rgb;
   for (const stage of stages) {

@@ -1832,9 +1832,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const temp = gradeTemperatureFor(m, tempFrom, tintFrom, pixels);
     let curvePixels = pixels ? (temp ? temp.pixels : gradePixelContext(pixels)) : null;
     const afterTemp = temp ? temp.predicted : m;
-    const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels);
+    const pads = wheelsErr ? { wheels: {}, needs: ["wheels not read (" + wheelsErr + "): pads left alone"] } : gradePadsFor(afterTemp, currentWheels, curvePixels);
     const padMoves = Object.keys(pads.wheels);
-    const afterPads = padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
+    // A pixel-chosen pad is IN the context it hands back, so the curves after it are chosen on a picture
+    // that already carries it; a table pad (no sample, or nothing feasible) is attached as a prediction.
+    if (pads.how === "pixels" && pads.pixels) curvePixels = pads.pixels;
+    const afterPads = pads.how === "pixels" && pads.predicted ? pads.predicted : padMoves.length ? wheelPredictPads(afterTemp, pads.wheels, currentWheels) : afterTemp;
     // The blacks: the channel bottoms lined up on the RGB curves - the colorist's black balance, and NOT
     // the Shadows wheel, which is what wrote the blue blacks in the first place (see bottomsFor). Solved
     // before the Master bottom point so the black point is set on a bottom that is already level, and
@@ -1855,17 +1858,18 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // Curves physically precede wheels even though the pad was solved first. Pixel curve choices see
     // that pre-wheel image; the table wheel estimate is attached AFTER them, never baked into their source.
     const afterCurves = curvePixels ? (lev ? lev.predicted : bot ? bot.predicted : afterTemp) : (lev ? lev.predicted : afterBalance);
-    const beforeLift = curvePixels && padMoves.length ? wheelPredictPads(afterCurves, pads.wheels, currentWheels) : afterCurves;
-    // The lift is chosen on pixels when no pad moved (a pad has no pixel form and would make the sample a
-    // lie); with a pad in play it falls to the table as before.
-    const lift = curvesErr ? null : gradeShadowsLiftFor(beforeLift, currentWheels, undefined, padMoves.length ? null : curvePixels);
+    // A pixel pad is already in curvePixels (and in afterCurves through the curve choices), so only a TABLE
+    // pad still has to be attached here as a prediction, and only a table pad keeps the lift off pixels.
+    const tablePad = padMoves.length > 0 && pads.how !== "pixels";
+    const beforeLift = curvePixels && tablePad ? wheelPredictPads(afterCurves, pads.wheels, currentWheels) : afterCurves;
+    const lift = curvesErr ? null : gradeShadowsLiftFor(beforeLift, currentWheels, undefined, tablePad ? null : curvePixels);
     if (lift && lift.pixels) curvePixels = lift.pixels;
     const afterLevels = lift ? lift.predicted : beforeLift;
     const goals = gradeGoalsFor(afterLevels, seen);
     needs.push(...pads.needs, ...(bot ? bot.needs : []), ...goals.needs);
     if (temp && temp.sceneColor) parts.push("no white balance (" + temp.why + ")");
     else if (temp) parts.push("white balance [" + temp.how + "]: temperature " + round2(temp.value) + (temp.tint !== null ? ", tint " + round2(temp.tint) : "") + " (" + temp.why + ")");
-    if (padMoves.length) parts.push(padMoves.map((w) => w + " pad " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
+    if (padMoves.length) parts.push(padMoves.map((w) => w + " pad [" + (pads.how || "table") + "] " + round2(pads.wheels[w].hue) + "°/" + round2(pads.wheels[w].sat) + " (" + pads.wheels[w].why.join("; ") + ")").join("; "));
     if (bot) parts.push("black balance [" + bot.how + "]: " + bot.why);
     // The black point is the one value in the pass with no predicted-vs-actual anywhere: every slider
     // reports before→achieved through planShot, while the black balance and the curve report only what they
@@ -1912,10 +1916,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // A pixel-chosen lift is IN curvePixels already (shadowsLiftFor returned the context carrying it), so it
     // no longer ends pixel choice - 2026-09-18 16:40. A table lift (only with a pad in play) still does.
     const guardPixelsFor = () => {
-      if (!pixels || padMoves.length || (lift && lift.how !== "pixels")) return null;
+      if (!pixels || (padMoves.length && pads.how !== "pixels") || (lift && lift.how !== "pixels")) return null;
       return curvePixels;
     };
-    const pixelReason = !pixels ? "no retained sample of an ungraded source" : padMoves.length ? "wheel pad has no pixel form" : lift && lift.how !== "pixels" ? "Shadows wheel lift chosen from the table" : "incomplete source pipeline";
+    const pixelReason = !pixels ? "no retained sample of an ungraded source" : padMoves.length && pads.how !== "pixels" ? "wheel pad chosen from the table" : lift && lift.how !== "pixels" ? "Shadows wheel lift chosen from the table" : "incomplete source pipeline";
     if (sat && curvePixels) parts.push("pixels certify through RGB Curves; Luma vs Sat has no pixel form, final damage checked by confirm");
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }

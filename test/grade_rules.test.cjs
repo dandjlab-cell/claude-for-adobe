@@ -175,7 +175,7 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(panel, /grade_sequence: gradeSequenceTool/);
   const seqTool = panel.slice(panel.indexOf("async function gradeSequenceTool"), panel.indexOf("async function audioClipsIn"));
   assert.ok(seqTool.indexOf("ensureWorkingCopy") > 0 && seqTool.indexOf("ensureWorkingCopy") < seqTool.indexOf("readTransforms"), "the working copy is made before the clips are read from it");
-  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels)"), iBot = seqTool.indexOf("gradeBottomsFor(afterPads, currentCurves, curvePixels)"),
+  const iPads = seqTool.indexOf("gradePadsFor(afterTemp, currentWheels, curvePixels)"), iBot = seqTool.indexOf("gradeBottomsFor(afterPads, currentCurves, curvePixels)"),
     iLev = seqTool.indexOf("gradeLevelsFor(afterBalance, bot ? bot.curves : currentCurves, m, curvePixels)"), iGoals = seqTool.indexOf("gradeGoalsFor(afterLevels, seen)");
   assert.ok(iPads > 0 && iPads < iBot && iBot < iLev && iLev < iGoals, "balance on the frame as read, then the black balance, then the curve's black point on a bottom that is already level, then the sliders on the state after all of it");
   assert.match(seqTool, /if \(lev\) await cw\.write\(lev\.curves\); else if \(bot\) await cw\.write\(bot\.curves\);/, "the channel toes reach Premiere even when there is no black point to set");
@@ -188,8 +188,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(seqTool, /planGradeShot\(\{[^\n]*pixels: guardPixelsFor\(\)/, "planShot is given this clip's own pixels, not only another frame's percentile table");
   // A pad has no pixel form and still drops the pixels. The Shadows-wheel LIFT gained one at 16:40 and is
   // now chosen on pixels, so only a lift that fell to the table (a pad in play) drops them.
-  assert.match(seqTool, /if \(!pixels \|\| padMoves\.length \|\| \(lift && lift\.how !== "pixels"\)\) return null;/, "no pixels when a move with no measured pixel form was written: a guard on the wrong picture is worse than none");
-  assert.match(seqTool, /gradeShadowsLiftFor\(beforeLift, currentWheels, undefined, padMoves\.length \? null : curvePixels\)/, "the lift is chosen on pixels unless a pad moved");
+  // Since 18:05 a pad chosen on pixels (highlightsPad form) is in the context too; only a TABLE pad or a
+  // TABLE lift - the fallbacks, with no pixel form behind the written value - still drop the pixels.
+  assert.match(seqTool, /if \(!pixels \|\| \(padMoves\.length && pads\.how !== "pixels"\) \|\| \(lift && lift\.how !== "pixels"\)\) return null;/, "no pixels when a move with no measured pixel form was written: a guard on the wrong picture is worse than none");
+  assert.match(seqTool, /gradeShadowsLiftFor\(beforeLift, currentWheels, undefined, tablePad \? null : curvePixels\)/, "the lift is chosen on pixels unless a TABLE pad moved (a pixel pad is in the context)");
   assert.match(seqTool, /if \(lift && lift\.pixels\) curvePixels = lift\.pixels;/, "and the context carries the lift forward to the sliders");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap, visible\)/, "one snapshot per run, and every source read cropped to what the timeline shows");
   assert.match(seqTool, /"saturation", "vibrance"/, "existing saturation controls also invalidate raw source pixels");
