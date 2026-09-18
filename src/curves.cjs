@@ -59,8 +59,7 @@ function isIdentity(curves) {
 // 41.6 -> 36 at x 0.10), which is not how a colorist sets a black point. A second pin at 0.8 holds the
 // top: Premiere's spline through the anchor bows ABOVE the diagonal on its way to (1,1) - seen on the
 // 21:26 run's C187 curve, whites 91.4 -> 93.7 with nothing else touching them.
-function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
-  const out = Object.assign({}, current || {});
+function levelsPoints(blackIn = 0, whiteIn = 1, anchor = null) {
   const x = Math.max(0, Math.min(0.5, blackIn)), w = Math.max(0.5, Math.min(1, whiteIn));
   const pts = [[x, 0]];
   if (anchor !== null && anchor > x + 0.05 && anchor < w - 0.05) {
@@ -68,8 +67,25 @@ function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
     if (anchor < 0.7 && w > 0.9) pts.push([0.8, 0.8]);
   }
   pts.push([w, 1]);
-  out.Master = pts;
+  return pts;
+}
+function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
+  const out = Object.assign({}, current || {});
+  out.Master = levelsPoints(blackIn, whiteIn, anchor);
   return out;
+}
+// THE FORM of a curve written through these points, as a map on levels 0..100. Two points: the straight
+// line. More: Premiere draws a NATURAL CUBIC SPLINE through them - read pixel by pixel 2026-09-18 21:42
+// (`curveToeAnchoredC202._perPixelSpline`): on a channel curve anchored at 0.55 the natural spline
+// through (x,0) (0.55,0.55) (0.8,0.8) (1,1) reproduces the red channel's per-code medians to 0.15 / 0.12
+// IRE (max 0.54) at bottom points 0.09 / 0.15, where the chord misses by 0.89 / 1.21 (it bows up to 1.8
+// above the chord mid-way) and Catmull-Rom tangents by 0.5-0.6. It is exact for any CHANNEL curve and
+// for the Master curve's red and blue; Master's green is not a 1-D map at all (`curveToe._modelCORRECTION`).
+function levelsMap(blackIn = 0, whiteIn = 1, anchor = null) {
+  const pts = levelsPoints(blackIn, whiteIn, anchor);
+  if (pts.length === 2) { const [x0, w] = [pts[0][0] * 100, pts[1][0] * 100]; return (v) => Math.max(0, Math.min(100, (v - x0) / ((w - x0) / 100))); }
+  const s = spline(pts);
+  return (v) => (isFinite(v) ? Math.max(0, Math.min(100, s(Math.max(0, Math.min(1, v / 100))) * 100)) : v);
 }
 
 // The bottom point that puts a black point (luma p1, 0-100) at `target`. Unanchored, on the straight
@@ -78,7 +94,17 @@ function levels(blackIn = 0, whiteIn = 1, current = null, anchor = null) {
 // (3.1 for 2.3), inside the accepted band, and the confirm reports what it actually did.
 function blackInFor(p1, target = 4, anchor = null) {
   if (!(p1 > target)) return 0;
-  if (anchor !== null) { const A = anchor * 100; if (A > target + 5 && p1 < A) return Math.max(0, Math.min(0.5, (A * (p1 - target) / (A - target)) / 100)); }
+  if (anchor !== null) {
+    const A = anchor * 100;
+    if (A > target + 5 && p1 < A) {
+      // Solved on the FORM (the natural spline, levelsMap), not the chord: the spline bows above the chord,
+      // so the chord's x = A (p1 - t) / (A - t) lands the black point ~1 IRE high. Monotone in x: bisect.
+      let lo = 0, hi = Math.min(0.5, p1 / 100);
+      if (levelsMap(hi, 1, anchor)(p1) > target) return hi;
+      for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (levelsMap(mid, 1, anchor)(p1) > target) lo = mid; else hi = mid; }
+      return Math.round(((lo + hi) / 2) * 1000) / 1000;
+    }
+  }
   return Math.max(0, Math.min(0.5, (p1 - target) / (100 - target)));
 }
 // The top point that puts a white point at `target` without pushing the peak past 100: output = in / x,
@@ -92,12 +118,7 @@ function whiteInFor(p99, max, target = 92) {
 // clamped to 0..100; casts and clip shares are left as they are (a neutral op moves both channels
 // together; the confirm reads the truth).
 function predictLevels(m, blackIn = 0, whiteIn = 1, anchor = null) {
-  const X = blackIn * 100, W = whiteIn * 100, A = anchor !== null ? anchor * 100 : null;
-  const map = (v) => {
-    if (!isFinite(v)) return v;
-    if (A !== null && A > X + 5 && W >= 90) return v >= A ? v : Math.max(0, (v - X) * A / (A - X)); // pinned at the anchor: above it, untouched
-    return Math.max(0, Math.min(100, (v - X) / ((W - X) / 100)));
-  };
+  const map = levelsMap(blackIn, whiteIn, anchor); // one form, two places: forward.cjs masterToeAnchored uses the same
   const move = (f) => {
     for (const k of ["min", "p1", "p50", "p99", "max"]) if (f.luma && k in f.luma) f.luma[k] = map(f.luma[k]);
     for (const c of ["red", "green", "blue"]) if (f[c]) for (const k of ["mean", "p1", "p99"]) if (k in f[c]) f[c][k] = map(f[c][k]);
@@ -273,4 +294,4 @@ function predictBottoms(m, moves) {
   return out;
 }
 
-module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, blackInFor, whiteInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };
+module.exports = { NAMES, IDENTITY, hueBump, HUE_BUMP_WIDTH, parse, format, isIdentity, levels, levelsPoints, levelsMap, blackInFor, whiteInFor, predictLevels, toesFor, movesFor, neutralBottoms, predictBottoms, parseSingle, formatSingle, spline, satRolloff, ROLLOFF_DEPTH };

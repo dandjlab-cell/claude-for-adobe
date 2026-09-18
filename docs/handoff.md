@@ -108,31 +108,18 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Decide the black point's knob: model Master on green, or write three channel toes.** Facts on record
-   (`curveToeAnchoredC202._perPixel`, `._perPixelUnanchoredAndChannels`): the Master curve is the straight
-   line on red and blue pixel-exact (unanchored; the anchored form is a spline bowing ≤1.8 IRE above the
-   chord), and on green it is NOT a 1-D map — its output rises with red and with falling blue, never
-   crushes, and the cross-channel weights move with x. Nine mechanisms rejected. Each channel toe alone is
-   the line on its own channel pixel-exact and moves the others by nothing, so **Red+Green+Blue at one x is
-   the exact per-channel form** — but without an anchor (midtones drop ~5 IRE at 0.15). `curve_sweep` now
-   takes `anchor` on Red/Green/Blue and `curve: "RGB"` (all three in one write), and kept-frame names carry
-   the clip time and anchor. **Unverified live** (reload). Owner, fresh copy, all four independent:
-
-   ```
-   Four calibration sweeps, keepFrames true on all. Return each tool's raw output including the "Frames kept" line, no summary.
-   1. curve_sweep Master, anchor 0.55, points 0, 0.09, 0.15, on A056_05072025_C187.braw at 22.02s
-   2. curve_sweep RGB, points 0, 0.15, on A056_05072128_C202.braw at 23.94s
-   3. curve_sweep RGB, anchor 0.55, points 0, 0.09, 0.15, on A056_05072128_C202.braw at 23.94s
-   4. curve_sweep Green, anchor 0.55, points 0, 0.09, 0.15, on A056_05072128_C202.braw at 23.94s
-   ```
-
-   Then `node tools/pixel_map.cjs <0 png> <x png>` on each pair. (1) is the second frame for Master's
-   green; (2) confirms the three toes in one write compose pixel-exact; (3)/(4) say whether an anchored
-   channel curve is the red/blue spline of anchored Master (then `masterToeAnchored`'s form can serve the
-   channel curves and the pass can switch the black point to RGB with the anchor kept) or something else.
-   If (3) is the spline within ~0.5 IRE: switch `levelsFor`/`planShot` to write RGB instead of Master,
-   predict with the per-channel spline, and re-run the sixth-run baseline (3/18 balanced, residuals ≤1.2
-   or named).
+1. **Move the black point from Master to three anchored channel curves.** Everything needed is measured
+   (`curveToeAnchoredC202._perPixelSpline`, 21:42): an anchored channel curve is a 1-D natural cubic spline
+   through the written points, pixel-identical to Master's red and blue, and RGB anchored holds the median
+   like Master does. Master's green is not a 1-D map on two frames and cannot be modelled; the channel
+   curves can, exactly. The form is wired (`levelsMap`, `predictLevels`, `masterToeAnchored`, and
+   `blackInFor` solves on it). What is left is the WRITE: in `levelsFor` / `planShot` emit Red, Green, Blue
+   each as the four-point spline with ONE bottom point per channel = the black-balance toe merged with the
+   black point (a toe at t followed by a bottom point at x is one bottom point at t + x(1 − t) on the
+   unanchored line; with the anchor, solve each channel's x on `levelsMap` for its own paired bottom
+   target), Master identity. Predict per channel with `levelsMap`. Then a live run on a fresh copy: the
+   sixth-run baseline is 3/18 balanced with residuals 1.2 / 1.5 / 1.6 / 1.2; the target is every chain
+   pixels and no MODEL OFF BY above 1.2 — the residual was this curve. Estimate: two hours plus a run.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -209,6 +196,8 @@ No gates tool. The agreement is:
 | file | what |
 |---|---|
 | `tools/pixel_map.cjs` | **new** — per-pixel map between two kept renders (Master's form) |
+| `src/curves.cjs` | `levelsPoints`, `levelsMap` (the natural-spline form), `blackInFor` solves on it, `predictLevels` uses it |
+| `src/forward.cjs` | `masterToeAnchored` evaluates `levelsMap` |
 | `panel.js` (evening) | `curve_sweep`: `masterBlack` (wheel under the grade's curve), `keepFrames` (names carry clip time + anchor), `anchor` on channel curves, `curve: "RGB"` |
 | `src/grade_pixels.cjs` | **new** — the chooser: `choose`, `evaluate` (prefix rail witness), `context`, `readingFor` |
 | `src/forward.cjs` | OPS gained `shadows`, `highlights` (bumps), `shadowsWheelLuma`, `highlightsPad`, `masterToeAnchored`; `newlyRailed`; 256-entry LUT apply; tuple stages |

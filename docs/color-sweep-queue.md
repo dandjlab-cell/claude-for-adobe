@@ -205,6 +205,15 @@ and moves the others by nothing — **three channel toes are the exact per-chann
 anchor (Green 0.15 dropped p50 by 5.5 where anchored Master held it). (a) was lost to a filename collision
 (fixed: names carry clip time and anchor) and is re-queued with the anchored-channel and RGB sweeps.
 
+**(a) and the anchored channels read (21:42, `curveToeAnchoredC202._perPixelSpline`).** An anchored channel
+curve is anchored Master minus the green anomaly — RGB anchored is pixel-identical to Master anchored on
+red and blue, and each channel is a 1-D map. **The anchored form is Premiere's natural cubic spline through
+the written points** (curves.cjs `spline`): red's per-code medians to 0.12–0.15 IRE where the chord missed
+by 0.9–1.2. Wired into `levelsMap` / `predictLevels` / `masterToeAnchored`; `blackInFor` solves on it. On
+C187's percentiles red is now within 0.4 at every x. Master's green anomaly repeats on C187's pixels. **The
+design that follows:** write the black point as three anchored channel curves (RGB), one bottom point per
+channel merging the black-balance toe and the black point — exact, 1-D, predictable — instead of Master.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |

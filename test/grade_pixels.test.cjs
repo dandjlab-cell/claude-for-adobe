@@ -480,8 +480,11 @@ test("channel curves are the line on their own channel; the Master curve is not 
   const rows = sweeps.curveToeAnchoredC187.rows, n = rows[0];
   for (const r of rows.slice(1)) {
     const f = OPS.masterToeAnchored(r.x, 0.55), p = (v) => ire(Math.max(0, f(code(v))));
-    assert.ok(Math.abs(r.blueP1 - p(n.blueP1)) <= 0.6, "C187 Master x " + r.x + ": blue (the lowest channel) is on the line");
-    assert.ok(r.greenP1 - p(n.greenP1) > 1.5, "C187 Master x " + r.x + ": green reads " + r.greenP1 + " where the line says " + p(n.greenP1).toFixed(1));
+    // 21:42: the form is the natural spline, and on it RED is on the form too (within 0.4 at every x, where
+    // the chord had it 1.0-2.7 over); only green is off, and by more the deeper the bottom point.
+    assert.ok(Math.abs(r.blueP1 - p(n.blueP1)) <= 0.6, "C187 Master x " + r.x + ": blue is on the form");
+    assert.ok(Math.abs(r.redP1 - p(n.redP1)) <= 0.6, "C187 Master x " + r.x + ": red is on the form (" + r.redP1 + " vs " + p(n.redP1).toFixed(1) + ")");
+    assert.ok(r.greenP1 - p(n.greenP1) > (r.x >= 0.09 ? 3 : 1.2), "C187 Master x " + r.x + ": green reads " + r.greenP1 + " where the form says " + p(n.greenP1).toFixed(1));
   }
   assert.equal(rows[rows.length - 1].floorGreen, 0, "green never crushes under Master on C187, even with the bottom point above its p1");
 });

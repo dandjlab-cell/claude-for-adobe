@@ -22,6 +22,7 @@
 // that order. Where a different order is wanted the answer is a second stacked Lumetri instance, not a
 // different write order; `pipeline()` takes a list of stages for exactly that.
 "use strict";
+const CURVES = require("./curves.cjs");
 const { measure } = require("./scopes.cjs");
 
 const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
@@ -183,11 +184,14 @@ const OPS = {
   // Without this the guard was DEAD CODE in production. `levelsFor` sets anchor = clamp(p50/100, 0.3, 0.6)
   // and caps blackIn at 0.25, so anchor > blackIn + 0.05 holds for every clip that gets a black point,
   // which on this footage is all of them - and the caller bailed out on exactly that condition.
+  // 2026-09-18 21:42: the anchored curve is a NATURAL CUBIC SPLINE through the written points, not the
+  // chord (`curveToeAnchoredC202._perPixelSpline`, 0.12-0.15 IRE against the pixels). curves.cjs owns the
+  // form (levelsMap); this is the same map on codes. Exact for a channel curve and for Master's red and blue;
+  // Master's GREEN is not a 1-D map (`curveToe._modelCORRECTION`) and is not modelled - the pass should
+  // write the black point as three channel curves (RGB), which are.
   masterToeAnchored: (x, anchor) => {
-    const X = to255(100 * x), A = to255(100 * anchor);
-    // Too close to pin, which is predictLevels' own condition: it degenerates to the plain toe.
-    if (!(A > X + to255(5))) return (v) => (v - X) / (1 - x);
-    return (v) => (v >= A ? v : Math.max(0, (v - X) * A / (A - X)));
+    const map = CURVES.levelsMap(x, 1, anchor);
+    return (v) => to255(map(toIRE(v)));
   },
   channelToe: (x, channel) => (v, ch) => (ch === channel ? (v - to255(100 * x)) / (1 - x) : v),
   channelLift: (y, channel) => (v, ch) => (ch === channel ? to255(100 * y) + v * (1 - y) : v),
