@@ -108,20 +108,21 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Measure the curve→wheel interaction.** The pad is cleared (hues 211/225 within 0.016 per unit sat of the
-   mirrored table) and the wheel's own form is measured on a third frame (`shadowsWheelLumaC202`: like C220,
-   moves a little *more* than the pooled bump, not refitted). The live residuals (C187 +1.5, C227 +1.6) have
-   the OPPOSITE sign and both sit on chains with an anchored Master curve under the wheel — every sweep on
-   file is on a bare clip. `curve_sweep` now takes `masterBlack` (+ `anchor`) for a wheel-luma sweep under
-   the grade's own curve; the 0.5 row reads the curve alone. **Unverified live.** Owner, on a fresh copy:
+1. **The anchored Master curve is the residual — measure its corner.** The interaction is measured
+   (`shadowsWheelLumaUnderCurveC202`, 20:42): curve-then-wheel predicts within 0.9 IRE, the other order
+   misses by 1.5–2.7, so the order is proven and the wheel composes cleanly. The curve alone (0.09 anchored
+   at 0.55) reads 1.2 over the straight-line form on luma p1, 1.9 on green p1, largest nearest the bottom
+   point — the sign and size of C187's live +1.5. `curveToe._anchored`'s 0.24 was at X 0.02/0.05 on C220.
+   Owner, on a fresh copy:
 
    ```
-   curve_sweep "Shadows luma" on A056_05072128_C202.braw at 23.94s with masterBlack 0.09 and anchor 0.55, default positions. Return the raw tool output, no summary. Confirm the first line says UNDER a Master curve black 0.09.
+   curve_sweep Master on A056_05072128_C202.braw at 23.94s, anchor 0.55, points 0, 0.02, 0.05, 0.09, 0.12, 0.15. Return the raw tool output, no summary.
    ```
 
-   Then compare each row to OPS.masterToeAnchored(0.09, 0.55) followed by OPS.shadowsWheelLuma(x) on the 0.5
-   row's levels; a uniform positive residual that grows with the excursion is the interaction, and the live
-   1.5 should fall out of it at x 0.30.
+   Score each row against OPS.masterToeAnchored(x, 0.55) on the 0 row's levels. If the miss grows with the
+   gap between the level and the bottom point in a fixed shape, fit the spline (predictLevels' anchored branch
+   in curves.cjs and masterToeAnchored in forward.cjs are one form, two places — change both). If it is flat,
+   it is the frame, record and move on.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame

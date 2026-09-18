@@ -162,6 +162,15 @@ had an anchored Master curve (0.09 / 0.02) under the wheel, where every sweep on
 The open question is therefore Group 4's curve→wheel interaction. `curve_sweep` gained `masterBlack` (with
 `anchor`) to sweep the wheel under the grade's own curve; unverified live.
 
+**Interaction measured (20:42, `shadowsWheelLumaUnderCurveC202`, the first of Group 4's six).** Curve then
+wheel predicts every readable row within 0.9 IRE (22 of 27 within 0.5); wheel then curve misses by 1.5–2.7.
+**Order proven, no interaction term beyond composition.** What the sweep exposed instead is the **curve**: the
+0.5 row (anchored curve alone, 0.09 @ 0.55) reads 1.2 over the straight-line form on luma p1 and 1.9 on
+green p1, largest nearest the bottom point — the same sign and size as C187's live +1.5 and the three
+"darkest pixels do not respond to a levels move" lines. `curveToe._anchored`'s 0.24 was at X 0.02/0.05 on
+C220. Next: Master sweep anchored at 0.55 on C202 at 0.02 / 0.05 / 0.09 / 0.12 / 0.15 — decides whether
+Premiere's spline rounds the corner (a form change) or the frame differs.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
