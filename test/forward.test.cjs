@@ -163,6 +163,26 @@ test("the forward guard refuses a move that would clip, and stays out of the way
         "once an unmodelled knob has moved, the guard must stand down rather than judge on a stale frame");
     }
   }
+  // The anchored Master bottom point. Without this form the guard was dead code: levelsFor sets the anchor
+  // to at least 0.30 and caps blackIn at 0.25, so `anchor > blackIn + 0.05` is true for every clip that gets
+  // a black point, and the caller bailed on exactly that. The form is measured (`curveToe._anchored`), and
+  // it is the same map as predictLevels' anchored branch - asserted here so the two cannot drift apart.
+  {
+    const { apply: ap } = require("../src/forward.cjs");
+    const { predictLevels } = require("../src/curves.cjs");
+    const x = 0.12, A = 0.45;
+    const rgb = Buffer.from([0, 0, 0, 20, 20, 20, 60, 60, 60, 115, 115, 115, 200, 200, 200, 255, 255, 255]);
+    const got = ap(rgb, "masterToeAnchored", x, A);
+    // Above the anchor, untouched. 200 and 255 are both above 0.45*255 = 114.75.
+    assert.equal(got[12], 200, "above the anchor the curve is the identity");
+    assert.equal(got[15], 255, "and the top is not pulled down");
+    // Below it, the straight line from (x,0) to (A,A) - checked against curves.cjs on the same numbers.
+    for (const v of [20, 60]) {
+      const mine = ap(Buffer.from([v, v, v]), "masterToeAnchored", x, A)[0] / 255 * 100;
+      const theirs = predictLevels({ luma: { p50: v / 255 * 100 } }, x, 1, A).luma.p50;
+      assert.ok(Math.abs(mine - theirs) < 0.4, "the two anchored forms agree at " + v + ": " + mine + " vs " + theirs);
+    }
+  }
   // A frame with headroom: the guard must not interfere at all.
   const safe = frame(190, 0);
   const a = await run(safe, false), b = await run(safe, true);

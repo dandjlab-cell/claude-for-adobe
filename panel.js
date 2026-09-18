@@ -1826,16 +1826,18 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
     // The pixels the sliders will actually act on: this clip's retained sample with the balance already
     // written onto it, so planShot's forward guard judges each candidate on the right picture. Only the
-    // moves whose form is MEASURED go on - the white balance and the channel bottom points, which are bare
-    // two-point curves and match `channelToe._model` exactly. Anything else returns null rather than an
+    // moves whose form is MEASURED go on - the white balance, the channel bottom points (bare two-point
+    // curves, matching `channelToe._model` exactly) and the Master bottom point in either its plain or its
+    // ANCHORED form (`curveToe._anchored`, predicted to 0.24 IRE). Anything else returns null rather than an
     // approximation: a guard fed a picture the frame is not in would refuse safe moves and pass unsafe ones,
-    // which is worse than no guard. So no pixels when the wheels moved (a pad and the Shadows luma have no
-    // measured pixel form) or when the Master bottom point is ANCHORED (levels() then writes a 3- or
-    // 4-point curve, and only its unanchored two-point case is the measured line).
+    // which is worse than no guard. So still no pixels when the wheels moved - a pad and the Shadows wheel
+    // luma have no measured pixel form, and the luma's magnitude does not even transfer between frames.
+    //
+    // The anchored case used to return null too, and that made the guard DEAD CODE: `levelsFor` sets the
+    // anchor to at least 0.30 and caps blackIn at 0.25, so `anchor > blackIn + 0.05` holds for every clip
+    // that gets a black point - which on this footage is all of them.
     const guardPixelsFor = () => {
       if (!pixels || padMoves.length || lift) return null;
-      const anchored = lev && lev.anchor !== null && lev.anchor > lev.blackIn + 0.05 && lev.anchor < 0.95;
-      if (anchored) return null;
       const ops = [];
       if (temp && temp.value !== tempFrom) ops.push(["temperature", temp.value]);
       if (temp && temp.tint !== null && temp.tint !== tintFrom) ops.push(["tint", temp.tint]);
@@ -1844,7 +1846,12 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
         if (mv && mv.toe > 0.002) ops.push(["channelToe", mv.toe, ch]);
         else if (mv && mv.lift > 0.002) ops.push(["channelLift", mv.lift, ch]);
       }
-      if (lev && lev.blackIn > 0.002) ops.push(["masterToe", lev.blackIn]);
+      // The same condition levels() itself uses to decide whether it writes an anchored curve, so the
+      // replay matches what was actually written rather than a curve of its own.
+      if (lev && lev.blackIn > 0.002) {
+        const anchored = lev.anchor !== null && lev.anchor > lev.blackIn + 0.05 && lev.anchor < 0.95;
+        ops.push(anchored ? ["masterToeAnchored", lev.blackIn, lev.anchor] : ["masterToe", lev.blackIn]);
+      }
       try { let b = pixels; for (const [op, a, extra] of ops) b = applyRgb(b, op, a, extra); return b; }
       catch (_) { return null; }
     };

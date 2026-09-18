@@ -84,6 +84,25 @@ const OPS = {
   // The Master curve's bottom point, and one channel's. Both are the same measured line
   // (`curveToe._model`, `channelToe._model`): out = (v - 100x) / (1 - x).
   masterToe: (x) => (v) => (v - to255(100 * x)) / (1 - x),
+  // The Master bottom point WITH the anchor the pass actually writes. levels() emits
+  // (x,0) -> (anchor,anchor) -> (0.8,0.8) -> (1,1), and the last three are collinear on the diagonal, so
+  // above the anchor the curve is the identity and below it the straight line from (x,0) to (anchor,anchor).
+  //
+  // MEASURED, not assumed. `curveToe._anchored` swept the four-point spline the grade writes against the
+  // bare two-point curve and got the same black end - luma p1 8.2 / 6.7 / 4.3 / 0.4 / 0 / 0 against
+  // 8.2 / 6.7 / 3.9 / 0.4 / 0 / 0 - with this form predicting it to within 0.24 IRE. The anchor changes the
+  // midtones, not the black point. This is the same map as predictLevels' anchored branch (curves.cjs),
+  // deliberately: one form, two places, so they cannot drift apart silently.
+  //
+  // Without this the guard was DEAD CODE in production. `levelsFor` sets anchor = clamp(p50/100, 0.3, 0.6)
+  // and caps blackIn at 0.25, so anchor > blackIn + 0.05 holds for every clip that gets a black point,
+  // which on this footage is all of them - and the caller bailed out on exactly that condition.
+  masterToeAnchored: (x, anchor) => {
+    const X = to255(100 * x), A = to255(100 * anchor);
+    // Too close to pin, which is predictLevels' own condition: it degenerates to the plain toe.
+    if (!(A > X + to255(5))) return (v) => (v - X) / (1 - x);
+    return (v) => (v >= A ? v : Math.max(0, (v - X) * A / (A - X)));
+  },
   channelToe: (x, channel) => (v, ch) => (ch === channel ? (v - to255(100 * x)) / (1 - x) : v),
   channelLift: (y, channel) => (v, ch) => (ch === channel ? to255(100 * y) + v * (1 - y) : v),
 };
@@ -108,7 +127,7 @@ function apply(rgb, op, amount, extra) {
 // A stage is one Lumetri instance: operations applied in Premiere's own section order. A list of stages
 // is a STACK of instances, which is how an arbitrary order is reached - Lumetri's internal order is fixed
 // per instance, not overall.
-const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "channelToe", "channelLift"];
+const SECTION_ORDER = ["temperature", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", "masterToe", "masterToeAnchored", "channelToe", "channelLift"];
 function pipeline(rgb, stages) {
   let buf = rgb;
   for (const stage of stages) {
