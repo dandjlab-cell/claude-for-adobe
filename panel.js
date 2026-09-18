@@ -21,6 +21,7 @@ const { steer: steerGrade, planShot: planGradeShot, PARAMS: GRADE_PARAMS, STATIS
 const { solveKnob: gradeSolveKnob, predict: gradePredict } = require(path.join(extensionRoot, "src", "grade_model.cjs"));
 const { goalsFor: gradeGoalsFor, padsFor: gradePadsFor, bottomsFor: gradeBottomsFor, shadowsLiftFor: gradeShadowsLiftFor, temperatureFor: gradeTemperatureFor, levelsFor: gradeLevelsFor, satCurveFor: gradeSatCurveFor, skinFor: gradeSkinFor, looksLikeLog: gradeLooksLikeLog, SKIN_HUE: GRADE_SKIN_HUE, SKIN_SAT: GRADE_SKIN_SAT, SKIN_HUE_TARGET: GRADE_SKIN_HUE_TARGET, skinTargetFor: gradeSkinTargetFor, SKIN_SAT_TARGET: GRADE_SKIN_SAT_TARGET, HSL_PAD: GRADE_HSL_PAD, HSL_SAT_RANGE: GRADE_HSL_SAT_RANGE, verdict: gradeVerdict, ACCEPT: GRADE_ACCEPT, LEVELS_CAP: GRADE_LEVELS_CAP, FLOOR_MIN: GRADE_FLOOR_MIN } = require(path.join(extensionRoot, "src", "grade_rules.cjs"));
 const { parse: parseCurves, format: formatCurves, isIdentity: curvesIdentity, levels: curveLevels, parseSingle: parseSatCurve, formatSingle: formatSatCurve, hueBump, satRolloff: curveSatRolloff } = require(path.join(extensionRoot, "src", "curves.cjs"));
+const { sample: sampleRgb, apply: applyRgb } = require(path.join(extensionRoot, "src", "forward.cjs"));
 const { skinKeyFrom, refineKey: skinRefineKey, keyedPixels, keyCoverage: skinKeyCoverage, spills: skinSpills, REFINE: SKIN_REFINE, EMPTY_KEY: EMPTY_HSL_KEY } = require(path.join(extensionRoot, "src", "skin.cjs"));
 const { parse: parseWheels, format: formatWheels, castAt: wheelCastAt, nudgeLuma: wheelNudgeLuma, nudgePad: wheelNudgePad, predictPads: wheelPredictPads } = require(path.join(extensionRoot, "src", "wheels.cjs"));
 const { frameRgb: sourceFrameRgb, sourceSeconds: toSourceSeconds } = require(path.join(extensionRoot, "src", "source_frame.cjs"));
@@ -1120,8 +1121,12 @@ async function prereadSources(list, track, region, snap, visibleFor, keyOf, midO
         const got = sourceFrameAt(midOf(c), track, snap, visibleFor(c));
         const png = region === "frame" ? null : writeFrameImage(got.f);
         const rgb = png ? got.f.rgb : null; // measured through directly, not decoded back out of the file
+        // A 120k-pixel sample (~360 KB) kept past the frame, for the forward guard in planShot: it judges
+        // each candidate on THIS frame's pixels instead of another frame's percentile table. Kept whatever
+        // the region, since a "frame" read has no PNG and so no `rgb` above.
+        const pixels = got.f && got.f.rgb ? sampleRgb(got.f.rgb) : null;
         got.f = null; // one clip's pixels, not a batch of them
-        staged.push({ c, got, png, rgb, ms: Date.now() - t0 });
+        staged.push({ c, got, png, rgb, pixels, ms: Date.now() - t0 });
       } catch (_) { /* a clip whose file cannot be decoded falls back to a Premiere read in the loop */ }
     }
     const pngs = staged.filter((s) => s.png).map((s) => s.png);
@@ -1131,11 +1136,11 @@ async function prereadSources(list, track, region, snap, visibleFor, keyOf, midO
     let i = 0;
     for (const s of staged) {
       try {
-        if (!s.png) { out[keyOf(s.c)] = { m: s.got.whole, ms: s.ms }; continue; }
+        if (!s.png) { out[keyOf(s.c)] = { m: s.got.whole, pixels: s.pixels, ms: s.ms }; continue; }
         const vision = seen[i++] || null;
         const m = measureRegion(s.png, region, null, vision, { rgb: s.rgb, frame: s.got.whole });
         s.rgb = null;
-        out[keyOf(s.c)] = { m: Object.assign(m, { source: true, clip: s.got.c.name, sourceSeconds: s.got.at, decoded: s.got.whole.decoded }), ms: s.ms + share };
+        out[keyOf(s.c)] = { m: Object.assign(m, { source: true, clip: s.got.c.name, sourceSeconds: s.got.at, decoded: s.got.whole.decoded }), pixels: s.pixels, ms: s.ms + share };
       } catch (_) { /* this clip reads from Premiere in the loop instead */ }
       finally { if (s.png) { try { fs.rmSync(s.png, { force: true }); } catch (_) {} } }
     }
@@ -1609,10 +1614,16 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     const graded = tempFrom !== 0 || tintFrom !== 0 || !!(currentWheels && Object.values(currentWheels).some((w) => w.sat > 0.005 || Math.abs(w.luma - 0.5) > 0.005)) || !!(currentCurves && !curvesIdentity(currentCurves)) || !!(currentSat && currentSat.length) || hslKeyed;
 
     let m, readFrom = read;
+    // The retained sample of this clip's own frame, for the forward guard. Only from the preread, and only
+    // on an ungraded clip: on a clip that already carries a balance the SOURCE pixels no longer describe
+    // what the sliders will act on, and guarding against the wrong picture is worse than not guarding.
+    let pixels = null;
     // auto: decode the clip's own file (parity with Premiere's render verified on BRAW, 2026-09-15:
     // parade identical, median within 0.4) and fall back to a Premiere render only when that fails.
     try {
-      if (preread[keyOf(c)] && !graded) { m = preread[keyOf(c)].m; readMs += preread[keyOf(c)].ms; readFrom = "source"; }
+      // The sample moves out of the map as it is taken: a clip is graded once, and 360 KB a clip held for a
+      // 200-clip sequence is the same 72 MB the batching above exists to avoid.
+      if (preread[keyOf(c)] && !graded) { m = preread[keyOf(c)].m; pixels = preread[keyOf(c)].pixels || null; preread[keyOf(c)].pixels = null; readMs += preread[keyOf(c)].ms; readFrom = "source"; }
       else if ((read === "source" || read === "auto") && !graded) {
         try { m = await timed(() => measureSourceAt(at, track, region, snap, visible), "read"); readFrom = "source"; }
         catch (error) { if (read === "source") throw error; m = await timed(() => measureFrameAt(at, { region, keepPlayhead: true }), "render"); renders++; readFrom = "premiere"; }
@@ -1813,6 +1824,30 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     // for the lift and the two cannot collide.
     let state = afterLevels, applied = Object.assign({}, currentWheels || {}, pads.wheels, lift ? { shadows: lift.wheels.shadows } : {}), corrected = false, hsl = null, shadowsLifted = false;
     const confirmMeasure = confirm ? () => timed(() => measureFrameAt(at, { region, reuse, keepPlayhead: true }), "render") : async () => afterLevels;
+    // The pixels the sliders will actually act on: this clip's retained sample with the balance already
+    // written onto it, so planShot's forward guard judges each candidate on the right picture. Only the
+    // moves whose form is MEASURED go on - the white balance and the channel bottom points, which are bare
+    // two-point curves and match `channelToe._model` exactly. Anything else returns null rather than an
+    // approximation: a guard fed a picture the frame is not in would refuse safe moves and pass unsafe ones,
+    // which is worse than no guard. So no pixels when the wheels moved (a pad and the Shadows luma have no
+    // measured pixel form) or when the Master bottom point is ANCHORED (levels() then writes a 3- or
+    // 4-point curve, and only its unanchored two-point case is the measured line).
+    const guardPixelsFor = () => {
+      if (!pixels || padMoves.length || lift) return null;
+      const anchored = lev && lev.anchor !== null && lev.anchor > lev.blackIn + 0.05 && lev.anchor < 0.95;
+      if (anchored) return null;
+      const ops = [];
+      if (temp && temp.value !== tempFrom) ops.push(["temperature", temp.value]);
+      if (temp && temp.tint !== null && temp.tint !== tintFrom) ops.push(["tint", temp.tint]);
+      for (const ch of ["red", "green", "blue"]) {
+        const mv = bot && bot.toes ? bot.toes[ch] : null;
+        if (mv && mv.toe > 0.002) ops.push(["channelToe", mv.toe, ch]);
+        else if (mv && mv.lift > 0.002) ops.push(["channelLift", mv.lift, ch]);
+      }
+      if (lev && lev.blackIn > 0.002) ops.push(["masterToe", lev.blackIn]);
+      try { let b = pixels; for (const [op, a, extra] of ops) b = applyRgb(b, op, a, extra); return b; }
+      catch (_) { return null; }
+    };
     try {
       if (temp) { if (temp.value !== tempFrom) await tw.set(temp.value); if (temp.tint !== null) await tiw.set(temp.tint); }
       if (padMoves.length || lift) await ww.write(applied);
@@ -1822,7 +1857,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
       if (goals.length) {
         const writers = {};
         for (const g of goals) writers[g.param] = lumetriWriter(at, track, GRADE_PARAMS[g.param].lumetri, region);
-        const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline });
+        const r = await planGradeShot({ set: (value, param) => writers[param].set(value), current: (param) => writers[param].read(), measure: confirmMeasure, goals, tolerance, measured: afterLevels, baseline, pixels: guardPixelsFor() });
         renders += confirm ? r.renders : 0; state = r.after; corrected = r.backedOff;
         if (r.expected) bpChain.push(["sliders", ((r.expected.frame || r.expected).luma || {}).p1]);
         shadowsLifted = r.plan.some((p) => p.param === "shadows" && p.value !== undefined);

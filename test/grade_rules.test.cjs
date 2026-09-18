@@ -183,7 +183,10 @@ test("grade_sequence is wired, follows the rules, reuses the read's region on th
   assert.match(seqTool, /undone\.push\("half the white balance"\)/, "a clip rolls the white balance back to half its move, both axes, like the sliders");
   assert.match(seqTool, /if \(tint2 === null && !tintWrote && Math\.abs\(c1\[1\]\) > 1\.5\) \{/, "the correction can introduce Tint for a green residual that only appeared after the temperature move");
   assert.match(seqTool, /const tT = tempWrote \? scale1\(c0\[0\], c1\[0\]\) : null;/, "temperature is rescaled from blue-red alone, and only if the last write moved it");
-  assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*baseline \}\)/.test(seqTool), "the damage guard is the source's own, through every write");
+  assert.ok(seqTool.indexOf("baseline = gradeDamage(m)") > 0 && /planGradeShot\(\{[^\n]*\bbaseline\b[^\n]*\}\)/.test(seqTool), "the damage guard is the source's own, through every write");
+  // The forward guard is only worth anything if a caller supplies the pixels; it shipped inert once.
+  assert.match(seqTool, /planGradeShot\(\{[^\n]*pixels: guardPixelsFor\(\)/, "planShot is given this clip's own pixels, not only another frame's percentile table");
+  assert.match(seqTool, /if \(!pixels \|\| padMoves\.length \|\| lift\) return null;/, "no pixels when a move with no measured pixel form was written: a guard on the wrong picture is worse than none");
   assert.match(seqTool, /measureSourceAt\(at, track, region, snap, visible\)/, "one snapshot per run, and every source read cropped to what the timeline shows");
   // Motion scale and position decide which source pixels are on screen: a clip past 100% hides some.
   assert.match(seqTool, /const visible = visibleFor\(c\);/, "each clip's visible window is computed once");
