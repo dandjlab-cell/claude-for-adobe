@@ -71,6 +71,37 @@ statistic, hold one out, and mind the degenerate-pivot trap.
 
 Also reproduced: #5b (Whites at 99.61 on C231 predicted 82.4, read 90.2).
 
+## Group 1d — third live run of the chooser, with Shadows and Highlights on pixels (2026-09-18 16:31)
+
+Build de8a502, fresh copy, 18 clips, 38 renders. **Balanced 3/18** (from 1). **Every clip whose black-point
+chain is pixels at every step reads MODEL OFF BY ≤ 1.2 or none — 11 of 14 solved clips.** Highlights is
+pixel-chosen wherever it runs (C223, C233, C231) and lands within 0.4 of prediction. The split is now:
+
+| chain | MODEL OFF BY |
+|---|---|
+| every step pixels (C220, C222, C223, C233, C231, C193, C198, C209, C202, C200) | none ×8, 1.2, 1.2 |
+| a **Shadows-wheel** step in the chain (C228, C229, C187) | **7.28**, 1.56, 2.9 |
+
+So the last hole has a single name: **the Shadows wheel**. Its luma (the Lift half, `shadowsLiftFor`) and its
+pad have no pixel form, so once either is written the pixel context is dropped and every slider after it
+falls to the table — that is the whole of C228's 7.28 (`shadows lift 0.435` → `sliders table`), unchanged
+across three runs. Queue #11 is no longer "why doesn't the magnitude transfer"; it is "find the wheel
+luma's pixel form the way Shadows' was found" — overlay the two existing `shadowsWheelLuma` sweeps by input
+level and see whether they trace one curve. Offline, no render.
+
+Two costs of the run, recorded honestly:
+
+- **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic,
+  and the frame sample carries no region pixels — so the chooser refuses rather than guess, and prints
+  `shadows [pixels] skipped (held: frame sample has no region pixels for brightness)` on C220, C222, C200.
+  Correct by Astra's rule; a behaviour regression against the table, which used to lift them (C222 now
+  ends "subject luma 32.5 dark where it matters"). Fix is mechanical: the preread has the whole frame and
+  Vision's subject box, so retain a second sample cropped to the box and steer region goals on it.
+- **Runtime 262 s for 17 clips against 133 s.** The `rest` column (chooser arithmetic) is 9–18 s a clip,
+  not the ~1.5 s estimated: the curve amounts enumerate every writable value (51 × 3 channels + Master)
+  and each candidate rebuilds from source. Acceptable for a first live version; a coarse-then-refine pass
+  on the curves would recover most of it.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
