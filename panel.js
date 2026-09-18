@@ -1607,7 +1607,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     clips.push(...group);
   }
   const lines = [], t0 = Date.now();
-  let renders = 0, balanced = 0, touched = 0, stopped = false, logSkipped = 0;
+  let renders = 0, balanced = 0, touched = 0, stopped = false, logSkipped = 0, preGraded = 0;
   const logConverted = {}; // mediaPath -> the conversion chosen (or refused) for that file this run
   // The source decode is only a read of the timeline while it decodes the way Premiere does. On BRAW
   // that is the clip's own settings (Decode Using: Clip, the embedded LUT applied) - and the LUT is a
@@ -1689,6 +1689,7 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
     try {
       // The sample moves out of the map as it is taken: a clip is graded once, and 360 KB a clip held for a
       // 200-clip sequence is the same 72 MB the batching above exists to avoid.
+      if (graded && !ref) preGraded++; // counted for the header: on these the source sample is withheld and every choice is the table's
       if (preread[keyOf(c)] && !graded) { m = preread[keyOf(c)].m; pixels = preread[keyOf(c)].pixels || null; preread[keyOf(c)].pixels = null; readMs += preread[keyOf(c)].ms; readFrom = "source"; }
       else if ((read === "source" || read === "auto") && !graded) {
         try { m = await timed(() => measureSourceAt(at, track, region, snap, visible), "read"); readFrom = "source"; }
@@ -2201,7 +2202,11 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   // The build goes in the RESULT, not only the log. Twice on 2026-09-18 the panel's own session could not
   // say which code had run - no tool result carried the sha and it rightly refused to read the source to
   // infer it - so a measurement stalled on a human reading a log line. This is the line they read.
-  lines.unshift("[" + buildTag() + "] Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone: the row says what it is and asks which conversion to use" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
+  lines.unshift("[" + buildTag() + "] Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone: the row says what it is and asks which conversion to use" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "")
+    // 2026-09-18 19:24: three runs in one day were read as tests of the pixel chooser when the working copy
+    // was already graded, so the source sample was withheld and every choice was the table's - and each
+    // took reading all eighteen rows to notice. Said once, in the header, where it cannot be missed.
+    + (preGraded ? " — " + preGraded + " of " + clips.length + " clips ALREADY CARRIED A GRADE: the source sample is withheld on those and every choice is the table's, so this run does not measure the pixel chooser there. For a clean measurement delete the working copy first." : "") + "."
     + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, color space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   const convNames = Object.entries(logConverted).filter(([, v]) => v && v.name).map(([k, v]) => path.basename(k) + " → " + v.name);
   if (convNames.length) lines.push("Log conversions were set as the clips' color-space interpretation (Modify > Color, on the project item): " + convNames.join("; ") + ". This is a fix to how the footage is read, not part of the grade: every cut of the file sees it, in every sequence, and it stays when the copy is discarded. To change it: Project panel, right-click the clip, Modify, Color.");
