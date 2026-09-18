@@ -108,21 +108,23 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **The anchored Master curve is the residual — measure its corner.** The interaction is measured
-   (`shadowsWheelLumaUnderCurveC202`, 20:42): curve-then-wheel predicts within 0.9 IRE, the other order
-   misses by 1.5–2.7, so the order is proven and the wheel composes cleanly. The curve alone (0.09 anchored
-   at 0.55) reads 1.2 over the straight-line form on luma p1, 1.9 on green p1, largest nearest the bottom
-   point — the sign and size of C187's live +1.5. `curveToe._anchored`'s 0.24 was at X 0.02/0.05 on C220.
-   Owner, on a fresh copy:
+1. **The Master curve does not move green where it moves red and blue — place the contradiction.**
+   `curveToeAnchoredC202` (21:11): red and blue p1 follow the anchored line within 0.3 at every bottom point;
+   green reads +1.0 / +1.9 / +2.9 over it at 0.05 / 0.09 / 0.12 and does not crush at 0.15 where the line
+   says it must. Not a corner effect (the miss is by channel, not by gap). It is the size and sign of every
+   remaining live MODEL OFF BY. Three independent sweeps decide where it lives; owner, fresh copy, all three:
 
    ```
-   curve_sweep Master on A056_05072128_C202.braw at 23.94s, anchor 0.55, points 0, 0.02, 0.05, 0.09, 0.12, 0.15. Return the raw tool output, no summary.
+   Three calibration sweeps on A056_05072128_C202.braw at 23.94s, one after another, then one on A056_05072025_C187.braw at 22.02s. Return each tool's raw output, no summary.
+   1. curve_sweep Green, points 0, 0.05, 0.09, 0.12, 0.15
+   2. curve_sweep Red, points 0, 0.05, 0.09, 0.12, 0.15
+   3. curve_sweep Master, anchor 0.55, points 0, 0.05, 0.09, 0.12, 0.15, 0.2, on the C187 clip at 22.02s
    ```
 
-   Score each row against OPS.masterToeAnchored(x, 0.55) on the 0 row's levels. If the miss grows with the
-   gap between the level and the bottom point in a fixed shape, fit the spline (predictLevels' anchored branch
-   in curves.cjs and masterToeAnchored in forward.cjs are one form, two places — change both). If it is flat,
-   it is the frame, record and move on.
+   Score each against `(in − 100x)/(1 − x)` (channel) or `OPS.masterToeAnchored` (Master) on its 0 row. If
+   Green alone also reads high, the green channel's response is the thing to model (all three curve forms in
+   `forward.cjs`/`curves.cjs`); if Green alone is on the line but Master's green is not, Master is not three
+   identical channel curves; if C187's green is on the line, it is the frame.
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame

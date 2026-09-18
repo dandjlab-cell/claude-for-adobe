@@ -171,6 +171,14 @@ green p1, largest nearest the bottom point — the same sign and size as C187's 
 C220. Next: Master sweep anchored at 0.55 on C202 at 0.02 / 0.05 / 0.09 / 0.12 / 0.15 — decides whether
 Premiere's spline rounds the corner (a form change) or the frame differs.
 
+**Anchored Master swept (21:11, `curveToeAnchoredC202`).** Not a rounded corner. **Red and blue follow the
+line within 0.3 at every bottom point; green does not** (+1.0 / +1.9 / +2.9 at 0.05 / 0.09 / 0.12, and at
+0.15 green reads 2.4 where the line says crushed, 0.28% on the floor). A monotone per-channel map cannot do
+that, so either green's channel response differs, Master is not three identical curves, or it is this frame.
+The 0.09 row repeated the 20:42 row digit for digit. This is the size and sign of every remaining live
+MODEL OFF BY. Three sweeps, independent, placed in Group 0/2: Green alone and Red alone on C202 (same
+points), Master anchored on C187 @22.02s.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
