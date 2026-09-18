@@ -2,588 +2,283 @@
 
 **Repo:** https://github.com/dandjlab-cell/claude-for-adobe.git
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
-**Date:** 2026-09-18 (overnight session, 17:00–00:30)
+**Date:** 2026-09-18 (day session, 08:00–19:40, continued from the overnight handoff)
 **Branch:** `main`
-**Last commit:** `0a2b533` — wire the pixel model in as a guard
+**Last commit:** `7eac93c` — the header says how many clips already carried a grade
 **Role:** BUILDER
+
+---
+
+## What this project is
+
+A public, MIT-licensed Premiere Pro CEP panel that runs the editor's own Claude Code (or Codex) inside
+Premiere. Deterministic panel tools do the work; the model routes and relays. The active work is the colour
+pass — `grade_sequence` — which grades every clip on a track by rule from the scopes, with no model choosing
+numbers. **The rule, restated by the owner all session: measure, don't reason; find the FORM of each control,
+not a lookup table per frame; only ship what we know how it works.**
 
 ## Current state — verified now, not remembered
 
 ```
+$ git log -1 --oneline
+7eac93c the header says how many clips already carried a grade, so a stale working copy cannot pass as a chooser test
+$ git status --porcelain
+ M docs/handoff.md        # this file only, being written; committed as the handoff commit
 $ node --test test/*.test.cjs
-ℹ tests 379
-ℹ pass 378
+ℹ tests 413
+ℹ pass 412
 ℹ fail 0
-ℹ skipped 1          (whisper.test.cjs fetches schemas.adobe.com)
-
-$ git status --porcelain     (clean apart from this file, which is being written)
-$ git log --oneline e1c432a..HEAD | wc -l        55 commits this session
-$ git log --oneline origin/main..HEAD | wc -l    54 UNPUSHED
-$ gh release list --limit 1                      v0.1.87 is still Latest
+ℹ skipped 1        # whisper.test.cjs skips when schemas.adobe.com is unreachable; 413/413 when it is
+$ node --test test/privacy.test.cjs
+ℹ pass 4
+ℹ fail 0
+$ git log --oneline origin/main..HEAD | wc -l
+26                 # unpushed. Nothing released since 0.1.87; the installed panel has none of this.
 ```
 
-**Nothing since 0.1.87 is pushed or released.** The installed panel has none of this; the dev panel has it
-after a reload. Pushing needs the owner's explicit go — it has not been given.
+**Pushing needs the owner's explicit go, each time** (CLAUDE.md). The pre-push hook runs the privacy scan on
+the tree and on every commit in the range; a `git filter-branch` was needed once today to strip home paths
+from an already-committed review file, so run `node --test test/privacy.test.cjs` before asking.
 
-> ### 🟥 READ `docs/findings-index.md` BEFORE MEASURING OR BUILDING ANYTHING
-> This session re-derived a three-day-old finding and rebuilt a component that had been built and cancelled
-> for a stated reason — both were recorded, neither was findable. The index is one line per established fact
-> with **what it forecloses**. `CLAUDE.md` (new, this session) leads with the same rule.
+## What was done — the chooser
 
----
+The single change that matters: **every value the pass writes is now chosen on the frame's own pixels, not
+read from a table of another frame's percentiles.**
 
-## What was done
+Until this morning, every number came from `solveKnob() → predict()` in `src/grade_model.cjs`, a statistic-
+space model that scales percentiles from a swept table. Two images with identical percentiles respond
+differently to the same control, so that cannot work; the live evidence was a per-clip `MODEL OFF BY` column
+(predicted black point vs the render) of 12.9 / 5.65 / 4.4 / 2.75 / 2.5 / 2.22 IRE against a 0.4 IRE noise
+floor. gpt-6-astra implemented the replacement from `docs/reviews/astra_chooser_brief.md` (with write access,
+`codex exec -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' --approve-for-me`); its report, completed by
+me after it hit its quota, is `docs/reviews/astra_chooser_report.md`.
 
-**The blue blacks are fixed, and the pass itself was the cause.** C229 @9.42s uncorrected reads paired
-blacks R 21.6 / G 13.3 / B 8.6 — *warm* by 13. The 0.1.87 pass answered with a Shadows wheel pad at 204°,
-ran it to its cap, spent both corrections on it and finished blue by 5.1 with red on the floor; its own
-verdict line said `blacks blue by 6.3 (Shadows wheel)`. A wheel cancels warm by *adding blue*. Replaced with
-`bottomsFor` — the colorist's black balance on the RGB curves, fed a new **paired** statistic. Measured
-result on the proof frame: `+5.1` → `−5.5`, nothing on the floor.
+`src/grade_pixels.cjs` is the chooser. For each control with a measured pixel form it tries up to 72
+candidate values on the clip's 120k-pixel sample (rebuilt from source in Lumetri's section order every
+time — never layered onto a baked buffer), measures each, and keeps the one whose statistic lands closest to
+target under a lexicographic objective (worst acceptance violation, sum, distance to the rule's frozen
+target, distortion; 0.4 IRE bins). Every prefix is checked with a persistent rail witness so a later lift
+cannot hide an earlier crush. Deterministic; ~9 ms per evaluation.
 
-**Eleven live sweep blocks** recorded in `src/lumetri_sweeps.json`, each with provenance and findings,
-including negative results. Nine controls now have a measured **form**; five were derived offline from data
-already on disk, with no renders.
+**Five live runs today measured it.** The split was clean every time: a clip whose black-point chain is
+`pixels` at every step reads `MODEL OFF BY` none or ≤ 1.2; a clip with any table step reads 1.4–7.28. So the
+work became: find a pixel form for every control the pass writes. As of `0780f24`, **every one has one**:
 
-**Four silent bugs fixed**, each corrupting decisions: the correction pass wrote the black point onto the
-clip's *original* curves (discarding the black balance every time); the correction had no floor guard;
-`contrast.p10/p90` held another clip's numbers with p10 *below* p1, feeding `predict()`; and the skin spill
-rule was never in force — `attenuation` was passed to a function declaring two parameters and dropped.
-Plus four `await`-ordering races where a slow reply overwrote a newer one.
+| control | form | source |
+|---|---|---|
+| Temperature, Tint | per-channel gains, linear in the slider | `whiteBalanceRule`, confirmed offline this morning |
+| Whites ≡ Exposure↓ | gain `2^(pts/100/2.4)` — **exact on a second frame** | `whitesC231` |
+| Contrast | gain about pivot 49.6 (approximate, 2.09) | `contrastRule` |
+| Blacks | toe, λ 23 | `blacksRule` |
+| **Shadows, Highlights** | **bumps over input level**, zero at both ends, peaking ~17 and ~75; amount exponent per direction | `shadowsHighlightsForm` — new today |
+| channel curve toe / lift | gain about **100** (a toe and a lift are one control, k>1 / k<1) | `channelToe`, corrected today |
+| Master curve, anchored | identity above the anchor, line below | `curveToe._anchored` |
+| **Shadows wheel luma** | the same bump family, linear in (0.5−x) | `shadowsWheelLumaForm` — new today, from the two sweeps already on file |
+| **Highlights wheel pad** | **per-channel GAIN about zero**, luma-preserving, linear in sat, hue table | `highlightsPad` — new today, 5 hues × 5 sats |
 
-**Two reviews** by Codex GPT-6 (`docs/reviews/`), the second acting on the stacking fact. Its central
-argument — model *images*, not scope readings — is the reason `src/forward.cjs` exists.
+Three of those overturned recorded beliefs, each by the same test — overlay two frames' (input level →
+delta) points on one axis and see if they trace one curve: the Shadows/Highlights sliders are bumps not
+gains; the wheel luma "does not transfer" was a key error (compared at p1, a different level on each frame);
+the "Highlights" pad is not a band at all — it scales the blacks by exactly the factor it scales the whites,
+which is the whole mechanism of the blue blacks of 2026-09-17.
 
-**One reverted change**, see Known Issues.
+## What was done — everything else, in commit order
 
----
+`git log --oneline f628129..7eac93c` is the list. The ones a next session must know:
 
+- `bf3d822` **the shot-match cache was keyed by track and region with no sequence** — one cache served every
+  working copy ever graded, so a fresh copy replayed a deleted copy's grades ("matched to <itself>").
+- `9f900e5` damage is counted **per sample against the source**, not as an aggregate share (maskable).
+- `74c0674` the correction pass **converges to the frozen target**, not neutral — `nudgePad` had no target
+  parameter and was draining the half-cast the coloured-bottom rule deliberately preserves (9.5 IRE error).
+- `e0e55a1` the privacy guard **knows what a credential looks like** (sk-, ghp_, z.ai forms).
+- `fba52bc` planShot chooses **pixel-form goals first**; a formless goal goes to the back.
+- `f29df22` the `grade_sequence` header opens `[dev <sha>]` / `[installed v…]` — the panel's own Claude
+  cannot see its build otherwise.
+- `7eac93c` the header counts clips that **already carried a grade** — see Known Issues #1.
+- `ab1b6a8` `curve_sweep` gained `"Highlights pad"` / `"Shadows pad"` modes (`hue` param, sat points).
+- `0264069` commutation of two pivot-gains is a closed form, `(kA−1)(kB−1)(PA−PB)`; `tools/commutation.cjs`.
 
-> ### ⚠️ EVERYTHING BELOW THIS LINE, DOWN TO "What's Next", IS THE 2026-09-17 RECORD AND IS SUPERSEDED WHERE IT CONFLICTS WITH THE BLOCK ABOVE.
-> Most of it is still accurate background. But it was written before the colour work and it contradicts the
-> current state in one place that matters: **the blue blacks are FIXED** (see the top block). The paragraph
-> below calling them "known-unfixed" is stale. The live state is the top block and "What's Next"; nothing
-> under "What Was Done (2026-09-17)" should be read as current.
+## What's in progress or blocked — read this before running anything
 
-## What this project is
+**The live verification of the pad form (`0780f24`) has not happened.** The 19:24 run was invalid: the
+`[AI]` working copy was not fresh, 14 of 18 clips read "already carries a balance", the source sample is
+withheld on a graded clip, and every choice on those fell to the table. The four clean clips were pixels at
+every step with the same residuals as before. `7eac93c` makes this unmissable — the header now says
+`N of 18 clips ALREADY CARRIED A GRADE` — but it, too, is unverified live.
 
-A public, MIT-licensed Adobe Premiere Pro CEP panel ("Claude for Premiere") that runs the user's own Claude Code or Codex inside Premiere. The editor selects clips or a folder, says what they want, and the agent inspects footage, transcribes, cuts silences and repeated takes, reframes, lays b-roll, makes captions, and **color-balances a sequence** — all through deterministic panel tools that print CHECK lines and work on a duplicated `<name> [AI]` copy of the sequence. Users install a zip; the panel self-updates from GitHub Releases.
-
-## What Was Done (2026-09-17)
-
-Thirty-nine commits, ten releases. Four threads:
-
-1. **Everything reached users for the first time since 7 September.** Everything built on 2026-09-15/16 existed only in the repo: the installed panel updates from *releases*, and nobody had cut one. `main` was 167 commits behind. Merged, deleted the branch, and released 0.1.78; main is now the only branch.
-2. **Speed: 147s → ~87s on an 18-clip timeline.** Three measured wins, all found by profiling rather than reasoning — see Decisions.
-3. **The color pass got four real fixes and two reverts** (log shadowing, self-refresh contention, skin corridor, the single-clip scope; the reverts are the RGB channel toes and the black-point floor guard).
-4. **The routing hole closed**: a **Color correct** button, and the rule that *all* color work goes through the one pass.
-
-## Current State
-
-**Works end to end, released, and run live today:**
-
-- **`grade_sequence`** — the deterministic balance over a track, or **one clip** via `seconds`. Reads each clip's own file, writes white balance / wheel pads / black point / whites / contrast / saturation roll-off / skin, confirms every move from Premiere's render. ~87s for 18 BRAW clips, 4–7 of them landing fully balanced.
-- **Color correct button** (Whole sequence · Selected clip) — calls the same pass with **no model in the loop**. This is the reliable path; the chat route depends on skill routing, which failed twice today.
-- **`ask_user`** — questions with clickable answers in the chat (full-width stacked rows, label + what it costs, label ≤ 32 chars). Used by the log-conversion question and available to the model generally.
-- **Log footage** — recognised from the picture; converted with the maker's own official LUT, fetched from their page. **Eight verified direct downloads**: Sony (S-Log3, S-Log2), Canon, Panasonic, ARRI, Fujifilm, DJI (D-Log, D-Log M). Nikon and Blackmagic are honestly page-only (installer / no standalone file). Nothing is bundled — Canon's licence forbids redistribution in plain words.
-- **Pre-push privacy guard** — now scans the *commits being pushed*, not just the tree.
-
-**Built but never exercised live:** the single-clip `seconds` path (the button's "Selected clip" was added at 15:11 and the 15:15 run used Whole sequence).
-
-**Known-unfixed, with evidence:** the blue blacks. See Known Issues. — **STALE: fixed overnight, see the top block.**
-
-## What's in progress or blocked
-
-Nothing is half-written. Two things are *deliberately* parked with the reason recorded in the code:
-
-- **`neutralBottoms` in `src/curves.cjs`** — per-channel RGB curve toes. Written, tested, **not wired**, with a comment above it and a test asserting nothing calls it. It shipped in 0.1.80 and was reverted in 0.1.81.
-- **The black-point floor guard** — shipped in 0.1.82, reverted in 0.1.86, with the full account written above the line it guarded and a test that fails if it is re-added without a sweep.
+The owner has been given the exact paste (below). Whether the panel was reloaded and the copy deleted is
+unknown at handoff time.
 
 ## What's Next (in order)
 
-> **Standing rule, applies to every item: restart Premiere before any timed run.** The 00:03 run took
-> 152.9 s against 86.6 s earlier for the same 18 clips — renders crept from ~0.8 s to ~5 s. Session state,
-> not the code.
+1. **Verify the pad form live.** Owner: delete `Prototype_TEST [AI]` in Premiere, reload the dev panel. Then
+   paste to the panel's chat exactly this:
 
+   ```
+   Run grade_sequence: all 18 clips on V1, confirm on, budget_seconds 600.
 
-1. **Pass the pixels to the guard.** `src/forward.cjs` is wired into `planShot` (`pixels` argument) and is
-   **inert until a caller supplies them** — nothing does yet. The grade loop already decodes each frame but
-   releases the buffer (`panel.js`, `PREREAD_BATCH`, `s.rgb = null`). Retain a 120k-pixel sample per clip
-   (`forward.sample(rgb)`, ~360 KB) and pass it through `planGradeShot({ …, pixels })`. *Done when* a row shows
-   `held by the pixels: …` on a clip that would have clipped, and the balanced count is **≥ 5/18** — 4/18 is
-   the baseline, so matching it proves nothing. **This is exempt from the sweep-first rule**: the forms it
-   applies are already measured (`src/lumetri_sweeps.json`), it can only ever *refuse* a move, and
-   `test/forward.test.cjs` covers both firing and staying out of the way.
+   Check the first line begins "[dev 7eac93c]". If not, stop and tell me.
 
-2. **Re-land the white-point lift on Exposure**, which was reverted tonight (Known Issues). It needs
-   Exposure's *upward* response to come from the form rather than the railed table — either measure
-   Lumetri's shoulder on an unrailed frame, or drive it through `forward.cjs`.
+   Then check whether that same first line contains "ALREADY CARRIED A GRADE". If it does, STOP — do not report the rows. Tell me the number it gives, and that the working copy was not fresh.
 
-3. **C227 @4.44s** is the worst row of every run (`black 23.5 / blacks −36.9 / spread 54.5 flat`). It is not
-   graded — it inherits the whole Lumetri state of C227 @5.63s through the shot-match path, fitted to a
-   frame whose readings differ sharply. A shot-match problem, not a grading one. No code written for it.
+   Only if neither check fails: report verbatim the header; every clip row; per clip its MODEL OFF BY (or "none") and whether every step of the black-point chain says "pixels"; balanced count and wall time; any [table] tag anywhere.
+   ```
 
-4. **The headroom allocation**, still ordered rather than solved. The channel toes, the Master curve and the
-   Shadows wheel luma all spend the same distance between the lowest channel and zero, and what each costs
-   is frame-dependent. `docs/color-full-table-plan.md` §4 has the shape of it.
+   *Done when* every clip that writes a Highlights pad (C227 @5.63, C229 on earlier runs) shows
+   `highlights pad [pixels]` and its chain is `pixels` at every step. Baseline before the pad form: 3/18
+   balanced, 37 renders, 135 s; the only `[table]` tags were on those two pad clips.
 
-5. **Interactions: zero measured of six named pairs.** `docs/color-full-table-plan.md` §3. The one that is a
-   live bug: the Shadows wheel luma changes channel *spacing* (up to 3.2 IRE) and runs at step 5, after the
-   black balance sets spacing at step 3, with nothing re-reading.
+2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
+   the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
+   sample has no region pixels for brightness)` on 4 clips). Correct by Astra's rule; a behaviour regression
+   against the table. Fix: in `panel.js` `prereadSources` (grep the name; line numbers drift — it is the
+   function that decodes every clip's frame once and calls `visionForGradeMany`), retain a second sample
+   cropped to Vision's subject box (the function already holds the whole-frame `rgb` and Vision's box), and
+   let `planShot` use it for region statistics. Estimate is mine, unsourced: a couple of hours plus a run.
 
-## The two proof frames (the owner's acceptance test, 2026-09-17 16:50)
+3. **C187's 1.5 and the wheel-luma amount curve.** On C187 the pixel-chosen wheel lift predicted 6.3 and read
+   7.8; C220's held-out rows run a uniform ~0.8 IRE under. The two frames disagree on the amount exponent
+   (`shadowsWheelLumaForm._heldOut`). Not refitted — that would break the exact frame. A third frame settles it.
 
-The owner ended the session with two screengrabs and "same problems again and again ... this is what we do
-next session as proof". Neither is a new bug class - both are the ones already named below - but these are
-the frames the work gets judged on. They were not timecoded in the message.
+4. **Runtime.** 105–135 s for 18 clips (was 90). The curve amounts enumerate every writable value; a
+   coarse-then-refine pass on the curves would recover most of it. `GRID`/`CENTERS` in `grade_pixels.cjs`.
 
-> **IDENTIFIED 2026-09-17 evening**, by rendering one frame per source across all 18 clips.
->
-> **Frame 1 is `A056_05072025_C187.braw` at 22.0s (00:00:21:23)**, clip 21.23-22.81s. Unambiguous on
-> content: three olive-green stems diagonally across a completely defocused warm interior, a fingertip
-> bottom right, a metal collar on the middle stem - the only green-stems shot on the timeline. Lucky
-> accident: this is the frame the whole evening's curve and wheel sweeps were run on, so it is the best
-> characterised frame in the repo (`curveToeC187`, `shadowsWheelLumaC187`).
->
-> **"The parade never reaches the bottom" is confirmed exactly** - luma p1 23.9, 0.00% of every channel
-> on the floor, ungraded.
->
-> **But "blue's floor sits lifted above red's and green's" is INVERTED on this clip, by a lot.** Its
-> paired black levels are R 41.2 / G 21.2 / B 11.8 - blue sits 29.4 IRE *below* red. The blacks are
-> strongly warm, not blue, in the ungraded state the description calls for; and after the 19:24 run it is
-> still warm (`blacks warm by -14.1`). There is no state of this clip in which the cast clause is true.
->
-> The most likely reading, given what the evening established: the owner was pattern-matching to the
-> blue-blacks complaint he had seen on *graded* shots. That complaint was real and is now fixed - the pass
-> was turning warm bottoms into blue ones - but it is not what is wrong with this frame. What is actually
-> wrong with C187 is **flat plus a warm bottom the pass only half-corrects** (it prints `NEEDS: blacks warm
-> by 29.8 ... half of it taken out, the rest is the objects`, correctly, because past COLORED the bottom is
-> the object's own colour). Do not "fix" a blue cast here; there isn't one.
->
-> **Frame 2 is NOT C228** - that guess was mine and it is wrong. C228 at 7.735s is a woman at a counter
-> holding the blue cloth over a metal hoop; there is no dishwasher in it. Three dishwasher shots exist, and
-> on the described action - the cloth being lifted *out*, hand above, cloth clear of the tines - it is
-> **`A056_05072049_C193.braw` at 15.4s (00:00:15:09)**. The live alternative is **C231 at 12.5s**, which
-> already carries a flat-topped white plateau from a large white wall and a spread of only 9.8-61.6, i.e.
-> the "midtones with no separation" sitting in the *source* rather than in the correction.
->
-> **Frame 2 CONFIRMED as C193 from independent evidence** - no owner input needed. A VLM frame-description
-> review of this exact source exists at
-> `~/DevApps/ASI-Evolve/.worktrees/experiment-20260912/prototype-local/coarse-attempts-description-review.json`
-> (clip `A056_05072049_C193`, 69 described frames). It records three takes of one action chain -
-> *open dishwasher → extend rack → remove the cloth-covered object* - with frame-level captions including
-> "The hand is lifting the blue cloth-covered object out of the dish rack, which is now mid-air" and "The
-> person's hand is in the middle of lifting the blue cloth cover out of the dishwasher rack". That is the
-> owner's description verbatim, arrived at by a different method than the frame render, so C231 is out.
->
-> **Frame 1 CONFIRMED visually too.** `batch-output/vlm-candidates/<clip>/frame_NNNN.jpg` holds **4212
-> extracted frames at 1 fps across all 51 source clips** - a directly readable picture of any clip, no
-> render and no Premiere needed. C187's frames show olive-toned spokes running diagonally across a
-> completely defocused warm interior, a metal collar on the middle spoke, a fingertip entering bottom
-> right. Unambiguous.
->
-> **And the description is internally inconsistent, which settles the contradiction.** The owner wrote both
-> "the blacks still blue" *and* "the picture reads soft and yellow" about the same frame. The picture is
-> amber throughout - the yellow half is right, and it is what the numbers say (paired R 41.2 / B 11.8,
-> warm by 29.4). The blue half belongs to the graded shots where the pass was manufacturing blue blacks
-> out of warm ones. Treat frame 1 as **flat + warm**, and do not go looking for a blue cast in it.
->
-> **What that qRAFT worktree does and does not contain**, since it will be asked again:
-> - `batch-output/vlm-candidates/` - **1 fps JPEG frames, 51 clips, 4212 images.** Readable directly.
-> - `coarse-attempts-description-review.json` - VLM frame captions, **C193 only**, 69 frames.
-> - `batch-output/qraft/` - **optical flow** (RAFT at 6 fps: `flow`, `moving`, `dir_x/y`, `coherence`,
->   `tx/ty`, `rot_deg`, `resid`) over the full ~142 s sources, for motion and cut work. No colour, no
->   content description.
+5. **Group 0 of `docs/color-sweep-queue.md`**: repeatability (nothing has ever been measured twice at one
+   setting; the 0.4 IRE floor is inferred from one frame pair) and a held-out frame from a different camera.
+   Every form above was fitted on the same shoot.
 
-**The owner's two descriptions, verbatim (2026-09-17 16:50). Read the identification block above before
-acting on either — frame 1's "blue" half is refuted there, by its own numbers and by the picture.**
+6. **The headroom allocation** — the genuinely unsolved problem. Astra's answer is
+   `docs/reviews/astra_headroom_answer.md`; the lexicographic objective it proposed is implemented in
+   `grade_rules.cjs objective()`. Its one-candidate method was weak because my brief told it the budget was
+   single-digit ms; a forward evaluation is 9 ms and a render is 1–5 s. Not re-asked; Astra's weekly quota
+   ran out at ~15:00 and GLM 5.3's (z.ai) at ~16:20 — both reset 2026-09-19 10:09.
 
-1. **Left uncorrected — flat, and the blacks still blue.** Green stems across a warm out-of-focus interior.
-   The parade never reaches the bottom: all three channels stop well above 0 and blue's floor sits lifted
-   above red's and green's, the same horizontal blue shelf as `00:00:09:10`. The picture reads soft and
-   yellow. This is the blue-blacks issue AND the contrast one in a single frame: the pass reported it rather
-   than fixing it, which is the honest outcome but not the useful one.
-2. **Badly corrected.** A hand lifting a blue cloth out of a dishwasher. The parade here DOES fill the range
-   - roughly 0 to 85 on all three - but the result reads washed out: the whites are pushed up into a flat
-   shelf near the top and the midtones have lost separation. Worth checking whether this is a clip where
-   `whites` ran to its ceiling (several rows this session show `whites 100 ... partial: as far as the knob
-   goes`), which lifts the top without adding any contrast below it.
+## How Work Is Verified Here
 
-*Done when* (ORIGINAL, 2026-09-17 — **superseded for frame 1 by the amendment below; read that instead**)
-both frames are re-run and: frame 1's parade bottoms meet within 2 IRE with nothing under zero and its body
-spread clears `SPREAD.bodyFlat` (45), and frame 2 no longer has whites pushed to a shelf — judged by the
-owner's eye on the picture, not only by the numbers, because "balanced" already passed on shots he disliked.
+No gates tool. The agreement is:
 
-**Amended acceptance test for frame 1**, since the original wording asks for something that was never
-wrong: its bottoms meeting "within 2 IRE" is not achievable and should not be attempted. C187's bottom is
-a coloured surface 29.8 off neutral - past `COLORED` - so the canon deliberately takes out half and says
-so. Judge it instead on: **the body spread clearing 45**, **nothing crushed** (the 19:24 run floored
-nothing but reported `MODEL OFF BY 5.91` and `black point 12.9 lifted`), and **the picture no longer
-reading soft and yellow**. The blue-blacks half of the original criterion belongs to frame `00:00:09:10`
-on C229, where it was real and is now measured fixed (`+5.1` before, `-5.5` after).
-
-## Key Files Changed — overnight session (2026-09-18)
-
-| File | What changed |
-|---|---|
-| `src/grade_rules.cjs` | `bottomsFor` (the black balance on channel curves, fed paired levels); `shadowsLiftFor` (the wheel luma as the Lift half); `castTrust` (refuse a cast the reading cannot support); `padsFor` keeps the whites only; `skinFor` takes `attenuation` — the spill rule that was silently dropped |
-| `src/scopes.cjs` | `bands.*.levels` — the darkest/brightest 3 % as channel LEVELS on one set of pixels — and `bands.*.readable`. The statistic everything above is driven from |
-| `src/forward.cjs` | **new.** Apply a control to pixels, then measure. `sample`, `apply`, `pipeline` (stages = stacked Lumetri instances), `damageOf` |
-| `src/grade.cjs` | `planShot` takes `pixels` and refuses a candidate the frame's own pixels say will clip. **Inert until a caller passes them** |
-| `src/curves.cjs` | `movesFor` (a channel moves down by a toe or up by a lift); `predictBottoms` takes toe positions, not levels |
-| `panel.js` | `curve_sweep` and `slider_sweep`; the black-point chain in every row; the correction writes onto `lev.curves` (it was discarding the black balance) and is floor-guarded again; four `await`-ordering races fixed |
-| `src/lumetri_sweeps.json` | Eleven live blocks with provenance, forms, caveats and negative results. **The authority on anything numeric** |
-| `CLAUDE.md`, `docs/findings-index.md` | **new.** The orientation rule and the established-facts index |
-
-## Key Files Changed (2026-09-17 daytime session — NOT the overnight work)
-
-| File | What changed |
-|---|---|
-| `panel.js` | `seconds` (single-clip grade); `runColorButton`; `askChoice`/`askUserTool` + the caps; `visionForGrade(Many)` (`--grade`, one launch); `prereadSources` + `writeFrameImage` (BMP); refresh suspended during every tool call; `logMode` rename (the shadowing bug); black-point correction reverted to unguarded |
-| `src/ocr.swift` + `bin/ocr` | new `--grade` mode: faces + hands + subject mask in one launch, no text/person work. **Binary rebuilt and re-signed** — `swiftc -O -o bin/ocr src/ocr.swift -framework Vision -framework AppKit; codesign -s - bin/ocr` |
-| `src/luts.cjs` | eight verified maker LUTs; fetch decides zip/gzip/cube by magic bytes; `site()`; `resolve()` for a named file; rewrite only when Premiere would refuse the cube |
-| `src/grade_rules.cjs` | `SKIN_HUE` ceiling 140 → **132**; `FLOOR_MIN` exported |
-| `src/curves.cjs` | `neutralBottoms` + `predictBottoms`, deliberately unwired |
-| `src/claude-session.cjs` | the prompt now names the **color** skill (it was the only one missing); `ask_user` pointer; still ≤ 700 words |
-| `.claude/skills/color/` | renamed from `colour/`; leads with "every color request goes through the pass, the only question is scope" |
-| `index.html` | Color correct button + its options row; `.choices` styling for the question card |
-| `scripts/privacy-patterns.cjs`, `scripts/scan-history.cjs`, `.githooks/pre-push` | the push guard now scans commit ranges |
-
-## Decisions Made
-
-| Decision | Why |
-|---|---|
-| **Anything that changes what the grade writes needs a sweep first** | Two reverts today, both from reasoning instead of measuring. The changes that held (Vision batching, single-clip scope) did not touch the arithmetic. |
-| A **button** for color, not only chat routing | Both routing failures today were invisible from inside the code. A button cannot mis-route. |
-| `grade` / `grade_shot` are **taste only**, never a balance | They are steered — the caller supplies the goals — so they cannot hold the canon's caps. Left ambiguous, the model asked for `contrast 85` on a clip the canon caps at 40. |
-| Maker LUTs are **fetched, never bundled** | Canon's terms: "solely for your personal, non-commercial use … shall not distribute … publish … to any other party." Repackaging is not the test; who hands the file to the editor is. |
-| The frame handed to Vision is **BMP** | PNG compression cost 352ms/frame vs 18ms, for a temp file read once and deleted. Vision returns identical faces, hands and subject coverage. |
-| Working copies are tagged **`[AI]`**, not `[Claude]` | The same panel runs Codex. `[Claude]` is still matched so existing copies are recognised. |
-| The black point is set by the **lowest channel**, not luma — *in the first write only* | The correction's version of that guard froze the pass (see Known Issues). |
+- `node --test test/*.test.cjs` — the suite, 413 tests. Must be green before any commit.
+- `node --test test/privacy.test.cjs` — the tree scan; the pre-push hook (`.githooks/pre-push`) runs it and
+  `scripts/scan-history.cjs` over every commit being pushed. Patterns in `scripts/privacy-patterns.cjs`.
+- **Anything that changes what the grade writes gets a live run**, on a FRESH working copy, judged by the
+  `MODEL OFF BY` column per clip and the `[pixels]`/`[table]` tag per decision — not by the balanced count
+  alone, which fell 4 → 1 → 3 today while the pass got strictly more honest (it stopped buying black points
+  with crushed pixels). **`balanced`** is the run footer's own definition: on the sampled frame, parade ends
+  aligned on both axes, black point ≤ 6, white point 85–95, spread neither flat nor harsh, nothing clipped or
+  crushed beyond what the source had (`ACCEPT` in `src/grade_rules.cjs`). It is a diagnostic, not a target.
+- Findings live in `src/lumetri_sweeps.json` (every block has `_source`; negative results and retractions
+  stay in with `CORRECTION`/`RETRACTED` keys) and are indexed in `docs/findings-index.md` and
+  `docs/color-sweep-queue.md`. **The sweep file is the authority on any number; prose is secondary.**
+- Commit messages say what the round *established*. Stage by name.
 
 ## Known Issues / Watch-outs
 
-- **REVERTED tonight: the white-point lift on Exposure** (`e3ec45c`). Whites and Exposure are the *same
-  control* (100 Whites points = 1 stop, both `2^(stops/2.4)`), and Exposure genuinely does not clip where
-  Whites does — measured on C202. But the table the solver *uses* is C220's, and that frame's max is 91.4,
-  so every upward exposure row is **railed**: p99 reads `85.9 → 91.8 → 96.1 → 99.6`, ratios 1.069/1.119/1.159
-  where the true gain is 1.155/1.335/1.782. Asked to take a white point of 76.5 to 92, the solver predicted
-  +2 stops reached only 90.2, requested the range end, and the real gain of 1.78 took 76.5 to 136 — clipped
-  back to 97.6. **5/18 balanced → 0/18**, and the owner's eye called it (over-exposed, inconsistent, flat)
-  before any metric did. The argument was right; the calibration to execute it was not.
-- **`forward.cjs` is inert.** It is required by `src/grade.cjs` and guarded by `if (buf && …)`, so nothing
-  runs until a caller passes `pixels`. Tests cover it directly.
-- **A gain is dimensionless; the noise floor is in IRE.** They cannot be compared. 0.02 of gain is 1.6 IRE at
-  an input of 80 — four times the 0.392 floor. Convert to output units before judging. This was a real error
-  in this session's own record, caught by review.
-- **C220 @0.5s is the outlier**, not the typical frame — and nearly every model in the repo is fitted on it.
-  Its curve cost (0.89 % of blue) is the cheapest of the three frames measured.
-- **The dev panel caches `panel.js` and `src/*.cjs` at load.** After any code change it must be reloaded
-  (header button) or the change is not live. Several confused runs came from this.
-- **A green suite is weaker than it looks.** Many `panel.js` tests assert source text, not behaviour. A TDZ
-  `ReferenceError` introduced this session passed all 365 tests and was caught by reading the call sites.
-- **The privacy scan is real and it fired this session** — a committed review carried absolute home paths.
-  Run `node --test test/privacy.test.cjs` before committing anything pasted from another tool.
-- **`setSettings` is not undoable**, and `autoToneMapEnabled` / `autoInputGamutCompressionEnabled` have never
-  been read or written from this panel. The panel's own Claude declined that write tonight when the result no
-  longer justified it — correctly.
-- **A colour-space override or an Interpret Footage LUT is a SOURCE setting and survives Discard copy.**
-  `grade_sequence` defaults to `log: "ask"` so the editor chooses — never answer `lut-source` or `premiere`
-  on the owner's behalf. The enum is `ask | lut | lut-source | premiere | skip`.
-- Masks are not scriptable in Premiere; HSL is not trusted; `panel.js` is ~435 KB in one file.
+1. **A graded working copy silently disables the chooser.** On a clip that already carries any Lumetri
+   state the source sample is withheld (its pixels no longer describe the picture), so every choice is the
+   table's. Three runs today were misread because of this. Always delete `Prototype_TEST [AI]` before a
+   measurement run; the header now says how many clips were pre-graded.
+2. **The Discard copy button vanishes on reload.** `workingCopies` (`panel.js:71`) is an in-memory Map; a
+   reload empties it and the row with the button is not drawn, though the sequence still exists. Deleting the
+   sequence by hand is equivalent (`discardCopy` only deletes, reopens the original, clears the note).
+   Rebuilding the registry from `[AI]`-tagged sequences on load is the fix; not done.
+3. **The panel's Claude cannot press Reload or Discard, and cannot read its own sha from a tool result**
+   other than the `grade_sequence` header. Every reload is the owner's click. Each reload spawns a new
+   session id — `ListAgents` again before `SendMessage`.
+4. **Wheel PADS are on pixels; wheel luma UPWARD (x > 0.5) is unswept** and `OPS.shadowsWheelLuma` refuses
+   it. The pass only lowers it. `OPS.exposure` refuses upward for the same reason (shoulder unmeasured).
+5. **`verdict` has no notion of the frozen cast target**, so a policy-preserved half-cast prints as a cast
+   and fails `balanced`; the correction loop's early-out never fires on exactly the coloured shots.
+6. **A second `grade_sequence` on the same clip** re-reads a preserved half-cast as ordinary and drains it.
+7. **The z.ai key was printed into this session's transcript** by a `pgrep -fl` on 2026-09-18 (Cursor keeps
+   it in helper-process environments). The owner was told to rotate it and read it from the keychain
+   (`security find-generic-password -s GLM -w`) instead. Not confirmed done.
+8. `steer()` (the single-knob `grade` tool) still uses the table; taste-only, out of scope.
+9. The `explainer animation` (`docs/anim/forward-guard-brief.md`) was never produced: GLM's first output was
+   corrupted by a second writer, the retry hit its quota. The brief is committed; one command when quota resets.
+
+## Key Files Changed (this session)
+
+| file | what |
+|---|---|
+| `src/grade_pixels.cjs` | **new** — the chooser: `choose`, `evaluate` (prefix rail witness), `context`, `readingFor` |
+| `src/forward.cjs` | OPS gained `shadows`, `highlights` (bumps), `shadowsWheelLuma`, `highlightsPad`, `masterToeAnchored`; `newlyRailed`; 256-entry LUT apply; tuple stages |
+| `src/grade.cjs` | `planShot` chooses on pixels, pixel-form goals first, readback reconciled, `expected`/`expectedHow` |
+| `src/grade_rules.cjs` | `objective`, `candidateScore`; `temperatureFor`/`balanceAxis`, `bottomsFor`, `levelsFor`, `shadowsLiftFor`, `padsFor` all take `pixels` and return `how` |
+| `src/wheels.cjs` | `nudgePad(…, target)` — aims at the frozen target |
+| `panel.js` | pixel context threaded through the whole clip; `graded` gate reads Basic sliders + hue curves; sequence-keyed match cache; `[dev sha]` header; pre-graded count; pad sweep mode; honest closing line |
+| `src/lumetri_sweeps.json` | +`commutation`, `shadowsC202`, `highlightsC202`, `whitesC231`, `shadowsHighlightsForm`, `shadowsWheelLumaForm`, `highlightsPad`; corrections in `whiteBalanceRule`, `shadowsWheelLumaC187` |
+| `docs/color-sweep-queue.md` | the 19-item queue, groups 0–5, with the day's five live runs recorded as 1b–1f |
+| `docs/reviews/astra_*` | the two Astra briefs and answers, the chooser implementation report |
+| `tools/commutation.cjs` | the closed form, verified against brute force |
+| `scripts/privacy-patterns.cjs` | credential patterns |
+
+## Decisions Made
+
+| decision | why |
+|---|---|
+| The chooser picks on pixels; `predict()` survives only as a labelled fallback | a statistic cannot predict its own evolution; five runs showed the split is exact |
+| Every candidate is rebuilt from the SOURCE in section order | layering a Basic move onto a baked curve buffer models a stack Premiere does not run |
+| A form is shipped only when the two-frame overlay traces one curve | that test found three wrong beliefs in one afternoon; "does not transfer" had been a key error |
+| Uniform-sign residuals are recorded, not refitted | refitting to one frame breaks the exact one (`_fitMethod` rule 5); the C220 wheel-luma residual is asserted *with its sign* in the test |
+| Readings within a few codes of the rail are excluded from any gain fit | `_fitMethod`; red p99 at 98.8 under a gain that says 103.4 |
+| The lift/pad/curve keep their POLICY (meeting level, half-colour rule, anchor); pixels choose only the AMOUNT | the policies are the canon's; the chooser is not asked to re-derive them |
+| Astra ran with `workspace-write --approve-for-me`, never `--dangerously-bypass` | write access to the repo only; its diff was one reviewable change on top of a committed brief |
+| Balanced count is not the metric | it fell while the pass stopped crushing pixels to reach black points |
 
 ## Where data lives
 
-- **The test project's absolute path, its sequence names and the analysis folder are deliberately NOT in this repo** (the privacy scan forbids it). They are in the private memory note `~/.claude/projects/-Users-dandj-DevApps-claude-for-adobe/memory/project_claude_for_adobe_test_project.md` — read it by absolute path before any live run.
-- Panel log: `~/Library/Logs/claude-for-adobe/panel-<date>.log` (host events, tool results truncated to one line, per-clip grade timing, slow bridge calls). Chat exports and bug reports go to `_claude-for-adobe_analysis/` beside the project.
-- Calibration: `src/lumetri_sweeps.json` (in the repo). Sweep prompts are in the chat log of 2026-09-15 and reproducible: "On clip 1 at 0.5s … set <Slider> to -100, -50, -20, 0, 20, 50, 100, measuring scopes (whole frame) after each, then back to 0."
-- The premiere-map side: `~/DevApps/premiere-map/reports/round250..252/`, `tools/parse_lumetri_prproj.py`; vault notes under `~/DevApps/Brain/Knowledge/Premiere Internals/`.
-- Private memory notes: `~/.claude/projects/-Users-dandj-DevApps-claude-for-adobe/memory/` (packaging, the test project's path, release-chain guard). Read by absolute path from any cwd.
+- **The test project's absolute path, sequence names and analysis folder are NOT in this repo** (privacy
+  scan). They are in the private memory note
+  `~/.claude/projects/-Users-dandj-DevApps-claude-for-adobe/memory/project_claude_for_adobe_test_project.md`.
+  The sequence is 18 BRAW clips on V1 (~28.7 s); the frames used all day are C202 @23.94s (p1 14.5, p99 84.7,
+  unrailed — every sweep today) and C231 @12.515s (source white 61.6).
+- Panel log: `~/Library/Logs/claude-for-adobe/panel-<date>.log`. Chat exports: `_claude-for-adobe_analysis/`
+  beside the project.
+- Calibration: `src/lumetri_sweeps.json`. Sweep tools: `slider_sweep` (Basic sliders), `curve_sweep`
+  (curves, `"Shadows luma"`, `"Highlights pad"`/`"Shadows pad"` with `hue`).
+- Brain vault: `~/DevApps/Brain/Knowledge/Premiere Internals/` (`Findings/Lumetri Control Forms 2026-09-17.md`,
+  `Methods/Measuring a Lumetri Control 2026-09-17.md`) and `~/DevApps/Brain/Projects/Claude for Adobe/`.
+
+## Brain sync — pending the owner's go at handoff time
+
+Both Premiere Internals notes are dated 2026-09-17 and **predate today's forms**. The sync proposed to the
+owner (not yet written; do it if he agreed, skip if he struck it):
+
+- `Findings/Lumetri Control Forms 2026-09-17.md` — Shadows/Highlights are bumps not gains; wheel luma is the
+  same family and *transfers* (correct its "does not transfer" line: compared at p1, a different level per
+  frame); the Highlights pad is a luma-preserving per-channel gain, not a band; toe and lift are one gain
+  about 100; commutation closed form. Source blocks: `shadowsHighlightsForm`, `shadowsWheelLumaForm`,
+  `highlightsPad`, `commutation` in `src/lumetri_sweeps.json`.
+- `Methods/Measuring a Lumetri Control 2026-09-17.md` — the two-frame overlay as the transfer test; a plan
+  row's *achieved* column is the plan's, not the knob's; a graded working copy silently disables pixel
+  measurement.
+- `Projects/Claude for Adobe/Claude for Adobe — Architecture and Operations.md` — the pixel chooser and its
+  provenance tags; the sequence-keyed match cache; the Discard-on-reload loss; Codex/GLM CLI flags and quotas.
 
 ## Credentials / external setup
 
-- No API keys. Claude runs under the user's own Claude Code login; Codex under the user's Codex login (`codex` CLI 0.153.4 installed; `codex exec -m gpt-6-astra -s read-only` was used for the review).
-- `gh` authenticated as dandjlab-cell for releases. Blackmagic RAW SDK installed at `/Applications/Blackmagic RAW/` for BRAW source reads (optional; the pass falls back to a Premiere render).
+- No API keys in the repo. Claude runs under the owner's login. Codex CLI 0.153.4 (`codex exec -m gpt-6-astra`);
+  GLM 5.3 via `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic ANTHROPIC_AUTH_TOKEN="$(security
+  find-generic-password -s GLM -w)" claude -p … --model glm-5.3`. Both quotas exhausted until 2026-09-19 10:09.
+- `gh` as dandjlab-cell. Blackmagic RAW SDK at `/Applications/Blackmagic RAW/` for source reads.
 
 ## Quick Start for Next Session
 
 ```bash
 cd ~/DevApps/claude-for-adobe
-git log --oneline -3                 # main @ 0a2b533, 54 commits UNPUSHED, nothing released since 0.1.87
-node --test test/*.test.cjs
-#   379 pass / 0 skip   if schemas.adobe.com is reachable
-#   378 pass / 1 skip   if it is not (whisper.test.cjs skips on `!spec`)
-#   anything else is a real failure
+git log --oneline -3          # main @ 7eac93c, 26 unpushed
+node --test test/*.test.cjs   # 412 pass / 1 skip (413 when schemas.adobe.com is reachable)
 ```
 
-**Read in this order:** `CLAUDE.md` → `docs/findings-index.md` → this file → `src/lumetri_sweeps.json`
-(the numbers there are the authority; prose in `docs/` is secondary) → `docs/color-full-table-plan.md`.
-
-### Driving live measurement
-
-The panel runs its own Claude session inside Premiere. It appears in `ListAgents` as
-`com-claude-for-adobe-premiere-dev-*`; message it with `SendMessage`. **That is the sanctioned door** — do
-not reach for the panel's MCP port (its bearer token exists to stop exactly that) and do not drive the UI;
-both were blocked by the permission classifier this session, correctly.
-
-Ask it for **raw tool output, never a summary**, and tell it to flag anything contradicting what you said you
-expected. Across two sessions it caught seven errors in briefs it was given, including a degenerate fit
-method that invalidated earlier work. **Note there were two panel sessions tonight, split by the reload** —
-they do not share context (`docs/findings-index.md` § Provenance).
-
-The panel must be **reloaded** (header button) after any code change, and the log line says which panel you
-have: `dev <sha>` versus `installed 0.1.87`.
-
-### The live loop
-
-**The owner clicks. You do not** — computer-use was declined on 2026-09-08 and driving the UI was blocked
-again on 2026-09-17. Ask him to: open the test project, **Discard copy** if an `[AI]` copy exists — that is the
-**Settings tab** in the panel header, then the **Working copies** section (below Safety, Cut silences and
-Transcription), not the chat view — then **Color correct → Whole sequence**.
-
-**Or ask the panel's Claude to call `grade_sequence` directly** — the button runs the same pass with no
-model in the loop, so the two are equivalent for measurement. Use the agent when you want numbers; use the
-button when you want the owner's eye on the picture.
-
-**A whole-sequence grade outlasts the caller's patience.** Pass `budget_seconds` (default 150): the loop
-stops cleanly between clips and the footer names the exact `start_at` to resume with. The MCP bridge has no
-timeout of its own — if you stop waiting, the panel carries on regardless.
-
-Read the result from the newest `_claude-for-adobe_analysis/chat-*.md` beside the project (the agent reads
-it itself, no pasting). **Baseline to beat: 4/18 balanced** (the 00:03 run, after the revert); 5/18 was the
-pre-session best.
-
-**"Balanced" means, on the sampled frame:** black point ≤ 6, white point 85–95, both cast axes within 1.5,
-spread 55–93, nothing newly clipped or crushed beyond what the source had. Without that definition the
-"4/18" above means nothing.
-
-### Running a sweep
-
-`slider_sweep` and `curve_sweep` are **panel tools**, reachable only through the panel's Claude session.
-They exist because nothing could set a raw slider value before 2026-09-17 — `grade`/`grade_shot` steer a
-*statistic to a target*, which is the opposite of what a sweep needs.
-
-```
-slider_sweep at 23.94 seconds on contrast
-curve_sweep at 0.5 seconds on the Blue curve
-curve_sweep at 0.5 seconds on Shadows luma with points 0.5, 0.45, 0.4, 0.35, 0.3, 0.25
-```
-
-Both restore what they found and print the pre-state; both always include the control's **neutral** value as
-a baseline row. Two guards learned the hard way, both now enforced in the tools: **a sweep without its own
-baseline row is not a sweep** (two runs were wasted sweeping a 0.5-neutral slider from 0), and **never fit a
-pivot from p1 and p99 when p99 barely moves** — that solve is degenerate and returns p99 as the "pivot".
-The full trap list is `docs/findings-index.md` § Measurement traps.
-
-**Before any release:** bump `CSXS/manifest.xml` *and* `package.json`, `npm test`, `sh scripts/package.sh`,
-then unzip `dist/` and grep it for the change. Pushes and releases each need a fresh explicit go.
-
----
-
-# Archive — earlier sessions (canonical for their own topics; numbers above win)
-
-## The color pass as first built (2026-09-15 / 16)
-
-
-- **"Grade this video" is one deterministic tool call, `grade_sequence`.** The panel's AI decides nothing per shot; it calls the tool once and relays the table. Per clip: read the scopes from the clip's own file (no Premiere render), white-balance on both axes, cancel the residual casts at the parade's ends with the Shadows/Highlights wheel pads, set the black point with an anchored Master curve, lift the white point with Whites then Highlights, contrast only if the frame is flat or harsh, then confirm in Premiere and correct up to twice from the real readings, with (2026-09-16) saturation rolled off in the deepest shadows and near-whites on Luma vs Sat in the first batch. Three renders a clip at most.
-- **Every knob it moves is calibrated from live sweeps on one sandbox frame** (`src/lumetri_sweeps.json`): Exposure, Contrast, Temperature, Tint, Highlights, Shadows, Whites, Blacks, the three wheels (pads fitted on paired-pixel bands), and the RGB curve end points (analytic levels move, verified live).
-- **Reads come from paired pixels.** `src/scopes.cjs` reports casts by luma band: the darkest and brightest 1% and 3% of pixels as pixels (the parade's bottoms and tops), plus level bands. The white balance references the **brightest 1%** (a specular reflects the light; the brightest 3% can be a cream cabinet). A parade end more than 20 off neutral after the white balance is named the scene's own color and left alone.
-- **Ten of eighteen clips on the sandbox pass the strict balance test** on the final run (23:08); every other row prints the limit it hit (a colored dark surface, a white point that clips before 85, or a residual within a step of the measurement).
-- **Outside review used and acted on:** GPT-6 Astra via the Codex CLI reviewed the pipeline at its worst point (`docs/reviews/color_grade_review_gpt6_astra_2026-09-15.md`); its three defects (a sign-blind pad nudge, a 0.5 pad cap extrapolating a 0.15 fit, a Blacks slope taken on a clipped sample) are fixed.
-- **Also fixed on the way:** the playhead now follows the grade and returns once (host `frames(..., keep)` + `playhead()`); the Lumetri property walk stops at the first match (a 291 s run became 50 s); per-clip timing is printed in every row; grade tools always make the working copy first (the 18:03 run had written on the original).
-- **Sibling repo `~/DevApps/premiere-map`** closed Rounds 250–252 earlier the same day: Premiere's own scopes have no readable numbers (Export Frame + our computation is the native path); the whole Lumetri grade decodes offline from a `.prproj` (`tools/parse_lumetri_prproj.py`); QE `getParamValue/setParamValue` reads and writes Lumetri's blob parameters as text (wheels, curves, HSL key) — dot decimals to write, commas on read.
-
-### [ARCHIVE 2026-09-16] Current state then
-
-**Works end to end on the user's Mac** (Apple Silicon, Premiere 26.3.2, dev panel symlinked to this repo): `grade this video` on the 18-clip BRAW sandbox sequence, plus everything from earlier sessions (rough_cut → transcript → audio_cut, Cut silences, reframe, captions, morph_cut, multicam_switch, scopes).
-
-**Suite:** `node --test test/*.test.cjs` → **310 tests, 309 pass, 1 skip** (`whisper.test.cjs` fetches `schemas.adobe.com`; the skip is counted, not a failure). The privacy scan is in the suite and in the pre-push hook.
-
-**Not released.** Everything since `542edd9` is dev-only; 0.1.78 is gated on the 9:16 re-run (archive, What's Next 3) and an explicit go from the user.
-
-**Color pipeline, exactly (panel.js `gradeSequenceTool`, rules in `src/grade_rules.cjs`):**
-1. `ensureWorkingCopy()` — the copy first, then the clips are read from it. One `readSnapshot()` per run.
-2. Per clip: read wheels, Temperature, Tint, curves; a clip already carrying a balance is read from Premiere's render, otherwise from the source file (`src/source_frame.cjs`: BRAW via `bin/braw_to_rgba` + the Blackmagic SDK at `/Applications/Blackmagic RAW/…`, other codecs via ffmpeg; parity with Premiere's render verified on BRAW). Vision subject mask by default (`bin/ocr --subject`).
-3. `temperatureFor` → Temperature on the whites' blue-red, then Tint on their green-magenta, each solved by the model (`src/grade_model.cjs`), no fixed cap, held back while a predicted channel bottom would reach the floor or a top the ceiling.
-4. `padsFor` → Shadows/Highlights pads from a 2x2 model fitted on the band statistic (`wheelBands` sweep), pad ≤ 0.3; a bottom band > 20 off neutral gets no pad (scene color).
-5. `levelsFor` → Master curve bottom point x = A(p1−4)/(A−4) pinned at the frame's median and at 0.8; capped at 0.25 and at the lowest channel bottom; skipped on a colored bottom.
-6. `goalsFor` → Whites → Highlights (`onlyIf` still low) → Contrast (only < 55 or > 93 spread) → Blacks (lift crushed only) → Exposure (face skin luma only). `planShot` writes them, confirms once, backs a clipping knob off to half.
-7. Correction passes (up to two): pads rescaled by direction-aware least squares, white balance rescaled per axis from its own move (only if the last write moved it), Tint introduced for a green residual, the curve re-solved from the black point actually read (unless the first move achieved < 25% of its prediction), all with ceiling checks relative to the current tops. A backoff counts as the first pass.
-8. Verdict (`ACCEPT`: black ≤ 6, white 85–95, both cast axes within 1.5, spread 55–93, no new clipping/crushing); the footer states the same thresholds.
-
-**What a grade row looks like** (one line per clip in the tool's result; names shortened here):
-
-```
-clip.braw @1.645s [subject] black 10.6 / white 87.8 / blacks 1.2 / whites 2.4 / spread 77.2 → white balance: temperature 4.8 (…why…) → curve black 0.06 (black point 10.6 → 4: curve bottom point at 0.06, pinned at 0.36) → whites 69.6 (whitePoint 75.7→92.5) → corrected: curve black 0.12 → 0.18 (black point read 11.4) → black 3.5 / white 92.5 / blacks -0.4 / whites 0.4 ✓ [3.3s: read 1.7, renders 1.6, 14 host calls, rest 0.1]
-```
-
-Read it left to right: the read (`black`/`white` = luma p1/p99 of the frame; `blacks`/`whites` = blue-minus-red at the parade's bottom/top, > 0 blue, < 0 warm), the moves in order, `corrected:` / `corrected again:` for the passes, the confirmed numbers, then `✓` or the residuals in the canon's words (`black point 8.2 lifted`, `whites green by 1.6`) and any `NEEDS:` note, and last the timing: total seconds, source read, Premiere renders, bridge calls, the rest.
-
-### [ARCHIVE 2026-09-15/16] What was in progress or blocked then
-
-- **Nothing is blocked.** The color pass is at its plateau on this footage; the remaining misses are named in each row.
-- **Speed question CLOSED (2026-09-15, 23:58 run, after a Premiere restart): it was session state, not the effect stack.** 18 clips, 53 renders, 69.2 s total; per render **~0.7–0.85 s** on every row that can be divided out (C222 1 render 0.80 s; C233/C228/C223/C231 2 renders 0.70–0.85 s each; C198 4 renders 0.80 s each), and the source read back at 1.3–1.6 s from the 3 s it had reached. The heavier stack (curves + wheels + sliders) costs nothing measurable. Restart Premiere when a long grading session's renders creep past ~1.5 s.
-- **Five clips on the ORIGINAL sequence still carry a Lumetri grade** — the same five as the 18:03 accident (C198, C209 ×2, C187, C202: every one printed "(read from Premiere: the clip already carries a balance)" with `read 0.0`). The strip did not stick. The 23:58 run scored **7/18 balanced against the 23:08 run's 10/18** with identical code, and three of the five contaminated clips are the near-misses (C202 blacks +2.4, C198 −2, C209 +5.9/+6.3). Strip Lumetri from those five on the original and re-run before reading any 7-vs-10 as a code regression.
-- **The panel's own model refuses a `PCX.*` script** (correctly — the system prompt forbids reaching into the panel's internals through `run_extendscript`), and when asked, it confabulated an answer about the Hue Saturation curves ("all five read back as empty strings … decoded offline as 520-byte records") that contradicts premiere-map Round 252's live `Hue vs Sat` → `0:`. Probes pasted into the panel must use documented `app.*` / `qe.*` only, and the model's prose about internals is not evidence.
-- **Luma vs Sat SOLVED and built (2026-09-16 00:10–00:30), not yet run inside the pass.** Seven live writes on clip 1 of the `[Claude]` copy (`_claude-for-adobe_analysis/chat-2026-09-15-22-15-24.md` and the next export): the QE text door writes all five Hue Saturation curves as `N:x,y,…,` with x the position 0–1 and **y a signed saturation offset, 0 neutral** (flat ±0.5 moved the saturation median 28 → 45 / 12); `0:` is the empty curve and restored the baseline every time; Premiere draws a **cubic spline** through the points — ends at −0.5 with zeros at 0.15/0.85 rendered as a flat +0.5 (natural spline peak +0.51), seven pinned points held the median at 28 while the ends desaturated. Built: `parseSingle`/`formatSingle`/`spline`/`satRolloff` in `src/curves.cjs`, `satCurveFor` in `src/grade_rules.cjs` (skips a colored end, keeps a curve the clip carries), `satWriter` in `gradeSequenceTool` (a Luma vs Sat present counts as "graded"). **First live run (00:27) wrote it LAST, after the corrections, with its own confirm: every row carried `sat roll-off:`, but the blacks cast on the final read moved 1–3 points that nothing then corrected (C229 5.1→7.8, C202 2.4→4.7, C200 0.4→2.7 and C228 −0.8→−1.6 lost their ticks, C198 −2→−0.8 gained one): 6/18.** Moved into the first batch with the temperature, pads and curve (no extra render, three a clip again) so the corrections rescale from a reading that already carries it. Suite 298: 297 pass, 1 skip. **[ARCHIVE 2026-09-16 — superseded; the live next step is "What's Next" above] Next editor step then: one `grade this video` run on the reordered pass; done when the balanced count is back at 7/18 or better on the same (still contaminated) footage and no row's final blacks cast is worse than the 23:58 run's.**
-- **The parity guard FIRED on its first run (00:48, clean original, the five stale Lumetris removed by hand): C220's source decode is off Premiere's render by 6.6** (Premiere: black 8.2 / white 75.7 / blacks −1.6 — the calibration frame's own numbers; the source decode has read 16.1 / 77.3 / blacks −16.9 in every run). Whites cast identical, black end wildly apart: a different *frame*, not a different decode. C193 @15.39 shows the same (7.5 vs 12.5). That is why C220's pad overshot to blue every night — solved for −16.9 warm on a frame that is −1.6. The run read every clip from Premiere: **7/18**, 219.9 s. A local decode of C220 frames 0–60 (`bin/braw_to_rgba --range`, which honours the index) reads 12.5 / 80.4 — a third set of numbers, so the pass's time→frame mapping (`sourceSeconds` = in point + offset, `round(seconds × fps)`, fps 23.976 from the SDK) is the suspect; reproducing it needs the clip's in point (`sequence_overview`). Until it is found the guard keeps runs honest at the price of a render per clip.
-- **Renders were back at ~3.7 s within 50 minutes of the restart** (00:48 run: 59 renders in 219.9 s; C209 @20.29 took 18.2 s for 5). Session state degrades after a few hundred effect writes; it is not the stack. Restart before any timed run.
-- **Built 00:52–01:00 (`e46b0f3`, not yet run live):** the correction's pad nudge carries the first pad's floor guard (C227 @5.63: an orange Shadows pad 0.21→0.35 over a −83 temperature put blue on the floor across the parade — the owner's screenshot at 00:00:05:12); and **shot match** — the first cut of a source file is graded, every later cut of the same file gets the same Lumetri state (read back from Premiere: temperature, tint, wheels, curves, Luma vs Sat, the sliders) and one confirm, its row reads `→ matched to <first cut> (same source): …` (C227's three cuts had temperature −64 / −83 / −47).
-
-### 2026-09-16 01:00–01:40 — what landed after the roll-off (each with a run unless marked)
-
-Read the rows of `_claude-for-adobe_analysis/chat-2026-09-15-23-*.md` for the evidence; commits in order:
-- `40c8382` a channel at 0 is damage only as a FLOOR (> 5% of the frame): C228's blue cloth had red at 0 on 2.8% and the guard threw its black-point curve away ("flat and less rich"). C228 ✓ since.
-- `e46b0f3` the correction's pad nudge carries the first pad's floor guard (C227 @5.63's blue floor).
-- `9e3efe3` **clip speed** in the snapshot (host `getSpeed()`, 9th snapshot field) and `sourceSeconds = (in + offset) × speed`: a speed-changed clip's in point comes back timeline-scaled. Found by scanning C220's file for the frame Premiere renders at 0.5 s (source frame 168 = 7.01 s, not 112); the project file shows **ten of the eighteen cuts at 1.4–1.8×, one at 0.25×**. Parity guard: `matched (within 0.4)` since; the source read is back for every clip.
-- `9e3efe3`/`dc1baec` **one grade per source file**: a source cut more than once is pre-read (source decode, no render), the **median-whites cut** is graded as the shot's reference, every other cut gets its whole Lumetri state (`writeGradeState`) and one confirm; if a cut would clip, crush or pass white 95 under it, the shot's tone is halved on **all** its cuts (the earlier cuts are rewritten, not re-read). The owner's rule (01:08): cuts seconds apart that look identical must not differ; never shift the color between them; brightness may be balanced. Two earlier variants are in the log for the record: copying the whole state without the shot backoff (00:58, clipped 4% / crushed 9.4%) and matching the color only with per-cut tone (01:10, "the slight changes make it feel wrong").
-- `8c90f1e` **mixed light** (whites and blacks on opposite sides, whites beyond the pads' reach): temperature is solved — and corrected — on the mean of the two casts, the pads take the residuals (C227's specular-only balance went to −83 and left a sibling blue by 18). NOT YET RUN.
-- `9d98c54` **scene color on the white balance**: both ends the same way by > 20 → no temperature, said in the row (C227 @4.44: oak table and hands drained grey-beige, pale skin — the owner's screenshot at 00:00:04:09). NOT YET RUN.
-
-- `32293b9`/`042645b` **Vision runs every detector by default** (`bin/ocr <image>` → text, faces, hands, subject and person extents in one line, 0.5 s warm; flags narrow it and are the only way a mask PNG is written; `--subject`/`--person` keep the flat `{mask,coverage,box}` shape). Every region read carries `vision`; rows print `[subject; 1 face, 2 hands]`. `bin/ocr` is built locally: `swiftc -O -o bin/ocr src/ocr.swift -framework Vision -framework AppKit; codesign -s - bin/ocr` (first run after a build takes ~14 s while macOS compiles the models).
-- **HSL Secondary is OPEN (02:00–02:50, ~20 live writes on C228 of the `[Claude]` copy; chats `chat-2026-09-16-00-1*.md`…`00-4*.md`).** The whole recipe, nothing assumed:
-  - **Key**: QE `setParamValue("HSL Secondary", "H:c,i,o;S:c,i,o;L:c,i,o")` — per axis **centre, inner half-width (the plateau), outer half-width (the feather's edge)**, all 0–1, hue 0 = red, 0.5 = cyan; **outer must be ≥ inner** — an inside-out trapezoid (`0.14,0.02`, `1.00,0.00`) is an *empty* key and was the whole reason two hours of writes rendered nothing. `H:0.50,0.00,0.00;S:0.50,0.00,0.00;L:0.50,0.00,0.00` is the empty key (the default). Reads print commas (`0,09`); writes take dots. The eyedropper on a hand produced `H:0.09,0.05,0.10;S:0.51,0.08,0.13;L:0.31,0.06,0.11`; written back by script it selected the same pixels.
-  - **The switches**: `81 HSL Secondary=false` is a group header, not a switch (every section has one: 73 Color Wheels & Match, 108 Vignette); `82 Active=true` is the section's enable and is on by default. `83 Key`, `94 Refine`, `98 Correction` are sub-group headers. **Nothing needs enabling.**
-  - **Show Mask = DOM property 88** (`setValue(true, true)`): the render becomes the mask view — unselected pixels flat grey 72.2, selected pixels in color — so `scopes`/Export Frame *measure the key* (share of pixels off 72.2, and their casts). Turn it off before any picture read.
-  - **Correction scalars, DOM by index** (`comp.properties[n].setValue(v, true)`; the name walk finds Basic/Creative first): 101 Temperature, 102 Tint, 103 Contrast, 104 Sharpen, **105 Saturation (0–200, 100 neutral)**; 106 is a boolean, not the slider. Saturation 0 inside a broad skin key: saturation median 11 → 1, midtone cast −12.9 → 0, luma median 50.6 unchanged.
-  - **Set color (84/85/86, ARGB, `setColorValue` works) does not drive the key through the API** — the ranges are the key. `getColorValue()` on the unnamed blob at 87 kills the interpreter (`EvalScript returned nothing`), so never call it in a loop.
-  - **Not yet done**: a sweep of 101/102 (HSL Temperature/Tint) inside a key on skin, and the read side — the key ∩ Vision hand/face boxes measured on the mask view — then `skinFor` in the rules. That is What's Next 4, now with every door proven.
-
-- **11:00–12:35 — skin, built and half-calibrated (commits `675fb2e`…`cab4953`, suite 307/306/1 skip):**
-  - `src/skin.cjs`: the HSL key learned from the pixels in Vision's hand/face boxes (centre/inner/outer per axis from percentiles under a skin prior). **Known weakness (12:18, C223):** boxes at the frame edge hold sleeve and cabinet; the cream cabinets sit next to skin in hue with low saturation; the learned key took the whole room. Needs: inner quartiles, saturation floor ≈ 0.18, and a **spill check on the mask view** (keyed share of the frame vs the boxes' area; tighten once, else skip skin on that clip and say so). Not yet done.
-  - Scopes regions `keyed` (Show Mask on: only the selected pixels) and `hands` (the biggest Vision hand box); `bin/ocr` returns every detector by default.
-  - Host `lumetriIndex(seconds, track, index, expectName, value)` — a Lumetri property by index; HSL Secondary: 88 Show Mask, 101 Temperature, 102 Tint, 103 Contrast, 104 Sharpen, 105 Saturation (0–200, 100 neutral). `PARAMS` has `hslTemperature/hslTint/hslSaturation`; `lumetri_sweeps.json` has their rows measured on C227's hands inside the key `H:0.06,0.01,0.03;S:0.44,0.20,0.23;L:0.34,0.13,0.16` (Tint: hue 143→119° across ±100 on THAT key; Temperature a quarter of the global slider; Saturation usable 0–100).
-  - `skinFor` in the rules and the skin step in `gradeSequenceTool` (after the corrections: its own kept render of the hand/face region, key from it, write, confirm on the box, one secant correction, clip guard). **Writes are OFF (`SKIN_WRITE = false`, `fab2567`): HSL Tint is a wash toward magenta — every keyed pixel went pink (the owner, 12:21: "it should be using the wheels"), and its slope from one key did not transfer (C223 asked for 123° and got 102°).** The step now reports `skin: 2 hands hue 131°, saturation 19 (off the line; … nothing written)`.
-  - **The HSL Secondary wheels are QE `Correction`** — `Shadows:h,s,l;Midtones:h,s,l;Highlights:h,s,l`, same text as `Color Wheels & Match`, read-tracked live (a hand drag read back as `Midtones:66,32,0,73,0,50`); `3-Way` reads `true`. **Next: the calibration paste in the 12:30 chat** (Midtones pad at 0/90/180/270° sat 0.25, luma 0.35/0.65, region hands) → a 2×2 pad→(Cb,Cr) map inside the key and a luma-per-wheel row → `skinFor` re-solved as a Midtones pad (hue rotation without the wash) + wheel luma for a dark hand/face (the targeted lift instead of Shadows) → `SKIN_WRITE` back on. `writeGradeState` must carry `Correction` too.
-  - **Dark subject** (a hand/product under luma 35 while the frame is balanced): Shadows toward 40, **cap +30**, scaled back while the frame's spread would drop under 55 or its black point past 8 (+51 on C220 went flat, 12:18); the curve re-solves after a Shadows lift (it is not a non-responsive black); the verdict names `subject luma 22 dark where it matters`. Once the wheel luma is calibrated, that lift should move inside the key.
-  - The dev panel needed a Premiere restart at 11:55 for `lumetriIndex`; nothing since changed the host.
-- **12:54–13:10 — the wheel calibrated, skin rewired to it, writes ON (not yet run inside the pass):**
-  - **Calibration (paste in `_claude-for-adobe_analysis/chat-2026-09-16-10-53-30.md`, C227 @4.44 hands inside the key above, restore read identical to baseline):** the Midtones pad at sat 0.25 on 0/90/180/270° moved the keyed mean (Cb, Cr) by (−0.3, +1.3) (−0.8, −0.3) (0, −0.9) (+0.8, +0.7) on the −50..50 scale — a linear wheel, 0° red (+Cr), 90° yellow (−Cb), under 2 points a channel; **the 270° read landed the hands at exactly 123°**. Per unit pad saturation `[dCb, dCr] = [[−0.6, −3.2], [4.4, −2.0]] · [x, y]` (`HSL_PAD` in `src/grade_rules.cjs`, cap 0.6). **Wheel luma is asymmetric on this frame and not used:** 0.35 took the hands' median 45.5 → 42.4 and pushed 23 → 34% of their pixels into the shadow band; 0.65 left the median at 45.5 and only moved shadows into midtones (23 → 13%). The dark-subject lift stays on the Shadows slider (cap +30, ceiling).
-  - `skinFor(m, {saturation})` → `{ pad: {hue, sat}, saturation, why, predicted }`: HSL Saturation first (only when the median is 3+ points outside 20–50: its sweep reaches 3 points on a hand at full slider), then the pad as the wheel's inverse on the same radius at 123°, capped at 0.6 with "as far as the pad goes". C227's hands (131°, sat 19) → pad 275°/0.27, nothing on saturation.
-  - `src/skin.cjs`: the key is symmetric about the feather's centre with the plateau as wide as fits; **saturation feather floor 0.18** (`SAT_FLOOR`), `tight` keys (p25–75 / p10–90), `spills(coverage, boxShare)` = coverage > 2 × boxes + 5% of the frame.
-  - Panel: `hslWriter` has `correction`/`readCorrection` (QE `Correction`), `hslPadText(pad)` builds the wheel text (Midtones only), `writeGradeState` carries the pad to matched cuts, `gradeStateSummary` prints `skin pad 275°/0.27`. The skin step: key on → Show Mask → one `keyed` render → Show Mask off → spill check (tighten once, else key emptied and `NEEDS: skin: the key lights X% of the frame against Y% of hands boxes; skipped on this clip`) → pad + saturation written → confirm on the box → secant on the pad's saturation from the rotation actually read (a pad that turned the wrong way comes off) → clip guard halves → row `skin: 2 hands keyed H:… → hue 131° → Midtones pad 275°/0.27 → hue 123.4°, saturation 19 ✓`. Four to five renders a skin clip. `SKIN_WRITE = true`. HSL Tint is never written (a test asserts it).
-  - **14:12 — the first live skin run (`767cfdf` + this):** every keyed clip ended on the line (C223 123.7°, C227 123.8°, C198 126°, C209 124.2°, C233 126.9°) but only after the secant: the wheel turned 2.5-3× further per unit of pad than the 12:54 calibration (that key was the thin eyedropper one; the pass's keys cover the hand) → `HSL_PAD.m` ×2.5. HSL Saturation 200 doubled a hand's saturation where the sweep said ~nothing (same thin-key sweep) → a direct gain (`HSL_SAT_GAIN` 0.8 per 100, range 50–200) with a saturation secant on the confirm. C222 got no pad because the pad was decided on the sweep's predicted state → decided on the measured hue. The mask view never reached the pass's render even after 0.9 s: with the playhead already parked on the frame, `exportFramePNG` returns the last drawn frame and the DOM Show Mask toggle does not invalidate it (a QE param write does; the hand-run scopes call moved the playhead fresh) → the playhead is nudged 0.5 s off before each mask render. Earlier the same afternoon: the person mask came out at Vision's 512×384 and every box was dropped as a size mismatch (`bin/ocr` now scales it to the frame); the spill rule is 3× boxes + 10%; the loose key is p5–p95 / p1–p99 plus a margin (S/L 0.04, H 0.01) after a p2–p98 key lit 3–4% of a 5–6% hand. `docs/color-process.md` (agent-written, corrected) describes the pass in plain language. Renders crept to 15–19 s a clip by the end of the 14:12 run (192 s total): restart Premiere before the next.
-  - **14:21–15:00 — three more live runs, and the skin method called into question (`76a2fd2`…`f33a8ef`):** with the matrix ×2.5 every keyed clip landed on the line first or second try (14:41: C223 123.5°, C227 122.2°, C198 121.6°, C209 122.9°, C233 122.5°), but the owner's screenshots showed **bright pink skin**: HSL Saturation 198 on a hand at 14 amplifies the tint it already carries, and the Midtones pad at its 0.6 cap on a key that had caught only the **rims** of the hands turned those rims magenta. Fixed: saturation is never boosted (the 20–50 band is a diagnostic; only over-saturation comes down, range 50–100), pad cap 0.3, a key that spills **or** lights under half the skin it was learned from is skipped and said, the tighten pass is gone (it is what produced the rim key), the hue correction iterates (≤2) with the rescale clamped to 0.2–5×. **The wheel's strength varies ~6× between keys** (C209 55°/unit of pad, C227 10°): the first write is always a guess, the clip's own response is what lands it. **The mask view never reached an export in four runs** (any wait, any playhead; a hand-run `scopes … region keyed` shows it seconds later) → the mask renders are gone; coverage is computed in software from the confirmed frame (`keyCoverage` in `src/skin.cjs`; Premiere's mask lit 3–4% where it said 8%, inside the spill margin). Also: the playhead nudge is gone (it jittered the monitor and brought no mask). **The owner's verdict, 14:55: "instead of guessing this HSL we should actually follow what works… getting the key right isnt just a one shot on the picker and guessing."** A research pass on the real colorist workflow (eyedropper then range handles, mask-view refinement, **Refine Denoise/Blur — never touched here**, which axes matter for skin, the magnitude of a skin rotation, the pink failure mode) is running; **no further keying change until it lands.** **Refine read at 15:05: 94 is the sub-group header, `95 Denoise`, `96 Blur` (both numeric, 0 by default), 97 a second boolean named Blur, 98 Correction header** — `hslWriter` now has `denoise`/`blur`. Never yet written.
-  - **15:05–15:15 — the keying method replaced with the researched one, and the honest outcome (`722500b`):** a research pass (Adobe's Lumetri procedure, Resolve's qualifier guidance, Kelly via Frame.io, Cine Source, Larry Jordan; full report in the 15:00 agent message) says what we had was the named mistake — a pick turned into a tight key on all three axes. The method: the pick is a **seed**; **hue and saturation** are the axes that matter and **lightness is left fully open**; the hue range is **wide** (±18° plateau, ±30° feather — no source publishes a width, and the skin line itself spans 116–126° across packages); saturation is opened at the bottom and **bounded only at the top**, the one control that rejects a same-hue wall; **Refine (Denoise, Blur) is applied BEFORE any correction** because a loose blurred key beats a hard one, which bands (Resolve's typical matte blur is 2–4 px); saturation inside a skin key goes **down, never up**, and a trace past the line toward magenta means overshoot. Built: `skinKeyFrom` now emits that key, `refineKey` narrows it against the frame (greedy: the step that removes the most background per unit of skin lost, ≤14 steps, stop at the spill rule or under 70% of the skin kept, ~2 s a clip), `hslWriter.denoise/blur` (95/96) written before the wheel, `writeGradeState` carries them. **The measured result is that an HSL key cannot do this job on this footage:** the wide key lights 98% of these frames because oak shares skin's hue, saturation AND lightness; after narrowing, the 15:09 run keyed nothing — three clips were already on the line (C222 121.5°, C233 125.1°, C231 122.3°) and four said so in the row (C223 holds 71% of the skin but lights 27% of the picture for 2.9% of hands; C227 59%/53%; C198 73%/44%; C209 79%/40%). No pink, nothing written, 87 s for the run. **The right tool for a hand on a wooden table is a shape mask (power window) on the Lumetri, which Premiere supports and Vision already locates — not built, and the obvious next piece of skin work.**
-  - **15:25–15:45 — skin moves to Hue vs Hue; the mask path is closed (`ddb2a36`, `51162f1`):** a second research pass ("before we go down a path, make sure we know what colorists do") settled three things. (1) **A loose key is a professional position, not a compromise** — "a red brick house may, indeed share red with skin"; wood lit by the same lamp should warm with the hand; a heavy qualifier leaves skin unmotivated (Van Hurkman). So spill now **scales** the correction (full at the spill threshold, half at twice it, never under a quarter: `attenuationFor`) instead of vetoing it. (2) **The tool hierarchy puts the qualifier last** — "Primaries, Custom curves, Hue vs Hue curves, HSL qualifier using as few parameters as possible" (Kelly via Frame.io). The skin step now writes a **Hue vs Hue bump** on the skin's own hue (`hueBump` in `src/curves.cjs`, `hueCurveWriter` in the panel; probe 0.02, secant rescale, ≤3 tries, cap 0.12, removed if it ends further from the line). No key, no mask, no tracking; `writeGradeState` carries it. (3) **Masks are unreachable from a script.** Verified directly: the UXP changelog's only mask entry is "A new `ObjectMaskUtils` class has been added" (26.3, no methods listed) and Adobe's ExtendScript reference documents no mask/matte/shape API at all; the agent's further claim that its sole method is `hasObjectMask()` is **unverified** — one runtime `Object.keys` in the panel would settle it, and if it turns out to be more, the mask path reopens. Premiere 26.0 did rebuild masking and ship the AI Object Mask on Lumetri, by hand only. (4) **Pale skin is not a fault:** complexions differ "in saturation and brightness but not in hue" (Van Hurkman), so 14–21% on a hand is a reading; the band is now asymmetric (over = fault, under = reported), and the remedy order when it IS wrong is white balance → contrast → saturation last. Also: exposure must never be routed through a key (Kneschke) — ours goes to the Shadows slider, which is right.
-  - **15:53 — the hue curve works, first live run (`6993add` + the gain commit):** every skin clip landed on the line and the rest of the picture was untouched. C223 128.7→122.3, C227 128.3→122.7, C198 (face) 135.3→124.4, C209 131.2→123.7; C222/C233/C231 were already on it (121.5/125.1/122.3) and got nothing. 120 s, 55 renders, no pink, no key, no mask. **The curve's response is steady where the wheel's was not: a POSITIVE offset always lowers the vectorscope angle, at ~180–270°/unit (vs the wheel's six-fold spread).** So the first write is now solved from a 220°/unit gain (`SKIN_HUE_GAIN`, min 0.008, cap 0.12) instead of probed — the old probe guessed the sign wrong on all four clips and cost a render each. Against the run's own numbers the solved first write is 0.024–0.056 where the clips landed at 0.028–0.040, i.e. inside one secant step.
-  - **16:06–16:25 — the sampled frame is not the only frame, and the source read now respects Motion (`28211ec` + this):** the owner's screenshots of C228 showed why it got no skin row — at the clip's midpoint a cloth covers the hand and only a sleeved arm shows; a second later the hand is wide open. So a clip with no face/hand on the graded frame now gets `findSkinTime`: four times (15/35/65/85%) decoded **from the source file** (no Premiere render, no playhead move), all read in **one** `bin/ocr` call (`visionAllMany`; four frames together 810 ms vs 2162 ms apart — Vision reads stills, but the binary takes many files a call), the frame showing the most skin wins, and the skin step measures and corrects there. The row says `skin found at 8.2s, not on the graded frame`. **And every source read is now cropped to the visible window** (`visibleFraction` in `src/frame.cjs`, memoised per clip in the grade run): Motion scale and position decide which source pixels reach the frame — 4K at 50% in 1080 shows all of it, at 100% the middle half, at 150% the middle third, and a position push slides the window — so measuring the whole file balances pixels the viewer never sees. Known gap: the face-vs-hands choice is still made from the source frame, so a heavily reframed skin clip could pick the wrong region; the boxes and every correction still come from Premiere's render.
-  - **19:12 — the skin-frame search works live, and a long run no longer outlasts its caller (`8cc6b0b` + this):** C228 got its skin row at last (`skin found at 8.131s, not on the graded frame` → 134.3° → 123.1°) and C193 too (14.865s, hand at **114.6°**, i.e. the other side of the line, and the solved first write handled the negative direction: −0.038 → 125°). **Every skin clip landed on the first write** — no second probe on any of them, which is the measured 220°/unit gain doing its job. But the run took **515 s** (renders 15–30 s a clip, reads 12–23 s: Premiere's session degradation plus a loaded machine) and **the agent gave up waiting while the panel carried on and finished** — the MCP bridge has no timeout of its own, so the caller's patience is the limit. Added: `budget_seconds` (default 150) stops the loop cleanly between clips, and `start_at` resumes; the footer names the exact value to pass. `gradeMatched` keeps the shot-match state per track/region **between calls**, or a resumed run would grade a later cut of an already-graded file from scratch. Also this hour: the scopes tool's source read is cropped by Motion too (the crop belongs in every path that decodes a file, not just the grade), and `clip_transforms` confirmed the sandbox is **6K at 31.25% centred = exactly 1920 wide**, so the whole frame is visible and nothing crops on this project.
-  - **19:35–19:50 — three eye checks, three blind spots in the rules (this commit):** (1) **C193 @15.39 "flat-ish"** with ends at 4.3 / 92.9: the contrast check judged p1–p99, which one specular and one dark corner satisfy while the body sits squeezed → `luma.p10/p90` added to the scopes, `STATISTICS.body` (p90−p10), a Contrast goal when the body spans under 45 with the ends fine (`SPREAD.bodyFlat/bodyTarget`), and the verdict names it. (2) **C198 @17.2 "she's too pink"** with whites 0.8 / blacks 4.7: the parade's whole body is red-high and no rule looks at the middle → the verdict now names a midtone cast over 4 (`MIDTONE_CAST`) from the band the scopes already compute. **Not corrected**: the tool is the Midtones wheel, whose 2×2 is still NaN (What's Next 6) — that sweep is the next calibration to run. (3) **C187 @22.0 "flat"** at black 23.5: `levelsFor` refused any curve on a colored bottom (the 21:26 crush) although the floor cap (21:43) already stops the bottom point at the lowest channel → a colored bottom is now pulled as far as its lowest channel allows and the row says so. Suite 312: 311 pass, 1 skip.
-  - **22:14–22:35 — the skin target was the pink (`d4559e3` + this):** the 22:23 run took the face from 135° → 119.5° → 124.4° "to sit on the line" and the owner's verdict was "way too pink". On our scale (atan2(Cr,Cb)) LOWER is redder: the pass rotated her toward red twice, by design, because the target sat at the red end of a corridor the research itself called a corridor. Now `SKIN_HUE = [116, 140]` (the line up into the oranges), skin is brought TO the line (123) only from the red/magenta side, and from past 140 (a green cast) it comes down to 132, never to the line (`skinTargetFor`). C227's hands at 131 are now left alone. Also: the midtone-band number was measuring the objects ("warm by 53" = the oak) and dragged balanced to 0 → it is a bracketed **hint** past 4 and under 20, never a verdict, and the Midtones-wheel calibration paste is **withdrawn** until a measure that separates a cast from the objects exists. The body-contrast goal fired but Contrast was "beyond the knob's range" on every clip: the contrast sweep carries no p10/p90; `predict` now carries them proportionally (too little — the sweep frame's ends were near the limits) and the scopes print p10/p90, so **a contrast sweep with the body percentiles is the next calibration** (six values on C193 @15.39, paste in the 22:20 message). Balanced 6/18 with the hints separated.
-  - **22:35–23:05 — depth (`53eeea9`, `fe08339` + this):** with the skin step leaving her alone the face "is much better"; the remaining complaint is **depth** on C193 (13:22, 15:00). Two causes in the rows: the shot guard **halved** Whites when the sibling's white point passed 95 (97.6 → 84.3 for a cut that wanted 93) → a white point past the band is now scaled to land at 93; real clipping still halves. And Contrast never fired: the calibration sweep carried no body percentiles → **the panel's model ran the sweep itself in one instruction** (22:58, C193 @15.39, −40…60, `contrast-sweep-C193.md` on the drive), and `lumetri_sweeps.json` now has `p10`/`p90` rows on `contrast` (C193's series; the model interpolates the ratio). **Finding: the Contrast slider is a weak, crush-prone tool** — the body moves ~0.14 a point (63 at −40, 69 at 0, 77 at +60) and the floor crushes 0.9% at +40, 2.8% at +60; a body of 42 → 52 would need +74, past the goal's cap of 40, so the slider gets partway and the crush guard holds it. **The next tool for depth is an S-curve on the Master curve** (we write and model that curve exactly), not more slider. Also: the midtone band is now a bracketed hint, never a verdict; a long grade pauses at `budget_seconds` and resumes with `start_at`.
-  - **23:05–23:25 — depth landed, log recognised, scene color half-corrected (`b5d19f3`, `8f08adc` + this):** the 23:06 run: Contrast fires (partial at its cap of 40 on the flat rows; C228 crushed 6% and the guard halved it to 20), C193's white point scaled to 92.2 instead of halved to 84, 8/18, 137 s. **The owner tried a second project — a Sony A7S II XAVC S file — and the pass balanced log as if it were display-referred** (black 12.2 → 2.7, white 70.6 → 94.9, contrast 40: a stretch, not a conversion). The file declares nothing (ffprobe: transfer/primaries unknown, full range, XAVC brand; no Sony sidecar copied), so log is now **recognised from the picture** (`looksLikeLog`: black ≥ 8 AND white ≤ 78 AND saturation p99 ≤ 18; measured 12.5–14.5 / 68–71 / 10–14 on three frames a quarter-hour apart, against 32–39 on the sandbox; a dim display picture shares the luma, never the color) and **the pass stands down on it with a row that names the conversion** (the maker's LUT in Input LUT, or Premiere's color management). Converting it ourselves (a generated .cube, or a curve-based transform) is the next log step; which S-Log the camera used is unknown (PP7 = S-Log2, PP8/9 = S-Log3). Also from the owner's eye: **21:23 "not balanced"** — a warm bottom under neutral whites was left alone as scene color; now **half** of a colored end comes out through the pad (`SCENE_SHARE`), the floor guard still holds. A temperature half-move was tried and reverted: −49 on the oak fixture, and −47 had been called pale. **15:08 "still lacks contrast"**: that row got no Contrast (the body test passed on the read) and the slider is weak anyway — **the S-curve on the Master curve is the next tool for depth.** Provenance: one row message quoted a sandbox clip tag; removed (rules never branch on a clip; sweeps and thresholds are the honest overfitting risk, listed in the 23:03 message, and only a second project settles it — the A7S II one is that project once its log is converted).
-  - **23:25–09:25 — the LUT door is closed, so log gets graded by curves (`670e057`, `87e0246` + this):** the log detector tripped on a dim Blackmagic clip at color p99 exactly 18 → two-sided now (p99 ≤ 15 AND median ≤ 6). The 23:23 Prototype run: 21:23 gets half its shadow warmth out through the pad (the panel still reads the body warm by 41 — the objects), 15:08 reads with real depth by the numbers; the owner's eye on both is pending. **The owner's direction on LUTs: no Premiere built-ins (not good); the maker's official free LUTs, or grade log ourselves.** `src/cube.cjs` writes a .cube from a function (identity and inverted probes on the A7S II project's drive). **The Input LUT custom slot is not scriptable** (09:23 probe, panel-run): properties 6 and 7 are both "Input LUT"; QE `setParamValue("Input LUT", path)` returns true and changes nothing; DOM property 7 `setValue(path)` throws "Illegal Parameter type"; property 6 = 1 sets the menu index (QE reads it back) but loads nothing; the frame was identical through all four passes. The dropdown (screenshot 23:20) is None / [Custom] / Browse… then the technical LUTs alphabetically (ALEXA…, AMIRA…, ARRI_Universal…, D-21…, Phantom…; Sony below the fold, unseen). **Remaining file route:** patch the saved .prproj (premiere-map decodes the Lumetri blob) — save, patch, reopen; not taken. **Taken instead: the log conversion as RGB Curves** — the published inverse transfer (S-Log2 / S-Log3; A7S II PP7 = S-Log2, PP8/9 = S-Log3, unknown for this shoot) followed by the Rec.709 encode, written per channel through the proven curves door, confirmed by the render (black floor to ~0–4, color opened), then the normal pass; the S-Log2 curve on S-Log3 footage leaves blacks lifted and the reverse crushes them, which is how the format is told apart without a tag. **Honest ceiling:** no gamut matrix (Lumetri has none outside the LUT slot), so color lands close, not exact; Saturation trims. Not built yet.
-  - **09:30–09:45 — the gamut question is answered, and it is not a plugin (research + `surface-26.3.2.md`):** the owner: "I'm sure there are ways to handle the gamut." There are. **Premiere's own color management does the full Sony transform (tone + gamut) before any effect, and it is scriptable in ExtendScript on this machine:** `projectItem.getOverrideColorSpaceList()` / `setOverrideColorSpace(name)` / `getOverrideColorSpace()` / `isColorManagedMedia()`, `app.project.setLogColorManagement()`, `SequenceSettings.autoToneMapEnabled` / `autoInputGamutCompressionEnabled` / `gamutMappingControls` / `workingColorSpace(List)` — all present in our own API dump. Sony spaces: S-Log2/S-Gamut, S-Log3/S-Gamut3, S-Log3/S-Gamut3.Cine (not S-Log2 + S-Gamut3.Cine). A second door: `FootageInterpretation.setInputLUTFromFilePath()` takes a **file path** at the Interpret Footage level — the maker's official LUT goes there, not in Lumetri's slot. Colorists: tone-only conversion fails on S-Gamut greens/reds; "I'll take a transform over a LUT any day". Caveats from the agent: the two derived 3×3 matrices are from published primaries, not Sony's table, and Adobe/Sony pages 403'd — moot while Premiere applies its own transform. **A native plugin is NOT needed for gamut**; it stays the route only for a live program-monitor feed (Transmit), and signing is the ordinary cost the panel's bundled binaries already pay (ad-hoc locally, Developer ID + notarisation to distribute). Memory saved: `project_premiere_color_management_scriptable.md` — **in the premiere-map project's memory** (`~/.claude/projects/-Users-dandj-DevApps-premiere-map/memory/`), not this repo's. **Next: the panel probe** (read the override list + sequence color settings read-only; set "Sony S-Log2/S-Gamut" on the `[Claude]` copy; scopes + preview; restore), then the pass's log step: recognise → set the override → confirm from the render (black floor ~0–4, color opened; the wrong S-Log leaves blacks lifted or crushed) → grade what comes out.
-  - **09:57–10:05 — both log doors probed live (panel-run, A7S II copy):** (1) **The override door works.** `projectItem.getOverrideColorSpaceList` is a **property** (34 `ColorSpace` objects with `.name/.primaries/.transferCharacteristic/.matrixEquation/.isSceneReferred/.empty`, not strings): ACEScct, Apple Log ×2, ARRI LogC3/LogC4, Canon Log/Log2/Log3, DCDM, DJI D-Log, Fuji F-Log/F-Log2 ×2, Leica L-Log, Nikon N-Log, P3 HLG/PQ, Panasonic V-Log, Rec.2020 ×2, Rec.2100 ×4, Rec.601 ×2, Rec.709 ×2, RED Log3G10, Sony S-Log/S-Log2/S-Log3/S-Log3.Cine, sRGB. `setOverrideColorSpace(<ColorSpace object>)` returned true, `getColorSpace()` followed, the render changed. **Restore rule:** the empty "no override" object is not valid to write back (`isValidOverrideColorSpace(empty)` false, `null` false) — restore with `getOriginalColorSpace()` (Rec.709 here, true; scopes identical to baseline). **The override is on the project item → shared with the original sequence; the pass must restore it itself.** Sequence: working Rec.709, `autoToneMapEnabled` true, `autoInputGamutCompressionEnabled` true (the owner's screenshot: Direct Rec.709 SDR, Input Tone Mapping + Input Gamut Compression on, Highlight Saturation 0.5, Knee 0, Color Space Aware Effects disabled). **S-Log2/S-Gamut on the A7S II clip with the tone mapper ON:** black 12.5→21.6, median 26.7→38, white 70.6→83.9, sat median 4→7 — whites/median rise like a conversion, the black floor rises like the input tone mapper; the panel's model called it "not log"; unresolved until the run with both boxes off across all three Sony curves (queued with the owner). (2) **Color Space Transform effect: adds by name** (`qe.project.getVideoEffectByName("Color Space Transform")`, `addVideoEffect` true, matchName `AE.ADBE Color Space Transform`), 9 properties: SCS, TCS, SCS Arb Data, TCS Arb Data, Tone Map Method, Gain, Desaturation, Knee, GC Methods. SCS=30/TCS=26 stuck on read-back but **the render did not change: the two Arb Data blobs drive it and QE `getParamValue` returns them empty** — a blob to decode from the .prproj (premiere-map's method) if this door is ever wanted; parked. The effect was left on the copy, inert.
-  - **10:06 — the three Sony overrides with the tone mapper OFF (panel-run; `setSettings` is non-undoable, the panel checkpointed twice: mu58temq-95d2be, mu58v5lw-202359):** S-Log2/S-Gamut → black 21.6 / white 100 / sat 9–30, 5–11% clipped per channel; S-Log3/S-Gamut3.Cine → 9.0 / 100 / 7–39; S-Log3/S-Gamut3 → 9.0 / 100 / 8–41 (the two S-Log3s differ only in gamut, as they should). Restore to Rec.709 exact. **Reading:** clipping with the tone mapper off is what real log looks like through a raw transform (log holds highlights above display white; the tone mapper is what rolls them off) — the panel's model called it "already display-referred", which is backwards. **Unexplained:** S-Log2 LIFTS the floor 12.5 → 21.6 with the mapper on or off; no de-log lifts blacks; three arithmetic attempts (full-range, legal-range-misflagged, Premiere-as-limited) give 2–5, not 21.6. The container says full range (`yuvj420p`, `color_range=pc`); a wrong flag would offset every Sony MP4. The file's own floor (min 8.2%) sits at S-Log2's coded black (8.8%), below S-Log3's (9.3%) — weak evidence for S-Log2. **Decisive test, the owner's route:** Sony's official S-Log2 and S-Log3 LUTs by hand in Lumetri's Input LUT (Browse) on the copy, scopes at 507 s after each — a proper picture from one of them settles the profile AND says whether Premiere's transform mishandles the file's levels. The picture profile (PP7 = S-Log2, PP8/9 = S-Log3) has been asked for three times; unknown.
-  - **10:15–11:00 — log handled end to end, no profile needed (this commit):** the eight-override sweep with the tone mapper ON settled the A7S II file: **S-Log3/S-Gamut3.Cine** (black 9.0 / white 85.1 / color p99 29, nothing crushed) — S-Log2 lifts the floor to 21.6 (the wrong curve), Canon Log3 and V-Log crush 0.3–0.4%, ARRI LogC3 ties on numbers and loses on maker. Built: `src/logspace.cjs` — `cameraHint` from the container's tags (XAVC → sony, verified on the file), `candidates` (the hinted maker's log spaces first, never a display space), `score` (distance from black 4 / white 91 / color p99 25–45, crush and clip ×20, a body under 45, −5 for the hinted maker), `pick` (accept ≤ 14); tests replay the real sweep and pick S-Log3.Cine. Host: `colorSpaces` (list / current / original), `setColorSpace` ("" = original), `setInputLUT` (FootageInterpretation.setInputLUTFromFilePath — **untested live**). Panel: `chooseLogConversion` (maker's candidates first, one render each, the rest only if none passes; winner set, else restored) wired into `grade_sequence` once per source file; the row reads `log → Sony S-Log3/S-Gamut3.Cine (4 conversions tried, sony first …)`, the footer says the override is on the project item and Discard does not undo it. **The makers' LUTs, the owner's four steps:** `src/luts.cjs` registry (Sony S-Log3.Cine→s709 v2.00 direct link verified and fetched to `~/Library/Application Support/claude-for-adobe/luts/sony/`; S-Log2, Canon, Panasonic, Blackmagic entries carry the maker's page — click-through, no direct link), `log_lut` tool (status / fetch / apply / clear), and the color skill's "Log footage" section: say it is log and from which maker (ask if the tags say nothing), Premiere's conversion by default, the maker's LUT on request — ask before fetching, say what and from where, never search. Not bundled: licensed for use, not redistribution.
-  - **11:43 — the maker's LUT goes on the CLIP, and the door was hiding in plain sight (`23c6a35`, `c89279a`, `dd40d26` + this):** with Sony's cube applied by hand through **Browse**, the Lumetri component reads **property 4 = the .cube path as plain ASCII** (len 90) and **property 6 = 1** (the custom flag); property 0 is the whole Lumetri state as **byte-swapped UTF-16 XML** carrying the same path plus an `<embeddedlut>` hash. So Browse is reproducible from a script: `lumetriLUT(seconds, track, path)` writes 4 then 6 (clear = 6 → 0, 4 → ""), on the clip, on the working copy, removed by Discard, **no source settings, no menu entry, no restart**. `log_lut apply` now uses it. **The conversion is exact:** the render after Browse read black 4.7 / white 92.2 / color 27 against the software prediction of Sony's cube on that frame (4.7 / 92.2 / 24) — close enough that a LUT can be identified by its numbers. Dead ends recorded: the Input LUT **menu** lists only the 8 cubes bundled inside the app (`Contents/Lumetri/LUTs/Technical`, not writable); a cube dropped in `~/Library/Application Support/Adobe/Common/LUTs/{Input,Technical}` appears after a restart but **reverts on selection**; index 11 loaded a built-in, not ours. Also: the color-space interpretation the grade sets **stays** on Discard (the owner: "discard copy can't restore a fix to the source settings"), and the LUT library moved to **`~/Documents/Claude for Premiere/LUTs`** so the editor can reach it for Browse. Suite 321: 320 pass, 1 skip. **Research corroborates it independently** (12:00): the community's documented route is exactly "set property 4 to the path, then property 6 to 1" (Adobe forum 12980574; Creative Look is index 32), LUTs are stored **by reference, never embedded** in the project, and the API's own getter returns the menu position rather than the path. Three warnings taken into the code: a scripted custom LUT **worked in 22.5–23.3 and was reported broken in 23.4–24.0** (CEP-Resources #501), so `log_lut apply` now judges by the render and says plainly when the write did not stick; `LUT_3D_INPUT_RANGE`, 1D/shaper blocks and a BOM are documented causes of "lists but will not load", now stripped by `normaliseCube`; and spaces, `+` and `-` in a LUT's file name stop it applying, so fetched files are stored through `safeName`. For the menu route (not needed now): `Common/LUTs/Technical` feeds Basic Correction's Input LUT, `Creative` feeds the Look dropdown, `Input` feeds Interpret Footage — our file was in `Input`, the wrong slot, which explains the revert.
-  - **12:05–12:20 — the grade asks before touching a source setting, and the LUT route is one call (`a09647a` + this):** the 11:51 run set the color-space interpretation on the project item **without asking** — a source setting that survives Discard. Wrong, and fixed: `grade_sequence` takes `log` (default **"ask"**), which names the clip, names the maker from the file's tags, states both routes with their cost (interpretation = exact, every cut, **stays after Discard**; the maker's LUT = on the clip, **removed by Discard**) and grades nothing until the editor picks. `log: "interpret"` is the old behaviour, `log: "lut"` fetches and applies the maker's LUT **and carries straight on with the normal grade in the same pass** (the owner: "after it gets the LUT it should automatically start color correcting it"). `log_lut use` is the one-call form for a single clip: maker from the file, download only if missing, apply, judge by the render, clear the slot if it did not take — the editor never sees an id or a folder. Also hardened from the research: `normaliseCube` strips `LUT_3D_INPUT_RANGE`, shaper blocks and the BOM; files are stored under a safe name; the skill tells the panel to ask once, name the maker and the site, and never search. Suite 323: 322 pass, 1 skip. **Still unproven live: the scripted Lumetri LUT write on this Premiere version** (community reports it broken in 23.4–24.0).
-  - **[ARCHIVE 2026-09-16 — superseded, this is NOT the next step] Next editor step then: restart Premiere (host changed), reload, Discard copy on the A7S II project, `grade this video` (it will ask), then answer with the LUT route so the write is proven on this version.** Done when: C227's hands row ends inside 116–126° with the oak unchanged by eye, C223/C198/C209 are not pink (a spilled key is skipped and says so), C220 keeps its range, C222's hand is lifted. If a pad overshoots on another key, the secant line in the row says by how much — that is the number to read.
-
-**Open on this shot (C227, three cuts):** the brightest 1% is the wood's sheen, not a neutral, so no specular rule can balance it; the canon's next reference is skin (the hands) — see What's Next 4. A saturation floor on the subject (hold the temperature back while the subject's predicted saturation would fall under SKIN_SAT[0]) needs saturation in the model (`coupleBands` moves casts and levels, not saturation).
-
-The sections below predate the color work. Their test counts and "last commit" lines are stale; the header above is canonical on anything numeric.
-
-## Color / scopes + lost-Claude fixes (2026-09-14, commits 2cd371b + dab2098)
-
-The editor asked the panel to "see the scopes" to color footage, and it got lost (loaded a skill, sent a subagent to read the panel's own source, tried a disk walk). Root cause was no capability map and no color tool, not a prompt failure. What landed, each Codex-approved (trail in `docs/codex-review-log.md`):
-- **`scopes` tool**: Lumetri-style scopes as NUMBERS for up to 3 timeline positions, from Premiere's own full-res Export Frame (grade included), read as SDR Rec.709 — luma percentiles 0-100, RGB parade means/ranges, clipped/crushed shares, vectorscope saturation and whole-frame cast, plus one scope picture drawn through an explicit Rec.709 conversion so it agrees with the numbers. `src/scopes.cjs`. VERIFIED live against Lumetri Scopes on color bars in a sandbox: luma waveform, vectorscope and parade values all match.
-- **Capability map in the prompt/tools**: preview_frames says it is Premiere's own full-res render; the scripting skill names the tools that export; the prompt's error rule leads with "your tools are your whole capability list ... never read the panel's code or send a subagent to learn what a tool does".
-- **Script guard split**: CAPABILITY refusals latch the turn; FORM refusals return how to rewrite and allow a retry.
-- **`run_extendscript` never deletes its working copy**; **abandoned tool calls cancel** (the MCP server aborts a call whose request closes).
-
-**Native scopes readback — settled 2026-09-15 (premiere-map Round 250):** Premiere's scopes are GPU-resident intermediates drawn straight to the panel; no reader for scope values surfaced in any searchable layer. Export Frame + our own computation IS the native path. The native door that IS open: Lumetri parameters via the DOM (`property.setValue`) and, for the blob parameters, QE `setParamValue` by name (Round 252).
-
-**Exposure calibration (2026-09-15) cancelled the offline Lumetri simulator:** Premiere's Exposure is asymmetric (a clean gamma-2.4 gain downwards, a highlight-protecting tone map upwards); no static curve reproduces both. Measure-and-interpolate from live sweeps replaced it (`src/grade_solve.cjs`, `src/grade_model.cjs`).
-
-**Queued adjustment-layer/LUT detection** — now What's Next 3 above.
-
-## Cut silences button native rebuild (2026-09-10)
-
-- Button now detects once and builds a separate native sequence in batches of up to eight linked V1/A1 pairs (default later raised to 24 with verified fallback to 16 then 8). Existing chat/editorial extraction paths are unchanged. Host reads back source and destination ranges, links, static intrinsic effects and original geometry; no QE extraction in this button path.
-- Supported: contiguous, source-aligned normal-speed V1/A1, at most 300 source pairs (600 snapshot rows). Other populated tracks, transitions, nests/multicam, sequence markers and animated/nonintrinsic effects are refused. CEP cannot enumerate caption tracks: an explicit per-run no-captions acknowledgement is required.
-- Source project-item marks restore before yielding, with exact verification and retained recovery state on failure. Stop leaves a named INCOMPLETE copy and reopens the original after successful mark recovery.
-- Actual source/original/new sequence ranges are saved in `.silence-rebuild.json` beside the project.
-- Live: 144.31 s rebuilt into 76.99 s, 36 linked pairs; larger trials at 8/16/24 batch sizes completed 360 pairs (135–192 s host work), mapping rows identical; 32 was too unresponsive and was stopped. Default 24 with fallback; ETA shown from the last three batches.
-
-## Scoped analysis lookup (2026-09-10)
-
-- `list_analysis` uses direct selected Project clips, otherwise individually selected bins, otherwise the fresh active timeline; full inventory requires explicit `all:true`. Matching legacy filenames are candidates, not proof of cache identity.
-
-## Speaker-check crash and duration workflow (2026-09-10)
-
-- Host `frames` prepends a SOLO status row; `speakerCheck` had treated it as a frame (`Cannot read properties of undefined (reading 'toFixed')`). Filter the exact SOLO+column header before mapping frames.
-- Duration-limited requests: choose the short story from the audio_cut report's resolved kept ranges and plan/apply only that subset via `keep_only`. Dry-run output labels extracted intervals REMOVE.
-
-## Intact dialogue and optional speaker annotations (2026-09-10)
-
-- `src/transcript_presentation.cjs`: whole punctuation-delimited dialogue first, optional speaker runs and measured pause/pitch/level observations, then unchanged global index:word mappings. Prosody from a fresh Premiere mono PCM16/16 kHz render; derived cache bound to word hash, timeline fingerprint, WAV SHA-256, schema/version and silence settings. Optional exact-word diarization sidecars reject identity/alignment errors as a whole.
-
-## Sequence folder placement and selected-clips startup (2026-09-09)
-
-- Sequences created from selected clips land in the source items' common folder, preferring the nearest unambiguous Sequences/Timelines/Cuts/Edits bin; never project root. Direct selected clips take precedence over selected bins; empty selection cannot widen creation.
-- Live: nine selected clips classified in 9 s; the two-stage macro created two 1080x1920 sequences of 1223.18 s and an Editorial transcript of 2087 words in 45.6 s; the waveform-ready second run removed 338.34 s in 131 extracts with all nine sources retained.
-
-## Two-stage rough cut (2026-09-09)
-
-- Technical Cleanup (measured silence, −35 dBFS, min 1 s, 0.18 s padding, source-waveform vetoes, all takes preserved), then a native Editorial copy for take and story decisions; only silence overlapping an audio clip is eligible; guarded cleanup checks expected snapshots in the panel and inside native Extract. Plan: `docs/superpowers/plans/2026-09-09-two-stage-rough-cut.md`.
-
-## Local metadata feasibility benchmark (2026-09-09)
-
-- M4 Max: MLX Whisper large-v3-turbo + Pyannote 3.1 on MPS + NumPy prosody on 387.9 s: 37.7–45.6 s a pass; the MLX transcript had 608 words against the panel's 752 (repeated/incomplete attempts lost — do not replace the panel's Whisper path for speed). Local metadata is practical on this Mac; it is not a fully offline editing agent.
-
-## Measured pause layer and foundations (2026-09-08)
-
-- `src/silence_map.cjs` measures quiet PCM16 runs (default −35 dB / 0.25 s) from the freshly rendered timeline; `audio_cut` snaps edit boundaries to measured silence (0.2 s tolerance / 4 s max) and writes `.silence.json` beside the project. 153 pauses matched FFmpeg `silencedetect` within 0.0000005 s.
-- Whisper attaches pauses to neighbouring words: keep raw words, resolve boundaries with measured silence. Applied foundation test: 387.89 s → 61.02 s, CHECK PASS; one remaining repeat deferred by the user to story work.
-- Mac acceleration: ggml Metal plugin bundled; Whisper on Metal with one CPU thread: 387.9 s of audio transcribed in 35.2 s (752 words); the CPU fallback is 100x slower. `node scripts/check-whisper-metal.cjs <wav>` reproduces.
-- The 9:16 loop ran end to end once on 2026-09-07; its doubles were three `findRestarts` bugs (fixed, tested offline, not yet re-run live); `place_broll` by clip name fixed; system prompt cut to 696 words (cap 700 in `test/codex-session.test.cjs`).
-
-## The cut pipeline (0db65d6, 5bb9087)
-
-1. `rough_cut({bin, aspect|preset|width/height, language})`: creates `<folder> <shape>` in the bin's PARENT folder, fills each clip to the frame and centres the face (Vision faces via `bin/ocr --faces`), renders the mix, transcript = Premiere's own per-clip transcript first, else Whisper; hands back `transcript_index` and STOPS.
-2. The model authors thoughts as word-index ranges and calls `audio_cut({thoughts})` for the report, then `audio_cut({thoughts, apply: true})`.
-3. `src/thoughts_authored.cjs` picks each take by fluency, cuts failed restarts inside a thought (`findRestarts`), merges kept pieces under the editors' rules, one `keep_only`.
-4. B-roll, tracking (`reframe` / Auto Reframe), frame checks and captions come after, on the survivors only. Order of operations in `.claude/skills/edit-footage/SKILL.md`.
-
-## Older Key Files
-
-| Path | What |
-|---|---|
-| `src/claude-session.cjs` | Spawns Claude CLI (stream-json), system prompt (all rules live here), model fallback, MCP config |
-| `src/core.cjs` | ExtendScript guard: rejection/mutation/nonUndoable patterns, `isReadOnlyScript`, wrapper |
-| `src/mcp-http.cjs` | Local MCP server with bearer token |
-| `src/update.cjs` | Updater (GitHub Releases, checksum, safe install) |
-| `src/whisper.cjs`, `src/vad.cjs`, `src/transcript*.cjs`, `src/captions.cjs`, `src/classify.cjs`, `src/silence.cjs`, `src/pek.cjs` | Engines |
-| `scripts/package.sh`, `scripts/install.sh`, `Install.command` | Release build (refuses version mismatch), dev install, user installer |
-| `docs/codex-review-log.md` | Review trail |
-| `~/DevApps/Brain/Projects/Claude for Adobe/Claude for Adobe — Architecture and Operations.md` | Vault architecture note (2026-09-05; numbers stale) |
-
-## Older What's Next (unchanged)
-
-1. **Re-run the 9:16 loop** (needs the editor): drive mounted, dev panel, select the TALKING HEAD and BROLL bins, say "make this a 9x16 video". MUST: the audio_cut report lists the three restarts under Dropped. SHOULD: the two "room to go / room to grow" thoughts are linked by `retake_of`. Replay a span through `findRestarts` with the run's real word timings before changing any rule:
-   ```bash
-   cd ~/DevApps/claude-for-adobe && node -e 'const {findRestarts}=require("./src/thoughts_authored.cjs");const w=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).words;const [a,b]=[Number(process.argv[2]),Number(process.argv[3])];console.log(findRestarts(w.filter(x=>x.start>=a&&x.end<=b)))' "<analysis>/<sequence>.timeline.json" 160 175
-   ```
-2. B-roll, tracking, captions on the survivors (`place_broll` by clip name; `reframe` once; `seam_frames`/`layer_frames`; captions last).
-3. **Release 0.1.78, gated on the re-run passing and an explicit go.** Bump `CSXS/manifest.xml` AND `package.json`, review host changes under the AGENTS.md rule, `sh scripts/package.sh && gh release create vX.Y.Z dist/ClaudeForAdobe-X.Y.Z.zip dist/ClaudeForAdobe.zip --title "…" --notes "…"`.
-4. Keystroke doorbell decision (Accessibility permission; the only way to reach command ids such as Speech to Text) — no yes from the user yet.
-5. Default Media Scaling preference — unknown; needed to know what scale 100% means on other machines.
-6. Parked: `sound_events` on a cut with a real laugh; `similar_shots` over the Media Intelligence embedding cache; masks in the cover model; caption band routes; After Effects panel; ZXP signing.
-
-## Older Known Issues
-
-- The model, on a tool error, once improvised ExtendScript; the prompt rule against it shipped in `336637d` and is unvalidated in Premiere.
-- Whisper on 6+ minutes of raw audio takes minutes; Premiere's own transcript (Text panel > Transcribe, then Cmd+S) is instant and is picked up first.
-- Premiere keeps a closed panel alive; reload the panel after edits, restart Premiere for host script changes.
-- `overwriteClip`, `Track.setLocked`, `TrackItem.end`/`inPoint` assignments and `exportAsMediaDirect` are verified only in Premiere 26.3.2.
-- Transitions are invisible to the panel; caption position is a Premiere track setting the panel cannot move.
-- The user's Mac has a Homebrew ggml; the byte-patched `bin/libggml.0.dylib` keeps the bundled backends in use. Re-apply the patch when upgrading whisper.cpp.
-- All 1,231 Premiere command ids are NOT callable from a panel: keystroke or menu only (so the panel cannot make Premiere transcribe).
-
-## Test project (the user's real sandbox)
-
-- Pre-flight: the external drive holding the project is mounted, and the panel footer starts with `dev <sha> (<branch>)` — a `v0.1.77` footer is the released panel without any of this branch. The project path, sequence names and analysis folder live in the private memory note `project_claude_for_adobe_test_project.md`; never in this repo.
-- The color sandbox is an 18-clip BRAW 1920x1080 sequence (product/hands footage, one face shot, warm-toned room); its working copies are `<name> [Claude]`, `[Claude] v2`, …
+**Read in this order:** `CLAUDE.md` → `docs/findings-index.md` → this file → `docs/color-sweep-queue.md`
+(groups 1b–1f are the day's runs) → `src/lumetri_sweeps.json` → `docs/reviews/astra_chooser_report.md`.
+
+**Driving live measurement.** The panel's own Claude appears in `ListAgents` as
+`com-claude-for-adobe-premiere-dev-*` (new id after every reload). `SendMessage` it; ask for raw tool output,
+never a summary; tell it to flag anything contradicting what you said you expected — it caught the stale-copy
+and stale-cache runs both times. Do not reach the MCP port or drive the UI. The owner clicks Reload and deletes
+the `[AI]` copy; give him one code fence containing only the paste, nothing else in fences.
+
+**Baseline to beat:** 3/18 balanced on a fresh copy with every Basic slider on pixels (adfdd5a, 17:17). The
+number that matters is `MODEL OFF BY` per pixel-chain row: ≤ 1.2 everywhere, or say which step is table.
