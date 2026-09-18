@@ -351,6 +351,16 @@ test("a long grade returns: it pauses at a time budget and says how to continue,
   assert.match(seqTool, /if \(c\.start \+ 0\.001 < Number\(start_at \|\| 0\)\) continue;/, "a resumed run skips what is done");
   assert.match(seqTool, /call grade_sequence again with start_at=/, "the result says exactly how to continue");
   assert.match(panel, /const gradeMatched = new Map\(\);/, "the shot match is kept between calls, or a resumed run regrades a later cut from scratch");
+  // ...but kept PER SEQUENCE, which the comment claimed and the key did not do. Without the sequence in it,
+  // one cache served every sequence the panel had ever graded: on a brand-new working copy, 14 of 18 clips
+  // reported "matched to <itself>" and replayed the values a DELETED copy's run had solved, so the solver -
+  // and everything downstream of it, the forward guard included - was never asked (measured 2026-09-18).
+  assert.match(seqTool, /const matchKey = \(\) => \(project\.sequenceId \|\| project\.sequence \|\| "\?"\) \+ "\|V" \+ track \+ "\|" \+ region;/,
+    "the shot-match cache is keyed by the SEQUENCE, so a fresh working copy starts clean");
+  const key = (sequenceId, track, region) => (sequenceId || "?") + "|V" + track + "|" + region;
+  assert.equal(key("seq-A", 1, "subject"), key("seq-A", 1, "subject"), "a resumed run on one sequence keeps its matches");
+  assert.notEqual(key("seq-A", 1, "subject"), key("seq-B", 1, "subject"), "a new working copy does NOT inherit the old one's grades");
+  assert.notEqual(key("seq-A", 1, "subject"), key("seq-A", 2, "subject"), "tracks stay separate");
 });
 
 test("nothing the grade footer reads is declared inside the clip loop's try block (22:08: 'resumeAt is not defined' killed a run before a write)", () => {

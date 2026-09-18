@@ -1572,7 +1572,14 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   // Shot match: one grade per SOURCE file. The first cut of a file is graded; every later cut of the
   // same file gets the same Lumetri state and one confirm (the owner, 2026-09-16 00:52: C227's three
   // cuts had three grades, temperature -64 / -83 / -47, and "look very different").
-  const matchKey = (snapForKey) => "V" + track + "|" + region;
+  // The SEQUENCE has to be in this key. It says "per sequence" three lines above and it was not: the key
+  // was "V<track>|<region>", so one cache served every sequence the panel ever graded - including a working
+  // copy that had just been deleted and replaced. Measured 2026-09-18: on a brand-new copy, 14 of 18 clips
+  // reported "matched to <itself> (same source)" and were handed the decimal values the PREVIOUS copy's run
+  // had solved (temperature -54.43, -42.5, -24.17, and on C231 -10.47, which was not even a solved value but
+  // a corrected one). The solver was never asked, so nothing downstream of it - the forward guard included -
+  // could run either. A new copy has a new sequenceId, so it now starts clean on its own.
+  const matchKey = () => (project.sequenceId || project.sequence || "?") + "|V" + track + "|" + region;
   const matched = gradeMatched.get(matchKey()) || {};
   gradeMatched.set(matchKey(), matched);
   // The playhead follows the clip being graded and goes back to where the editor had it when the run
