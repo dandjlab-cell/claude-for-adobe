@@ -108,27 +108,31 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Master's form on green is not found — three sweeps separate what is left.** Pixels read 21:23
-   (`curveToeAnchoredC202._perPixel`; PNGs in `test_data/frames/`, gitignored): red and blue are 1-D maps of
-   their own input (a spline bowing ≤1.8 IRE above the chord); **green is not 1-D** — at a fixed green input
-   its output rises with red and with falling blue, never crushes, and a linear mix of the curved channels
-   fits each bottom point but with weights that change with x. Nine mechanisms rejected on the pixels
-   (per-channel clamped/unclamped, luma diff/ratio, max diff/ratio, luma-preserving green, per-channel in
-   P3/2020/AP1/AP0). `tools/pixel_map.cjs before.png after.png` prints the per-channel medians and green's
-   split. Owner, fresh copy, all three (independent):
+1. **Decide the black point's knob: model Master on green, or write three channel toes.** Facts on record
+   (`curveToeAnchoredC202._perPixel`, `._perPixelUnanchoredAndChannels`): the Master curve is the straight
+   line on red and blue pixel-exact (unanchored; the anchored form is a spline bowing ≤1.8 IRE above the
+   chord), and on green it is NOT a 1-D map — its output rises with red and with falling blue, never
+   crushes, and the cross-channel weights move with x. Nine mechanisms rejected. Each channel toe alone is
+   the line on its own channel pixel-exact and moves the others by nothing, so **Red+Green+Blue at one x is
+   the exact per-channel form** — but without an anchor (midtones drop ~5 IRE at 0.15). `curve_sweep` now
+   takes `anchor` on Red/Green/Blue and `curve: "RGB"` (all three in one write), and kept-frame names carry
+   the clip time and anchor. **Unverified live** (reload). Owner, fresh copy, all four independent:
 
    ```
-   Three calibration sweeps, keepFrames true on all. Return each tool's raw output including the "Frames kept" line, no summary.
+   Four calibration sweeps, keepFrames true on all. Return each tool's raw output including the "Frames kept" line, no summary.
    1. curve_sweep Master, anchor 0.55, points 0, 0.09, 0.15, on A056_05072025_C187.braw at 22.02s
-   2. curve_sweep Master, points 0, 0.09, 0.15, on A056_05072128_C202.braw at 23.94s (no anchor)
-   3. On A056_05072128_C202.braw at 23.94s: curve_sweep Red points 0, 0.15 then Green points 0, 0.15 then Blue points 0, 0.15
+   2. curve_sweep RGB, points 0, 0.15, on A056_05072128_C202.braw at 23.94s
+   3. curve_sweep RGB, anchor 0.55, points 0, 0.09, 0.15, on A056_05072128_C202.braw at 23.94s
+   4. curve_sweep Green, anchor 0.55, points 0, 0.09, 0.15, on A056_05072128_C202.braw at 23.94s
    ```
 
-   (a) says whether green's structure is the frame's; (b) whether the anchor spline is part of it (the
-   recorded `_model` was fitted unanchored); (c) is the pass's candidate replacement — three channel toes
-   at one x — checked pixel-exact against the line before anything is rewritten. Then decide: model Master
-   on green, or move the black point to channel toes (2-point lines, no anchor: midtones move ~4 IRE at
-   0.09, which the anchored Master protects — the trade the owner must see).
+   Then `node tools/pixel_map.cjs <0 png> <x png>` on each pair. (1) is the second frame for Master's
+   green; (2) confirms the three toes in one write compose pixel-exact; (3)/(4) say whether an anchored
+   channel curve is the red/blue spline of anchored Master (then `masterToeAnchored`'s form can serve the
+   channel curves and the pass can switch the black point to RGB with the anchor kept) or something else.
+   If (3) is the spline within ~0.5 IRE: switch `levelsFor`/`planShot` to write RGB instead of Master,
+   predict with the per-channel spline, and re-run the sixth-run baseline (3/18 balanced, residuals ≤1.2
+   or named).
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -205,7 +209,7 @@ No gates tool. The agreement is:
 | file | what |
 |---|---|
 | `tools/pixel_map.cjs` | **new** — per-pixel map between two kept renders (Master's form) |
-| `panel.js` (evening) | `curve_sweep`: `masterBlack` (wheel under the grade's curve), `keepFrames` |
+| `panel.js` (evening) | `curve_sweep`: `masterBlack` (wheel under the grade's curve), `keepFrames` (names carry clip time + anchor), `anchor` on channel curves, `curve: "RGB"` |
 | `src/grade_pixels.cjs` | **new** — the chooser: `choose`, `evaluate` (prefix rail witness), `context`, `readingFor` |
 | `src/forward.cjs` | OPS gained `shadows`, `highlights` (bumps), `shadowsWheelLuma`, `highlightsPad`, `masterToeAnchored`; `newlyRailed`; 256-entry LUT apply; tuple stages |
 | `src/grade.cjs` | `planShot` chooses on pixels, pixel-form goals first, readback reconciled, `expected`/`expectedHow` |

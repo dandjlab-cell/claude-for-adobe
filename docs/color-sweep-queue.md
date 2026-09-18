@@ -198,6 +198,13 @@ green is not found.** Next, independent: (a) the same on C187 (second frame), (b
 C202 (is the anchor spline part of it?), (c) Red + Green + Blue toes at one x together (the per-channel
 replacement the pass would write, checked pixel-exact).
 
+**(b) and (c) read (21:35, `curveToeAnchoredC202._perPixelUnanchoredAndChannels`).** The bow was the
+anchor: unanchored Master is the straight line on red and blue pixel-exact. Green's anomaly is Master's,
+anchor or not, same x-dependent weights. Each channel toe alone is the line on its own channel pixel-exact
+and moves the others by nothing — **three channel toes are the exact per-channel form**; their cost is no
+anchor (Green 0.15 dropped p50 by 5.5 where anchored Master held it). (a) was lost to a filename collision
+(fixed: names carry clip time and anchor) and is re-queued with the anchored-channel and RGB sweeps.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
