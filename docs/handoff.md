@@ -4,7 +4,7 @@
 **Worktree:** ~/DevApps/claude-for-adobe (the privacy scan forbids absolute home paths in this public repo)
 **Date:** 2026-09-18 (day session 08:00–19:40, plus the 20:00 verification session)
 **Branch:** `main`
-**Last commit:** `066199f` — the pad form verified live (sixth run)
+**Last commit:** `4070a16` — the pad form verified live (sixth run)
 **Role:** BUILDER
 
 ---
@@ -21,7 +21,7 @@ not a lookup table per frame; only ship what we know how it works.**
 
 ```
 $ git log -1 --oneline
-066199f the Highlights pad form is verified live: every chain pixels at every step, no [table] left
+4070a16 the Highlights pad form is verified live: every chain pixels at every step, no [table] left
 $ git status --porcelain
  M docs/handoff.md        # this file only, being written; committed as the handoff commit
 $ node --test test/*.test.cjs
@@ -253,7 +253,7 @@ owner (not yet written; do it if he agreed, skip if he struck it):
 
 ```bash
 cd ~/DevApps/claude-for-adobe
-git log --oneline -3          # main @ 066199f, 28 unpushed
+git log --oneline -3          # main @ 4070a16, 2 unpushed
 node --test test/*.test.cjs   # 412 pass / 1 skip (413 when schemas.adobe.com is reachable)
 ```
 
