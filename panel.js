@@ -2144,7 +2144,10 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   } finally { if (playheadBefore !== null) { try { await host("playhead", playheadBefore); } catch (_) {} } }
   const secs = Math.round((Date.now() - t0) / 100) / 10;
   lines.sort((a, b) => { const ta = /@([\d.]+)s/.exec(a), tb = /@([\d.]+)s/.exec(b); return (ta ? Number(ta[1]) : 0) - (tb ? Number(tb[1]) : 0); }); // ponytail: the reference cut was graded first; the reader wants timeline order
-  lines.unshift("Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone: the row says what it is and asks which conversion to use" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
+  // The build goes in the RESULT, not only the log. Twice on 2026-09-18 the panel's own session could not
+  // say which code had run - no tool result carried the sha and it rightly refused to read the source to
+  // infer it - so a measurement stalled on a human reading a log line. This is the line they read.
+  lines.unshift("[" + buildTag() + "] Graded V" + track + " by " + region + (read !== "premiere" ? ", read from the source files where possible" : "") + (confirm ? "" : ", NOT confirmed") + ": " + clips.length + " clips, " + touched + " changed, " + (confirm ? balanced + " balanced" : "balanced count withheld (unverified)") + ", " + renders + " Premiere renders in " + secs + "s" + (stopped ? " — STOPPED by the editor" : "") + (logSkipped ? " — " + logSkipped + " clip" + (logSkipped > 1 ? "s" : "") + " read as LOG and left alone: the row says what it is and asks which conversion to use" : "") + (resumeAt !== null ? " — PAUSED at the " + budget_seconds + "s budget with clips left" : "") + "."
     + (cropOff ? " " + cropOff + "." : "") + (parity ? (parity.off > PARITY_MAX ? " The source decode did NOT match Premiere's render on " + parity.clip + " (off by " + parity.off + "): the clip's source settings (Blackmagic RAW decode, LUT, color space) differ from the decoder's, so every clip was read from Premiere instead." : " Source decode checked against Premiere's render on " + parity.clip + ": matched (within " + parity.off + ").") : ""));
   const convNames = Object.entries(logConverted).filter(([, v]) => v && v.name).map(([k, v]) => path.basename(k) + " → " + v.name);
   if (convNames.length) lines.push("Log conversions were set as the clips' color-space interpretation (Modify > Color, on the project item): " + convNames.join("; ") + ". This is a fix to how the footage is read, not part of the grade: every cut of the file sees it, in every sequence, and it stays when the copy is discarded. To change it: Project panel, right-click the clip, Modify, Color.");
@@ -4454,6 +4457,12 @@ function gitDev(...args) {
   const r = require("node:child_process").spawnSync("git", ["-C", devRepo, ...args], { encoding: "utf8", env: { ...process.env, PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (process.env.PATH || "") } });
   if (r.status !== 0) throw new Error((r.stderr || r.stdout || "git failed").trim().slice(-300));
   return r.stdout.trim();
+}
+// What is running, as one token: "dev <sha>" from this repo, or "installed v<version>" from a release. The
+// same distinction the version row and the bug report make; here so a tool RESULT can carry it.
+function buildTag() {
+  if (devRepo) { try { return "dev " + gitDev("rev-parse", "--short", "HEAD"); } catch (_) { return "dev (sha unreadable)"; } }
+  return "installed v" + currentVersion(extensionRoot);
 }
 async function checkDevUpdates(announce) {
   ui.checkUpdates.disabled = true; ui.checkUpdates.textContent = "Checking…";
