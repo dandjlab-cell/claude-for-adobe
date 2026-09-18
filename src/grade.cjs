@@ -267,7 +267,19 @@ async function planShot({ set, measure, goals, guard = GUARD, tolerance = 1.0, m
         value = Math.round(v * 100) / 100;
         predicted = predict(state, g.param, from, value);
       }
-      if (Math.abs(value - from) > 1e-6) { const next = FORWARD.apply(buf, g.param, value); if (next) buf = next; }
+      // The buffer has to carry EVERY accepted move or it stops describing the picture. `apply` can throw -
+      // exposure above 0 is deliberately not modelled - and an uncaught throw here aborted the whole clip's
+      // write. A throw means the state is unknown from here on, so the guard stands down for the rest of
+      // this clip rather than judging later candidates on a frame that is missing a move.
+      if (Math.abs(value - from) > 1e-6) {
+        try { buf = FORWARD.apply(buf, g.param, value) || null; } catch (_) { buf = null; }
+      }
+    } else if (buf && Math.abs(value - from) > 1e-6) {
+      // A knob with no measured pixel form moved. `highlights` and `shadows` have no OPS entry and both fire
+      // on the ordinary low-white-point path, so this is the common case, not an exotic one: leaving `buf`
+      // alone would judge every LATER candidate on pixels missing a move that was really written - exactly
+      // the stale-state failure the forward model exists to end. Stand down instead.
+      buf = null;
     }
     plan.push({ ...entry, value, predicted: round(readStat(predicted)), note });
     state = predicted;

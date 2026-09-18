@@ -135,6 +135,34 @@ test("the forward guard refuses a move that would clip, and stays out of the way
   assert.ok(measure(apply(sample(risky), "whites", off.value)).clipped.red > 0.5, "unguarded, the move clips");
   assert.ok(Math.abs(on.value) < Math.abs(off.value), "guarded, it is backed off: " + on.value + " against " + off.value);
   assert.match(on.note, /held by the pixels/, "and the row says the pixels held it");
+  // Wiring the pixels up exposed two ways the buffer stops describing the picture. Both were found by an
+  // adversarial read on 2026-09-18, both were live, and both are silent - they produce a confident wrong
+  // answer rather than an error, which is the exact failure mode the forward model exists to end.
+  //
+  // 1. `apply` THROWS for exposure above 0 - deliberately, because Lumetri's shoulder is not measured. The
+  //    throw was uncaught and aborted the whole clip's write, losing every slider after it.
+  {
+    const rgb = frame(120, 0.008), m = measure(rgb);
+    const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0,
+      goals: [{ param: "exposure", statistic: "brightness", target: 60, why: "lift a dark face" }], pixels: sample(rgb) });
+    assert.ok(Array.isArray(r.plan) && r.plan.length === 1, "a positive-exposure goal must not abort the plan");
+  }
+  // 2. A knob with NO measured pixel form - `highlights` and `shadows`, both on the ordinary path - cannot
+  //    be applied to the buffer. Left alone, the buffer would then be missing a move that was really
+  //    written, and every LATER candidate would be judged on the wrong picture. The guard must stand down.
+  {
+    const rgb = frame(120, 0.008), m = measure(rgb);
+    const r = await planShot({ set: async (v) => v, measure: async () => m, measured: m, current: async () => 0,
+      goals: [{ param: "highlights", statistic: "whitePoint", target: 92, why: "no pixel form" },
+              { param: "whites", statistic: "whitePoint", target: 92, why: "would be judged on stale pixels" }],
+      pixels: sample(rgb) });
+    const after = r.plan.find((p) => p.param === "whites");
+    const moved = r.plan.find((p) => p.param === "highlights");
+    if (moved && !moved.skipped && Math.abs(moved.value) > 1e-6) {
+      assert.ok(!/held by the pixels/.test(after.note || ""),
+        "once an unmodelled knob has moved, the guard must stand down rather than judge on a stale frame");
+    }
+  }
   // A frame with headroom: the guard must not interfere at all.
   const safe = frame(190, 0);
   const a = await run(safe, false), b = await run(safe, true);
