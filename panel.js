@@ -2144,7 +2144,23 @@ async function gradeSequenceTool({ track = 1, region = "subject", tolerance, rea
   if (convNames.length) lines.push("Log conversions were set as the clips' color-space interpretation (Modify > Color, on the project item): " + convNames.join("; ") + ". This is a fix to how the footage is read, not part of the grade: every cut of the file sees it, in every sequence, and it stays when the copy is discarded. To change it: Project panel, right-click the clip, Modify, Color.");
   if (resumeAt !== null) lines.push("Not finished: the run paused after " + secs + "s so the call would return. Everything above is written and confirmed. To do the rest, call grade_sequence again with start_at=" + resumeAt + " (same track and region); the shot match carries over. If renders are creeping (they do through a long Premiere session), restart Premiere first.");
   if (!confirm) lines.push("Unconfirmed: the knobs are the model's prediction and nothing was re-measured; every verdict above is a prediction. Run scopes on a couple of clips, or rerun with confirm on, before trusting any of it.");
-  lines.push((ui.dupSequence.checked ? "Every change is on the working copy; Discard copy removes all of it." : "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write.") + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
+  // "Discard copy removes all of it" was not true. A log conversion written to a file's SOURCE settings
+  // survives Discard by design - it is a fix to how the footage is read, not part of the grade, and
+  // discardCopy says so in its own comment - so the line promised an undo it could not deliver on exactly
+  // the change that is hardest to reverse by hand. Say it only when nothing outside the copy was touched,
+  // and name what stays when something was.
+  // Which log conversions SURVIVE Discard is decided by logMode, not by the conversion record - which
+  // carries no `where` at all, so testing one would have made this line quietly never fire. "lut-source"
+  // writes the file's Interpret Footage LUT and "premiere" writes its colour-management transform; both are
+  // source settings on the FILE and outlive any sequence. "lut" goes in the clip's own Lumetri and does not.
+  const stays = logMode === "lut-source" || logMode === "premiere";
+  const stayed = stays ? Object.values(logConverted).filter((c) => c && c.name).length : 0;
+  const where = !ui.dupSequence.checked
+    ? "Duplicate-first is OFF: every change is on the active sequence itself, Cmd+Z per write."
+    : stayed
+      ? "The grade is on the working copy and Discard copy removes it — but the log conversion on " + stayed + " source file" + (stayed === 1 ? "" : "s") + " is in the file's own settings and STAYS: it is a fix to how the footage is read, not part of the grade. Undo that in Interpret Footage."
+      : "Every change is on the working copy; Discard copy removes all of it.";
+  lines.push(where + " Balanced means, on the sampled frame: parade ends aligned on both axes, black point ≤ " + GRADE_ACCEPT.blackMax + ", white point " + GRADE_ACCEPT.whiteMin + "-" + GRADE_ACCEPT.whiteMax + ", spread neither flat nor harsh, nothing clipped or crushed beyond what the source had.");
   card.done(lines.join("\n"), true);
   setStatus("Thinking…");
   return { text: copyNote + lines.join("\n") };
