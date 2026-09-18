@@ -189,6 +189,15 @@ whether a channel's output depends on the other channels' input. `curve_sweep` g
 `tools/pixel_map.cjs` reads two kept renders pixel by pixel — that is the next measurement, and it gives
 Master's form or rules the per-channel family out.
 
+**Pixels read (21:23, `curveToeAnchoredC202._perPixel`).** Red and blue are 1-D maps of their own input (a
+spline bowing up to 1.8 IRE above the chord, meeting it at the anchor). **Green is not 1-D**: at a fixed
+green input its output rises with red input and with falling blue input, and it never crushes; the Green
+curve alone shows none of it. A linear mix of the curved channels fits each bottom point but the weights
+change with x, so it is not a matrix. Nine candidate mechanisms rejected on the pixels. **Master's form on
+green is not found.** Next, independent: (a) the same on C187 (second frame), (b) Master *unanchored* on
+C202 (is the anchor spline part of it?), (c) Red + Green + Blue toes at one x together (the per-channel
+replacement the pass would write, checked pixel-exact).
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |

@@ -4,3 +4,6 @@ node_modules/
 dist/
 .cache/
 .claude/launch.json
+
+# kept sweep renders (frames of the test project, never committed)
+test_data/frames/

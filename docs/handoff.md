@@ -108,27 +108,27 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **Read the Master curve's real form from pixels.** Established 21:16: the channel curves are the
-   per-channel line on their own (Green and Red on C202 within 0.3, blue on C220 within 0.15); **the Master
-   curve is not three of them** — on C187 the lowest channel follows the line and green reads 15.7 where the
-   line says crushed (`curveToeAnchoredC187`, `curveToe._modelCORRECTION`, pinned in
-   `test/grade_pixels.test.cjs`). Every prediction through `masterToeAnchored` and `predictLevels`' anchored
-   branch is wrong on the non-lowest channels, which is the remaining live residual. `curve_sweep` now takes
-   `keepFrames` (keeps each row's PNG, prints the paths) and `tools/pixel_map.cjs before.png after.png`
-   prints per-channel output-vs-input medians and green's output split by the same pixel's red / blue / min
-   input. **Unverified live** (needs a panel reload). Owner, fresh copy, after reload:
+1. **Master's form on green is not found — three sweeps separate what is left.** Pixels read 21:23
+   (`curveToeAnchoredC202._perPixel`; PNGs in `test_data/frames/`, gitignored): red and blue are 1-D maps of
+   their own input (a spline bowing ≤1.8 IRE above the chord); **green is not 1-D** — at a fixed green input
+   its output rises with red and with falling blue, never crushes, and a linear mix of the curved channels
+   fits each bottom point but with weights that change with x. Nine mechanisms rejected on the pixels
+   (per-channel clamped/unclamped, luma diff/ratio, max diff/ratio, luma-preserving green, per-channel in
+   P3/2020/AP1/AP0). `tools/pixel_map.cjs before.png after.png` prints the per-channel medians and green's
+   split. Owner, fresh copy, all three (independent):
 
    ```
-   Two calibration sweeps on A056_05072128_C202.braw at 23.94s, keepFrames true on both. Return each tool's raw output including the "Frames kept" line, no summary.
-   1. curve_sweep Master, anchor 0.55, points 0, 0.09, 0.15
-   2. curve_sweep Green, points 0, 0.09
+   Three calibration sweeps, keepFrames true on all. Return each tool's raw output including the "Frames kept" line, no summary.
+   1. curve_sweep Master, anchor 0.55, points 0, 0.09, 0.15, on A056_05072025_C187.braw at 22.02s
+   2. curve_sweep Master, points 0, 0.09, 0.15, on A056_05072128_C202.braw at 23.94s (no anchor)
+   3. On A056_05072128_C202.braw at 23.94s: curve_sweep Red points 0, 0.15 then Green points 0, 0.15 then Blue points 0, 0.15
    ```
 
-   Then `node tools/pixel_map.cjs <Master 0 png> <Master 0.15 png>` and the same for Green 0 / 0.09 as the
-   control (green's output must not depend on red or blue there). If Master's green output at a fixed green
-   input moves with the pixel's red/blue/min, Master is a per-pixel operation on more than one channel;
-   fit that, replace `masterToeAnchored` and the anchored branch in `curves.cjs` together, re-run the wheel-
-   under-curve check (`shadowsWheelLumaUnderCurveC202` must still be within 0.9).
+   (a) says whether green's structure is the frame's; (b) whether the anchor spline is part of it (the
+   recorded `_model` was fitted unanchored); (c) is the pass's candidate replacement — three channel toes
+   at one x — checked pixel-exact against the line before anything is rewritten. Then decide: model Master
+   on green, or move the black point to channel toes (2-point lines, no anchor: midtones move ~4 IRE at
+   0.09, which the anchored Master protects — the trade the owner must see).
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
