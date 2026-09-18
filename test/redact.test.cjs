@@ -13,7 +13,10 @@ test("paths, names, emails, urls and keys never survive", () => {
     "project: " + vol,
     "tool extract_ranges 0.8s -> removed 0.96s of \"Interview_JaneDoe_C255.braw\"",
     "tool read_transcript 0.1s -> 412 words: \"we should talk about the merger\"",
-    "session for " + mail + " at https://api.example.com/v1/x?key=1 token sk-ant-abcdefghijklmnop",
+    // Split like `home` and `mail` above. The privacy scan now carries a credential pattern, and a fixture
+    // key written whole flags this file and blocks every push - the trap EXCLUDE exists for, better avoided
+    // than excluded, since excluding the file would stop it being scanned for real leaks at all.
+    "session for " + mail + " at https://api.example.com/v1/x?key=1 token " + "sk-" + "ant-abcdefghijklmnop",
     "home " + home,
   ].join("\n");
   const r = redact(log, { names: ["Interview_JaneDoe_C255.braw"] });

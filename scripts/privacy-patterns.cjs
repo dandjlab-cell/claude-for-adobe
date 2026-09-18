@@ -16,6 +16,15 @@ function patterns() {
     [/\/Users\/[A-Za-z0-9_.-]+/g, "home path"],
     [/\/Volumes\/(?!X\b)[^\s"'`)]+/g, "mounted drive path"],
     [/[A-Za-z0-9._%+-]+@(?!anthropic\.com)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "email"],
+    // Credentials. Added 2026-09-18 after a z.ai key was read out of the process table by a `pgrep` in a
+    // working session - not into a file, so this guard was never in play and correctly did not fire. The
+    // gap it DID have is that a key landing in a tracked file would have sailed through: there was no
+    // pattern for one. These match the shapes actually in use around this repo rather than trying to be a
+    // general secret scanner, which would drown the tree test in false positives on hex and base64.
+    [/\bsk-[A-Za-z0-9_-]{20,}/g, "API key (sk- form)"],                       // Anthropic, OpenAI
+    [/\bgh[pousr]_[A-Za-z0-9]{36,}/g, "GitHub token"],
+    [/\b[0-9a-f]{32}\.[A-Za-z0-9]{16}\b/g, "z.ai key"],                       // 32 hex, a dot, 16 alnum
+    [/\b(ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY)\s*=\s*["']?[A-Za-z0-9._-]{16,}/g, "an API key assigned inline"],
   ];
   if (fs.existsSync(PRIVATE_WORDS)) {
     const terms = fs.readFileSync(PRIVATE_WORDS, "utf8").split("\n").map((t) => t.trim()).filter(Boolean);
