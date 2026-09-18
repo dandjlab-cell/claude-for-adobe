@@ -179,6 +179,16 @@ The 0.09 row repeated the 20:42 row digit for digit. This is the size and sign o
 MODEL OFF BY. Three sweeps, independent, placed in Group 0/2: Green alone and Red alone on C202 (same
 points), Master anchored on C187 @22.02s.
 
+**Placed (21:16).** Green alone: the line within 0.3. Red alone: the line within 0.1. Master anchored on
+C187: blue (the lowest channel) on the line, red +1.0…+2.7, **green +1.9…+15.7 — at bottom point 0.20 the
+line says green crushes and it reads 15.7 with 0.00% on the floor.** So **the Master curve is not three
+identical channel curves** (`curveToe._modelCORRECTION`; `channelToeGreenC202`, `channelToeRedC202`,
+`curveToeAnchoredC187`). Every prediction through `masterToeAnchored` / the anchored `predictLevels` branch
+is wrong on any channel that is not the pixel's lowest. The form is unmeasured: percentiles cannot say
+whether a channel's output depends on the other channels' input. `curve_sweep` gained `keepFrames` and
+`tools/pixel_map.cjs` reads two kept renders pixel by pixel — that is the next measurement, and it gives
+Master's form or rules the per-channel family out.
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |

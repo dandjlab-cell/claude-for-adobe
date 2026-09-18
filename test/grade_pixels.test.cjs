@@ -464,3 +464,24 @@ test("padsFor chooses the pad's sat on pixels along the linear model's hue, and 
   assert.ok(Math.abs(after) < Math.abs(before), "the whites cast moved toward the target: " + before.toFixed(1) + " -> " + after.toFixed(1));
   assert.deepEqual(pix.predicted, measure(require("../src/forward.cjs").pipeline(rgb, [pix.pixels.operations])), "predicted state is the transformed pixels, not a nudge");
 });
+
+// 2026-09-18 21:16. The channel curves are the per-channel line on their own; the Master curve is NOT three
+// of them: on C187 the lowest channel (blue) follows the line and green reads 15.7 where the line says
+// crushed. Pinned with its sign so the belief cannot quietly return (`curveToe._modelCORRECTION`).
+test("channel curves are the line on their own channel; the Master curve is not three of them", () => {
+  const sweeps = require("../src/lumetri_sweeps.json");
+  const { OPS } = require("../src/forward.cjs");
+  const ire = (v) => v / 255 * 100, code = (ire) => ire / 100 * 255;
+  const line = (v, x) => Math.max(0, (v - 100 * x) / (1 - x));
+  for (const [key, stat] of [["channelToeGreenC202", "greenP1"], ["channelToeRedC202", "redP1"]]) {
+    const rows = sweeps[key].rows, n = rows[0];
+    for (const r of rows.slice(1)) assert.ok(Math.abs(r[stat] - line(n[stat], r.x)) <= 0.4, key + " x " + r.x + ": " + r[stat] + " vs line " + line(n[stat], r.x).toFixed(1));
+  }
+  const rows = sweeps.curveToeAnchoredC187.rows, n = rows[0];
+  for (const r of rows.slice(1)) {
+    const f = OPS.masterToeAnchored(r.x, 0.55), p = (v) => ire(Math.max(0, f(code(v))));
+    assert.ok(Math.abs(r.blueP1 - p(n.blueP1)) <= 0.6, "C187 Master x " + r.x + ": blue (the lowest channel) is on the line");
+    assert.ok(r.greenP1 - p(n.greenP1) > 1.5, "C187 Master x " + r.x + ": green reads " + r.greenP1 + " where the line says " + p(n.greenP1).toFixed(1));
+  }
+  assert.equal(rows[rows.length - 1].floorGreen, 0, "green never crushes under Master on C187, even with the bottom point above its p1");
+});

@@ -108,23 +108,27 @@ is blocked; the next items are measurement, in order below.
 
 ## What's Next (in order)
 
-1. **The Master curve does not move green where it moves red and blue — place the contradiction.**
-   `curveToeAnchoredC202` (21:11): red and blue p1 follow the anchored line within 0.3 at every bottom point;
-   green reads +1.0 / +1.9 / +2.9 over it at 0.05 / 0.09 / 0.12 and does not crush at 0.15 where the line
-   says it must. Not a corner effect (the miss is by channel, not by gap). It is the size and sign of every
-   remaining live MODEL OFF BY. Three independent sweeps decide where it lives; owner, fresh copy, all three:
+1. **Read the Master curve's real form from pixels.** Established 21:16: the channel curves are the
+   per-channel line on their own (Green and Red on C202 within 0.3, blue on C220 within 0.15); **the Master
+   curve is not three of them** — on C187 the lowest channel follows the line and green reads 15.7 where the
+   line says crushed (`curveToeAnchoredC187`, `curveToe._modelCORRECTION`, pinned in
+   `test/grade_pixels.test.cjs`). Every prediction through `masterToeAnchored` and `predictLevels`' anchored
+   branch is wrong on the non-lowest channels, which is the remaining live residual. `curve_sweep` now takes
+   `keepFrames` (keeps each row's PNG, prints the paths) and `tools/pixel_map.cjs before.png after.png`
+   prints per-channel output-vs-input medians and green's output split by the same pixel's red / blue / min
+   input. **Unverified live** (needs a panel reload). Owner, fresh copy, after reload:
 
    ```
-   Three calibration sweeps on A056_05072128_C202.braw at 23.94s, one after another, then one on A056_05072025_C187.braw at 22.02s. Return each tool's raw output, no summary.
-   1. curve_sweep Green, points 0, 0.05, 0.09, 0.12, 0.15
-   2. curve_sweep Red, points 0, 0.05, 0.09, 0.12, 0.15
-   3. curve_sweep Master, anchor 0.55, points 0, 0.05, 0.09, 0.12, 0.15, 0.2, on the C187 clip at 22.02s
+   Two calibration sweeps on A056_05072128_C202.braw at 23.94s, keepFrames true on both. Return each tool's raw output including the "Frames kept" line, no summary.
+   1. curve_sweep Master, anchor 0.55, points 0, 0.09, 0.15
+   2. curve_sweep Green, points 0, 0.09
    ```
 
-   Score each against `(in − 100x)/(1 − x)` (channel) or `OPS.masterToeAnchored` (Master) on its 0 row. If
-   Green alone also reads high, the green channel's response is the thing to model (all three curve forms in
-   `forward.cjs`/`curves.cjs`); if Green alone is on the line but Master's green is not, Master is not three
-   identical channel curves; if C187's green is on the line, it is the frame.
+   Then `node tools/pixel_map.cjs <Master 0 png> <Master 0.15 png>` and the same for Green 0 / 0.09 as the
+   control (green's output must not depend on red or blue there). If Master's green output at a fixed green
+   input moves with the pixel's red/blue/min, Master is a per-pixel operation on more than one channel;
+   fit that, replace `masterToeAnchored` and the anchored branch in `curves.cjs` together, re-run the wheel-
+   under-curve check (`shadowsWheelLumaUnderCurveC202` must still be within 0.9).
 
 2. **Dark subjects are no longer lifted.** Shadows' goal steers on *subject brightness*, a region statistic;
    the frame sample has no region pixels, so the chooser refuses (`shadows [pixels] skipped (held: frame
@@ -200,6 +204,8 @@ No gates tool. The agreement is:
 
 | file | what |
 |---|---|
+| `tools/pixel_map.cjs` | **new** — per-pixel map between two kept renders (Master's form) |
+| `panel.js` (evening) | `curve_sweep`: `masterBlack` (wheel under the grade's curve), `keepFrames` |
 | `src/grade_pixels.cjs` | **new** — the chooser: `choose`, `evaluate` (prefix rail witness), `context`, `readingFor` |
 | `src/forward.cjs` | OPS gained `shadows`, `highlights` (bumps), `shadowsWheelLuma`, `highlightsPad`, `masterToeAnchored`; `newlyRailed`; 256-entry LUT apply; tuple stages |
 | `src/grade.cjs` | `planShot` chooses on pixels, pixel-form goals first, readback reconciled, `expected`/`expectedHow` |
