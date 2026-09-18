@@ -46,6 +46,27 @@ The sharp end: three controls reach the picture on every run with nothing measur
 
 This is the only place the first live run caught the pixel model itself being wrong rather than absent.
 
+## Group 1c — Shadows and Highlights now own every remaining MODEL OFF BY (2026-09-18 15:31)
+
+Second live run of the chooser, build fba52bc, with the pixel-form goals chosen first. Whites went from
+6 pixel / 4 table to **9 pixel / 2 table**, and every unrailed pixel-chosen Whites landed within 0.4 of
+its prediction (C220 91.8 → 92.2, C200 89.4 → 89.4, C198 91.8 → 91.4, C202 91.8 → 91.8, C209 85.9 →
+85.9). **The MODEL OFF BY column did not follow the Whites tag, and it was wrong to expect it to.** MODEL
+OFF BY is a *black-point* error, and on this footage the sliders that move the black point are Shadows
+(+30 on five clips) and Highlights — both table-only. The split is now exact:
+
+| sliders step | MODEL OFF BY |
+|---|---|
+| every slider pixel-chosen (C193, C198, C209, C202) | none, 1.2, none, 1.2 — reproduced from the first run |
+| a table Shadows or Highlights ran (C220, C222, C223, C228, C229, C231, C200) | 1.7, 2.22, 2.58, **7.28**, 1.56, 1.4, 3.7 |
+
+C228's 7.28 is Shadows +30; C223's 2.58 is Highlights 64.71 with Whites already pixel-exact. So **#7 and
+#8 are not housekeeping: they are the whole of the remaining chooser error.** Sweep both on an unrailed
+frame with the black point where it can be seen (C202 @23.94s: p1 14.5, p99 84.7), fit against every
+statistic, hold one out, and mind the degenerate-pivot trap.
+
+Also reproduced: #5b (Whites at 99.61 on C231 predicted 82.4, read 90.2).
+
 ## Group 2 — finish the nine forms that are half-done
 
 | # | sweep | state | render |
